@@ -155,6 +155,23 @@ def fetch_lichess_game_by_id(game_id: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
+def query_endgame_tablebase(fen: str) -> dict:
+    """
+    Queries the Syzygy 7-piece endgame tablebase. 
+    ONLY use this tool if there are 7 or fewer pieces total on the board!
+    """
+    try:
+        url = f"http://tablebase.lichess.ovh/standard?fen={fen}"
+        response = requests.get(url).json()
+        
+        return {
+            "status": response.get("category"), # 'win', 'loss', or 'draw'
+            "dtm": response.get("dtm"),         # Distance to mate (number of moves)
+            "best_move": response.get("moves", [{}])[0].get("san", "None")
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 # ======================================================================
 # 3. GEMINI AGENT & MEMORY SETUP
 # ======================================================================
@@ -194,14 +211,15 @@ def save_history(chat_session):
 system_instruction = """
 You are a Grandmaster-level chess coach. You help the user analyze their games. 
 
-You have five tools available:
+You have six tools available:
 1. `get_fen_from_moves`: If the user says "what if I play e4 c5 Nf3", you MUST use this tool to generate the correct FEN string first. Do NOT try to guess the FEN in your head.
 2. `analyze_position`: Use this to get the objective Stockfish evaluation by passing it the FEN string.
 3. `get_opening_explorer_data`: Use this to query the Lichess Masters database for standard opening moves if the position is in the opening phase (roughly the first 10-15 moves).
 4. `print_board`: Use this to generate a visual representation of the chess board if the user asks to "see the board", "show the position", etc. Make sure you output the result directly.
 5. `fetch_lichess_game_by_id`: Use this to fetch a specific game's details (PGN, evaluation, clock times) from Lichess using its game ID.
+6. `query_endgame_tablebase`: Use this ONLY when there are 7 or fewer pieces remaining on the board to get perfect endgame play (win/draw/loss and distance to mate).
 
-When discussing a specific position, you must ALWAYS use either Stockfish or the Opening Explorer (or both) to get objective data. 
+When discussing a specific position, you must ALWAYS use either Stockfish, the Opening Explorer, or the Endgame Tablebase to get objective data. 
 Once you have the data, translate it into plain, conversational English. 
 Explain WHY a move is good in terms of chess principles. 
 Do NOT just read the raw numbers back to the user. Be encouraging but honest!
@@ -209,7 +227,7 @@ Do NOT just read the raw numbers back to the user. Be encouraging but honest!
 
 config = types.GenerateContentConfig(
     system_instruction=system_instruction,
-    tools=[get_fen_from_moves, analyze_position, get_opening_explorer_data, print_board, fetch_lichess_game_by_id],
+    tools=[get_fen_from_moves, analyze_position, get_opening_explorer_data, print_board, fetch_lichess_game_by_id, query_endgame_tablebase],
     # explicitly DISABLE automatic tool calling so we can handle it flawlessly ourselves
     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True) 
 )
@@ -378,6 +396,23 @@ try:
                             
                         tool_part = types.Part.from_function_response(
                             name="fetch_lichess_game_by_id",
+                            response={"result": result}
+                        )
+                        response = chat.send_message(tool_part)
+                        
+                    elif fn_call.name == "query_endgame_tablebase":
+                        console.print("[dim cyan]↳ Querying Syzygy Endgame Tablebase...[/dim cyan]")
+                        
+                        args_dict = dict(fn_call.args) if fn_call.args else {}
+                        fen = args_dict.get("fen")
+                        
+                        if not fen:
+                            result = {"error": "Missing FEN string in tool call."}
+                        else:
+                            result = query_endgame_tablebase(fen)
+                            
+                        tool_part = types.Part.from_function_response(
+                            name="query_endgame_tablebase",
                             response={"result": result}
                         )
                         response = chat.send_message(tool_part)
