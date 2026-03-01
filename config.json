@@ -2,5 +2,6 @@
     "user_elo": 1150,
     "stockfish_path": "/usr/bin/stockfish",
     "lc0_path": "/usr/bin/lc0",
-    "maia_weights_dir": "./maia_weights"
+    "maia_weights_dir": "./maia_weights",
+    "gemini_model": "gemini-1.5-pro-preview-0514"
 }

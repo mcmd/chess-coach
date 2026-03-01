@@ -32,6 +32,7 @@ USER_ELO = app_config.get("user_elo", 1100)
 STOCKFISH_PATH = app_config.get("stockfish_path")
 LC0_PATH = app_config.get("lc0_path")
 MAIA_DIR = app_config.get("maia_weights_dir", "./maia_weights")
+GEMINI_MODEL = app_config.get("gemini_model", "gemini-1.5-pro-latest")
 
 api_key = os.environ.get("GEMINI_API_KEY")
 if not api_key:
@@ -195,6 +196,41 @@ def fetch_lichess_game_by_id(game_id: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
+def fetch_chessgames_com_game(game_id: str) -> dict:
+    """
+    Fetches a specific master game's PGN from chessgames.com using its numeric game ID.
+    
+    Args:
+        game_id: The numeric ID of the game (e.g., '1111195').
+    """
+    try:
+        url = f"https://www.chessgames.com/njs/api/game/viewPGN/{game_id}?raw=true"
+        
+        # It is good practice to include a User-Agent so the website doesn't block the Python request
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) GeminiChessCoach/1.0",
+            "Accept": "text/plain, application/x-chess-pgn, */*"
+        }
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            pgn_text = response.text.strip()
+            
+            # Basic validation to ensure we didn't get an empty or error page
+            if not pgn_text or not pgn_text.startswith("[Event"):
+                return {"error": "Received malformed data. Are you sure this is a valid game ID?"}
+                
+            return {"pgn": pgn_text}
+            
+        elif response.status_code == 404:
+            return {"error": f"Game with ID '{game_id}' not found on chessgames.com."}
+        else:
+            return {"error": f"Chessgames.com returned status {response.status_code}."}
+            
+    except Exception as e:
+        return {"error": str(e)}
+
 def query_endgame_tablebase(fen: str) -> dict:
     """
     Queries the Syzygy 7-piece endgame tablebase. 
@@ -243,25 +279,30 @@ system_instruction = f"""
 You are a Grandmaster-level chess coach. You are currently coaching a {USER_ELO} Elo player.
 When analyzing a position, you have tools to determine both the objective truth and human psychology.
 
-1. `get_fen_from_moves`: If the user says "what if I play e4 c5 Nf3", you MUST use this tool to generate the correct FEN string first. Do NOT try to guess the FEN in your head.
-2. `print_board`: Use this to generate a visual representation of the chess board if the user asks to "see the board", "show the position", etc. Make sure you output the result directly.
-3. `fetch_lichess_game_by_id`: Use this to fetch a specific game's details (PGN, evaluation, clock times) from Lichess using its game ID.
-4. `query_endgame_tablebase`: Use this ONLY when there are 7 or fewer pieces remaining on the board to get perfect endgame play (win/draw/loss and distance to mate).
-5. `analyze_position`: Use this to get the objective, mathematically perfect move (Stockfish).
-6. `get_amateur_opening_data`: ALWAYS use this first in early game positions to see if this is a known opening trap at the {USER_ELO} level.
-7. `predict_human_move`: If the opening database returns zero/few games (meaning the position is off-book chaos or a middlegame/endgame), fallback to this Maia tool to predict how a {USER_ELO} Elo human will actually react.
+1. `get_fen_from_moves`: Generate the correct FEN string from a sequence of moves.
+2. `print_board`: Generate a visual representation of the board.
+3. `fetch_lichess_game_by_id`: Fetch user games from Lichess using an alphanumeric ID.
+4. `fetch_chessgames_com_game`: Fetch historical and Grandmaster games from Chessgames.com using a numeric ID (e.g., '1111195').
+5. `query_endgame_tablebase`: Use this ONLY when there are 7 or fewer pieces remaining.
+6. `analyze_position`: Use this to get the objective, mathematically perfect move (Stockfish).
+7. `get_amateur_opening_data`: ALWAYS use this first in early game positions.
+8. `predict_human_move`: Use Maia to predict how a {USER_ELO} Elo human will actually react.
 
 Compare the objective truth with the likely human error. Explain to the user why the computer move is best, but also explain how to exploit the likely mistakes an opponent at their Elo will make.
 """
 
 config = types.GenerateContentConfig(
     system_instruction=system_instruction,
-    tools=[get_fen_from_moves, print_board, fetch_lichess_game_by_id, query_endgame_tablebase, analyze_position, predict_human_move, get_amateur_opening_data],
+    tools=[
+        get_fen_from_moves, print_board, fetch_lichess_game_by_id, 
+        fetch_chessgames_com_game,
+        query_endgame_tablebase, analyze_position, predict_human_move, get_amateur_opening_data
+    ],
     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True) 
 )
 
 chat = client.chats.create(
-    model='gemini-3.1-pro-preview',
+    model=GEMINI_MODEL,
     config=config,
     history=load_history()
 )
@@ -314,7 +355,7 @@ def process_user_input(user_input):
     return enriched_input, None
 
 console.print(Panel.fit(
-    f"[bold green]Gemini 3.1 + Stockfish + Maia Coach (Elo: {USER_ELO})[/bold green]\n"
+    f"[bold green]Gemini {GEMINI_MODEL} + Stockfish + Maia Coach (Elo: {USER_ELO})[/bold green]\n"
     "Type [bold cyan]/load_pgn filename.pgn[/bold cyan] to load a game.\n"
     "Type [bold red]exit[/bold red] to save and close.",
     border_style="green"
@@ -366,6 +407,11 @@ try:
                         console.print("[dim cyan]↳ Fetching game from Lichess...[/dim cyan]")
                         game_id = args_dict.get("game_id", "")
                         result = fetch_lichess_game_by_id(game_id)
+                        
+                    elif fn_call.name == "fetch_chessgames_com_game":
+                        console.print("[dim cyan]↳ Fetching Master Game from Chessgames.com...[/dim cyan]")
+                        game_id = args_dict.get("game_id", "")
+                        result = fetch_chessgames_com_game(game_id)
 
                     elif fn_call.name == "query_endgame_tablebase":
                         console.print("[dim cyan]↳ Querying Syzygy Endgame Tablebase...[/dim cyan]")

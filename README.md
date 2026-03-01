@@ -21,6 +21,7 @@ The orchestrating LLM (Gemini) has access to the following tools to ground its k
 - **`get_amateur_opening_data`**: Queries the Lichess explorer database, filtering for the user's specific Elo bracket, to identify typical amateur moves, common traps, and win percentages in the early game.
 - **`query_endgame_tablebase`**: Accesses the Syzygy 7-piece endgame tablebase. When 7 or fewer pieces are left on the board, the agent uses this tool to get mathematically perfect endgame play (win/draw/loss statuses and exact distance to mate).
 - **`fetch_lichess_game_by_id`**: Allows the agent to pull specific games from Lichess using their game ID, fetching PGNs, clock times, and computer evaluations.
+- **`fetch_chessgames_com_game`**: **Chessgames.com** is the gold standard for studying the history of chess. This tool allows the agent to import Master-level games (using their numeric ID) to teach concepts using examples from legends like Fischer, Kasparov, or Morphy.
 - **`get_fen_from_moves`**: A utility tool for the agent to precisely calculate board states (FEN strings) when evaluating hypothetical move sequences suggested by the user.
 - **`print_board`**: Generates a rich text visualization of the current chess board to show the user the position upon request.
 
