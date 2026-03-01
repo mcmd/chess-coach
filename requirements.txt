@@ -4,3 +4,8 @@ autopep8
 
 # App
 flask
+chess
+stockfish
+rich
+google-genai
+python-dotenv

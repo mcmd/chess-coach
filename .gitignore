@@ -1,1 +1,7 @@
-.venv
+venv/
+__pycache__/
+*.pyc
+.env
+chess_coach_memory.json
+.venv/
+.venv/
