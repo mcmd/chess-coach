@@ -8,6 +8,7 @@
     pkgs.python3
     pkgs.sudo
     pkgs.stockfish
+    pkgs.lc0
   ];
   idx = {
     # Search for the extensions you want on https://open-vsx.org/ and use "publisher.id"
