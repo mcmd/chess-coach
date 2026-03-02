@@ -447,62 +447,69 @@ try:
             try:
                 response = chat.send_message(processed_input)
                 
-                # Manual Function Calling Handling Loop
+                # Parallel Function Calling Handling Loop
                 while True:
-                    fn_call = None
-                    if response.function_calls: fn_call = response.function_calls[0]
+                    f_calls = []
+                    # Safely extract all function calls from the response
+                    if response.function_calls:
+                        f_calls = response.function_calls
                     elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
                         for p in response.candidates[0].content.parts:
-                            if getattr(p, 'function_call', None): fn_call = p.function_call; break
-                            if getattr(p, 'functionCall', None): fn_call = p.functionCall; break
+                            if getattr(p, 'function_call', None): f_calls.append(p.function_call)
+                            elif getattr(p, 'functionCall', None): f_calls.append(p.functionCall)
                                 
-                    if not fn_call: break 
+                    # If no tools were requested, break the loop and print the text
+                    if not f_calls: break 
                         
-                    args_dict = dict(fn_call.args) if fn_call.args else {}
-                    fen = args_dict.get("fen", "")
+                    tool_parts = []
                     
-                    if fn_call.name == "get_fen_from_moves":
-                        console.print("[dim cyan]↳ Calculating FEN from move sequence...[/dim cyan]")
-                        moves = args_dict.get("moves", [])
-                        starting_fen = args_dict.get("starting_fen", fen)
-                        result = get_fen_from_moves(starting_fen, moves)
-
-                    elif fn_call.name == "print_board":
-                        console.print("[dim cyan]↳ Generating board visual...[/dim cyan]")
-                        result = print_board(fen)
-
-                    elif fn_call.name == "fetch_lichess_game_by_id":
-                        console.print("[dim cyan]↳ Fetching game from Lichess...[/dim cyan]")
-                        game_id = args_dict.get("game_id", "")
-                        result = fetch_lichess_game_by_id(game_id)
+                    # Iterate through EVERY tool the AI asked for in this turn
+                    for fn_call in f_calls:
+                        args_dict = dict(fn_call.args) if fn_call.args else {}
+                        fen = args_dict.get("fen", "")
+                        result = {}
                         
-                    elif fn_call.name == "fetch_chessgames_com_game":
-                        console.print("[dim cyan]↳ Fetching Master Game from Chessgames.com...[/dim cyan]")
-                        game_id = args_dict.get("game_id", "")
-                        result = fetch_chessgames_com_game(game_id)
+                        if fn_call.name == "get_fen_from_moves":
+                            console.print("[dim cyan]↳ Calculating FEN from move sequence...[/dim cyan]")
+                            moves = args_dict.get("moves", [])
+                            starting_fen = args_dict.get("starting_fen", fen)
+                            result = get_fen_from_moves(starting_fen, moves)
 
-                    elif fn_call.name == "query_endgame_tablebase":
-                        console.print("[dim cyan]↳ Querying Syzygy Endgame Tablebase...[/dim cyan]")
-                        result = query_endgame_tablebase(fen)
+                        elif fn_call.name == "print_board":
+                            console.print("[dim cyan]↳ Generating board visual...[/dim cyan]")
+                            result = print_board(fen)
 
-                    elif fn_call.name == "analyze_position":
-                        console.print("[dim cyan]↳ Interfacing with local Stockfish...[/dim cyan]")
-                        result = analyze_position(fen, int(args_dict.get("depth", 15)))
+                        elif fn_call.name == "fetch_lichess_game_by_id":
+                            console.print("[dim cyan]↳ Fetching game from Lichess...[/dim cyan]")
+                            game_id = args_dict.get("game_id", "")
+                            result = fetch_lichess_game_by_id(game_id)
+                            
+                        elif fn_call.name == "fetch_chessgames_com_game":
+                            console.print("[dim cyan]↳ Fetching Master Game from Chessgames.com...[/dim cyan]")
+                            game_id = args_dict.get("game_id", "")
+                            result = fetch_chessgames_com_game(game_id)
+
+                        elif fn_call.name == "query_endgame_tablebase":
+                            console.print("[dim cyan]↳ Querying Syzygy Endgame Tablebase...[/dim cyan]")
+                            result = query_endgame_tablebase(fen)
+
+                        elif fn_call.name == "analyze_position":
+                            console.print("[dim cyan]↳ Interfacing with local Stockfish...[/dim cyan]")
+                            result = analyze_position(fen, int(args_dict.get("depth", 15)))
+                        
+                        elif fn_call.name == "predict_human_move":
+                            console.print(f"[dim magenta]↳ Asking Maia what a {USER_ELO} human would do...[/dim magenta]")
+                            result = predict_human_move(fen)
+                            
+                        elif fn_call.name == "get_opening_repertoire":
+                            console.print("[dim yellow]↳ Checking Lichess Opening Databases...[/dim yellow]")
+                            result = get_opening_repertoire(fen)
+                            
+                        # Package the specific tool result into a Part
+                        tool_parts.append(types.Part.from_function_response(name=fn_call.name, response={"result": result}))
                     
-                    elif fn_call.name == "predict_human_move":
-                        console.print(f"[dim magenta]↳ Asking Maia what a {USER_ELO} human would do...[/dim magenta]")
-                        result = predict_human_move(fen)
-                        
-                    elif fn_call.name == "get_opening_repertoire":
-                        console.print("[dim yellow]↳ Querying Master & Amateur Opening Databases...[/dim yellow]")
-                        result = get_opening_repertoire(fen)
-                        
-                    else: break
-                    
-                    # Return tool execution result to Gemini
-                    tool_part = types.Part.from_function_response(name=fn_call.name, response={"result": result})
-                    response = chat.send_message(tool_part)
-
+                    # Return ALL tool execution results to Gemini simultaneously
+                    response = chat.send_message(tool_parts)
                 if response.text:
                     console.print("\n[bold purple]Coach Gemini:[/bold purple]")
                     console.print(Markdown(response.text))
