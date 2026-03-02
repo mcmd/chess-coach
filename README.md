@@ -3,8 +3,6 @@
 ## Overview
 This project is an advanced AI chess coach that combines the reasoning and conversational capabilities of a Large Language Model (Gemini) with the domain-specific accuracy of dedicated chess engines and databases. 
 
-
-
 The core philosophy of this project is its **Agent + Tools Architecture**. While LLMs are excellent at orchestrating complex tasks and translating dense, technical chess concepts into easily understandable, plain-language explanations, they are prone to hallucinations when calculating deep chess lines or evaluating positions. 
 
 To solve this, we give the Gemini agent access to a suite of highly specialized tools. The LLM orchestrates the learning experience, but it grounds its advice in absolute chess truth. By querying Stockfish for objective evaluations, the Maia chess engine for human psychology, Lichess opening explorers for real-world statistics, and Syzygy tablebases for perfect endgame play, the agent provides a personalized, accurate, and deeply insightful coaching experience.
@@ -40,78 +38,63 @@ Before running the application, you **must** configure your environment and engi
 1. Create a `.env` file in the root directory and add your Google Gemini API key:
    ```env
    GEMINI_API_KEY=your_api_key_here
-
-```
+   ```
 
 2. Create a `config.json` file in the root directory to define your local engine paths and Elo:
-```json
-{
-    "user_elo": 1200,
-    "stockfish_path": "/path/to/your/stockfish",
-    "lc0_path": "/path/to/your/lc0",
-    "maia_weights_dir": "./maia_weights",
-    "gemini_model": "gemini-3.1-pro-preview"
-}
+   ```json
+   {
+       "user_elo": 1200,
+       "stockfish_path": "/path/to/your/stockfish",
+       "lc0_path": "/path/to/your/lc0",
+       "maia_weights_dir": "./maia_weights",
+       "gemini_model": "gemini-2.5-pro"
+   }
+   ```
+   *Note: Ensure you download and install [Stockfish](https://stockfishchess.org/download/) and [Lc0](https://lczero.org/play/download/) for your specific operating system.*
 
-```
+### Option 1: Project IDX / Firebase Studio (Recommended)
 
+This project is pre-configured to run seamlessly in a Nix-based environment.
 
-
-### Option 1: Firebase Studio / Project IDX (Recommended)
-
-This project is pre-configured to run seamlessly in a Nix-based environment managed by Firebase Studio.
-
-1. **Open the workspace**: Load the repository into Firebase Studio.
-2. **Automatic Configuration**: The Nix environment (`.idx/dev.nix`) will automatically provision the workspace, creating a Python 3 virtual environment (`.venv`) and installing all dependencies from `requirements.txt`.
-3. **Terminal Usage**: To run the CLI tool, open the integrated terminal. Before running any `python` scripts or `pip` commands, activate the virtual environment:
-```bash
-source .venv/bin/activate
-
-```
-
-
-4. **Run the Coach**: Execute the script:
-```bash
-python coach.py
-
-```
-
-
+1. **Automatic Configuration**: The Nix environment (`.idx/dev.nix`) will automatically provision the workspace, creating a Python 3 virtual environment (`.venv`) and installing all dependencies from `requirements.txt`. It even installs Stockfish and Lc0.
+2. **Terminal Usage**: To run the CLI tool, open the integrated terminal. Before running any `python` scripts or `pip` commands, activate the virtual environment:
+   ```bash
+   source .venv/bin/activate
+   ```
+3. **Run the Coach**: Execute the script:
+   ```bash
+   python coach.py
+   ```
 
 ### Option 2: Generic Local Setup (From Scratch)
 
 To set up and run this project locally on any standard machine (Linux, macOS, or Windows):
 
 1. **Clone the repository**:
-```bash
-git clone <your-repository-url>
-cd <your-project-directory>
-
-```
-
+   ```bash
+   git clone <your-repository-url>
+   cd <your-project-directory>
+   ```
 
 2. **Create a Virtual Environment**:
-```bash
-python3 -m venv .venv
-
-```
-
+   ```bash
+   python3 -m venv .venv
+   ```
 
 3. **Activate the Virtual Environment**:
-* On Linux/macOS: `source .venv/bin/activate`
-* On Windows: `.venv\Scripts\activate`
-
+   * On Linux/macOS: `source .venv/bin/activate`
+   * On Windows: `.venv\Scripts\activate`
 
 4. **Install Dependencies**:
-```bash
-pip install -r requirements.txt
-
-```
-
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 5. **Run the Application**:
-```bash
-python coach.py
+   ```bash
+   python coach.py
+   ```
 
-```
-
+## Known Limitations / Future Work
+- The Flask template structure (`main.py`) is currently unused and serves as a placeholder for a future web UI or API layer.
+- Ensure Lc0 is configured correctly on your OS if running locally outside the provided Nix environment, as it handles the Maia weights.
