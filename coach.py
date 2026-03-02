@@ -118,32 +118,61 @@ def predict_human_move(fen: str) -> dict:
         return {"predicted_human_move": predicted_move, "maia_model_used": maia_target}
     except Exception as e: return {"error": str(e)}
 
-def get_amateur_opening_data(fen: str) -> dict:
+def get_opening_repertoire(fen: str) -> dict:
     """
-    Looks up the current FEN in the Lichess database, dynamically querying 
-    the Elo brackets closest to the user's configured Elo.
+    Looks up the current FEN in BOTH the Lichess Master database and the Amateur database.
+    Use this to compare Grandmaster theory against what players at the user's Elo actually play.
     """
     try:
-        brackets =[1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500]
-        # Find brackets within 250 points of the user's current Elo
-        valid_brackets =[str(b) for b in brackets if abs(b - USER_ELO) <= 250]
-        ratings_param = ",".join(valid_brackets) if valid_brackets else "1000,1200"
-
-        url = f"https://explorer.lichess.ovh/lichess?variant=standard&speeds=blitz,rapid&ratings={ratings_param}&fen={fen}"
-        response = requests.get(url).json()
+        # 1. Fetch Master (Grandmaster) Data
+        master_url = f"https://explorer.lichess.ovh/masters?fen={fen}"
+        master_res = requests.get(master_url).json()
         
-        top_moves = []
-        for move in response.get("moves",[])[:4]:
-            total_games = move["white"] + move["draws"] + move["black"]
-            top_moves.append({
-                "move": move["san"],
-                "total_games": total_games,
-                "white_win_pct": round((move["white"] / total_games) * 100, 1),
-                "black_win_pct": round((move["black"] / total_games) * 100, 1)
-            })
+        # Extract the Memory Trigger from the Master DB
+        opening_info = master_res.get("opening", {})
+        opening_name = opening_info.get("name")
+        eco_code = opening_info.get("eco")
+        
+        master_moves = []
+        for move in master_res.get("moves", [])[:4]:
+            total = move["white"] + move["draws"] + move["black"]
+            if total > 0:
+                master_moves.append({
+                    "move": move["san"],
+                    "white_win_pct": round((move["white"] / total) * 100, 1),
+                    "draw_pct": round((move["draws"] / total) * 100, 1),
+                    "black_win_pct": round((move["black"] / total) * 100, 1)
+                })
+
+        # 2. Fetch Amateur Data (Dynamic to User Elo)
+        brackets = [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500]
+        valid_brackets = [str(b) for b in brackets if abs(b - USER_ELO) <= 250]
+        ratings_param = ",".join(valid_brackets) if valid_brackets else "1000,1200"
+        
+        amateur_url = f"https://explorer.lichess.ovh/lichess?variant=standard&speeds=blitz,rapid&ratings={ratings_param}&fen={fen}"
+        amateur_res = requests.get(amateur_url).json()
+        
+        amateur_moves = []
+        for move in amateur_res.get("moves", [])[:4]:
+            total = move["white"] + move["draws"] + move["black"]
+            if total > 0:
+                amateur_moves.append({
+                    "move": move["san"],
+                    "total_games": total,
+                    "white_win_pct": round((move["white"] / total) * 100, 1),
+                    "black_win_pct": round((move["black"] / total) * 100, 1)
+                })
             
-        return {"typical_amateur_moves": top_moves, "brackets_queried": ratings_param}
-    except Exception as e: return {"error": str(e)}
+        return {
+            "theoretical_opening_name": opening_name,
+            "eco_code": eco_code,
+            "top_master_moves": master_moves,
+            "typical_amateur_moves": amateur_moves,
+            "amateur_brackets_queried": ratings_param
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
 
 def print_board(fen: str) -> dict:
     """
@@ -291,7 +320,7 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
 4. **Analyze:** For EACH FEN generated in Step 3, you MUST call:
    - `analyze_position` (to get objective Stockfish truth).
    - `predict_human_move` (to see what a {USER_ELO} player would actually do).
-   - `get_amateur_opening_data` (if it is the opening phase).
+    - `get_opening_repertoire` (if it is the opening phase, to compare Grandmaster theory against amateur reality).
 5. **Respond:** ONLY AFTER you have gathered real data using these tools are you allowed to synthesize your final textual response to the student.
 
 ### ♟️ COACHING METHODOLOGY & PEDAGOGY
@@ -300,6 +329,7 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
    - If Stockfish suggests a move that is only good because of an impossible-to-see 5-move+ tactic, warn the student.
    - If Maia predicts the opponent will blunder or play sub-optimally, tell the student: "At your level, your opponent is highly likely to play [Move] here. How would we set a trap for that?"
 3. **Speak in Concepts:** At {USER_ELO} Elo, a simple, solid plan is better than a complex engine sequence. Prioritize explaining concepts like King Safety, Piece Activity, controlling the center, and identifying undefended pieces.
+4. **Grounding in Theory:** If `get_opening_repertoire` provides a `theoretical_opening_name`, explicitly state it. Use your deep internal knowledge of chess theory to briefly explain the classical Grandmaster plans. Then, compare the `top_master_moves` against the `typical_amateur_moves` to show the student how their opponents are likely to deviate from GM theory and how to punish it!
 
 ### 📝 FORMATTING & RULES OF ENGAGEMENT
 - **Current State:** The system automatically appends the current board state (FEN) to every message the user sends. You ALWAYS know the current board state.
@@ -316,7 +346,7 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
   - ✅ DO THIS: `1. d4 d5 2. Nc3 Nf6`
   - ❌ NEVER DO THIS: 1. d4 d5 2. Nc3 Nf6
 - Break up your text into easily readable paragraphs or bullet points.
-- Even if you are using the Socratic approach with the user, NEVER use the word "Socratic" in your output.
+- Even if you are using the Socratic approach with the user, NEVER use the word "Socratic" in your output (e.g. Don't say "Socratic Question:", just say "Question").
 """
 
 config = types.GenerateContentConfig(
