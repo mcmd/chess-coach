@@ -354,7 +354,7 @@ config = types.GenerateContentConfig(
     tools=[
         get_fen_from_moves, print_board, fetch_lichess_game_by_id, 
         fetch_chessgames_com_game,
-        query_endgame_tablebase, analyze_position, predict_human_move, get_amateur_opening_data
+        query_endgame_tablebase, analyze_position, predict_human_move, get_opening_repertoire
     ],
     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True) 
 )
@@ -483,9 +483,9 @@ try:
                         console.print(f"[dim magenta]↳ Asking Maia what a {USER_ELO} human would do...[/dim magenta]")
                         result = predict_human_move(fen)
                         
-                    elif fn_call.name == "get_amateur_opening_data":
-                        console.print("[dim yellow]↳ Checking Lichess amateur database...[/dim yellow]")
-                        result = get_amateur_opening_data(fen)
+                    elif fn_call.name == "get_opening_repertoire":
+                        console.print("[dim yellow]↳ Querying Master & Amateur Opening Databases...[/dim yellow]")
+                        result = get_opening_repertoire(fen)
                         
                     else: break
                     
