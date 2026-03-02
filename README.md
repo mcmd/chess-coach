@@ -13,6 +13,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 
 ## Key Features
 * **Elo-Parametrized Coaching:** The coach adapts its advice, Maia predictions, and Lichess database queries to your exact Elo rating configured in `config.json`.
+* **Global Engine Initialization:** Maia and Stockfish engines are initialized globally, reducing latency when loading weights for move predictions and tactical evaluations.
 * **Profiles:** Create isolated learning environments using the `--profile` flag. This separates your configuration (Elo, model), chat memory, and CLI history into independent subdirectories, perfect for studying different openings or having multiple users.
 * **Socratic Pedagogy:** The agent is prompted to teach concepts (King Safety, Piece Activity) rather than just spoon-feeding Stockfish lines.
 * **Persistent Memory:** The conversation context is saved across sessions (`chess_coach_memory.json`), allowing you to resume your lessons later.
@@ -22,14 +23,13 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 ## The Agent's Tools
 The orchestrating Gemini LLM has autonomous access to the following tools to ground its knowledge:
 
-- **`analyze_position` (Stockfish)**: Interrogates the local Stockfish engine to find the mathematically perfect, objective best moves and position evaluations.
-- **`predict_human_move` (Maia Chess)**: Uses pre-trained Maia neural network models (dynamically routing to `maia-1100`, `maia-1500`, or `maia-1900` based on the user's Elo). This predicts what a human player at that specific level is actually likely to do, identifying likely blunders or traps.
+- **`analyze_position` (Stockfish)**: Interrogates the local Stockfish engine to find the mathematically perfect, objective best moves and position evaluations. It also calculates and returns the first 5 moves of the Principal Variation (PV) for the top 2 engine lines, rather than just the single best move, giving the AI deep tactical continuations.
+- **`predict_human_move` (Maia Chess + Stockfish)**: Uses pre-trained Maia neural network models (dynamically routing to `maia-1100`, `maia-1500`, or `maia-1900` based on the user's Elo) to predict the most likely human move. Then, it uses Stockfish to analyze the resulting position if that predicted move is played, returning the objective evaluation and a refutation line (punishment).
 - **`get_opening_repertoire`**: Queries BOTH the Lichess Masters database and the Amateur database (filtered specifically to the user's Elo bracket). This allows the coach to compare Grandmaster theory against what amateur opponents actually play.
 - **`query_endgame_tablebase`**: Accesses the Syzygy 7-piece endgame tablebase. When 7 or fewer pieces are left, the agent uses this tool to get mathematically perfect endgame play (win/draw/loss statuses and exact distance to mate).
 - **`fetch_lichess_game_by_id`**: Pulls specific games from Lichess using their game ID, fetching PGNs, clock times, and computer evaluations.
 - **`fetch_chessgames_com_game`**: Imports Master-level games (using their numeric ID) from chessgames.com to teach concepts using examples from legends like Fischer or Kasparov.
 - **`get_fen_from_moves`**: A utility tool for the agent to precisely calculate board states (FEN strings) when evaluating hypothetical move sequences suggested by the user.
-- **`print_board`**: Generates a rich text visualization of the current chess board using Unicode characters.
 
 ## Setup Instructions
 

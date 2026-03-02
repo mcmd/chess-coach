@@ -103,6 +103,30 @@ except FileNotFoundError:
     exit(1)
 
 # ======================================================================
+# NEW: Initialize Maia globally to eliminate latency!
+# ======================================================================
+try:
+    rounded_elo = round(USER_ELO / 100) * 100
+    if rounded_elo <= 1300:
+        maia_target = 1100
+    elif rounded_elo <= 1700:
+        maia_target = 1500
+    else:
+        maia_target = 1900
+
+    weights_file = os.path.join(MAIA_DIR, f"maia-{maia_target}.pb.gz")
+    
+    if os.path.exists(weights_file):
+        maia_engine = chess.engine.SimpleEngine.popen_uci(LC0_PATH, stderr=subprocess.DEVNULL)
+        maia_engine.configure({"WeightsFile": weights_file})
+    else:
+        maia_engine = None
+        console.print(f"[bold yellow]Warning: Maia weights not found at {weights_file}[/bold yellow]")
+except Exception as e:
+    maia_engine = None
+    console.print(f"[bold red]Error initializing Maia:[/bold red] {e}")
+
+# ======================================================================
 # 2. THE TOOLS (STOCKFISH, MAIA, LICHESS EXPLORER)
 # ======================================================================
 
@@ -165,40 +189,48 @@ def analyze_position(fen: str, depth: int = 15) -> dict:
 
 def predict_human_move(fen: str) -> dict:
     """
-    Predicts the most likely move a human player would make using the Maia neural network.
-    Dynamically loads the correct weights based on the user's configured Elo.
+    Predicts the most likely move a human player would make using Maia.
+    THEN, temporarily plays that move and asks Stockfish how to mathematically punish it!
     """
+    # Assuming maia_engine and stockfish_engine are initialized globally
+    if not maia_engine: return {"error": "Maia engine not loaded."}
+    
     try:
-        # Round the user's Elo to the nearest 100, clamped between 1100 and 1900
-        # Specifically targeting the downloaded weights: 1100, 1500, 1900
-        rounded_elo = round(USER_ELO / 100) * 100
-        if rounded_elo <= 1300:
-            maia_target = 1100
-        elif rounded_elo <= 1700:
-            maia_target = 1500
-        else:
-            maia_target = 1900
-
-        weights_file = os.path.join(MAIA_DIR, f"maia-{maia_target}.pb.gz")
-        
-        if not os.path.exists(weights_file):
-            return {"error": f"Weights file {weights_file} not found."}
-
-        # Initialize Lc0 and hide its startup text by pointing stderr to DEVNULL
-        engine = chess.engine.SimpleEngine.popen_uci(
-            LC0_PATH,
-            stderr=subprocess.DEVNULL
-        )
-        engine.configure({"WeightsFile": weights_file})
-        
         board = chess.Board(fen)
-        # CRITICAL: Restrict Maia to exactly 1 node to get raw human intuition, not deep calculation
-        result = engine.play(board, chess.engine.Limit(nodes=1))
-        predicted_move = result.move.uci() if result.move else "None"
-        engine.quit()
         
-        return {"predicted_human_move": predicted_move, "maia_model_used": maia_target}
-    except Exception as e: return {"error": str(e)}
+        # 1. Ask Maia for the human impulse (1 node only)
+        result = maia_engine.play(board, chess.engine.Limit(nodes=1))
+        if not result.move:
+            return {"predicted_human_move": "None"}
+            
+        maia_move_san = board.san(result.move)
+        
+        # 2. Apply the human move to the board
+        board.push(result.move)
+        
+        # 3. Ask Stockfish: "What is the objective reality of this new position?"
+        info = stockfish_engine.analyse(board, chess.engine.Limit(depth=15))
+        
+        # Format the resulting evaluation
+        score = info["score"].white()
+        if score.is_mate(): eval_str = f"Mate in {score.mate()}"
+        else: eval_str = f"{score.score(mate_score=100000) / 100.0:+.2f}"
+        
+        # Extract Stockfish's punishment/continuation line
+        refutation_moves = []
+        temp_board = board.copy()
+        for move in info.get("pv", [])[:4]: # Get the next 4 moves of the punishment
+            refutation_moves.append(temp_board.san(move))
+            temp_board.push(move)
+            
+        return {
+            "predicted_human_move": maia_move_san,
+            "resulting_evaluation_if_played": eval_str,
+            "stockfish_refutation_line": " ".join(refutation_moves)
+        }
+        
+    except Exception as e: 
+        return {"error": str(e)}
 
 def get_opening_repertoire(fen: str) -> dict:
     """
@@ -253,19 +285,6 @@ def get_opening_repertoire(fen: str) -> dict:
             "amateur_brackets_queried": ratings_param
         }
         
-    except Exception as e:
-        return {"error": str(e)}
-
-def print_board(fen: str) -> dict:
-    """
-    Generates a visual text representation of the chess board.
-    Use this if the user asks to "see the board" or "show the position".
-    """
-    try:
-        board = chess.Board(fen)
-        # Using unicode for nice chess piece characters
-        visual = board.unicode(empty_square="·")
-        return {"board_visual": f"\n{visual}\n"}
     except Exception as e:
         return {"error": str(e)}
 
@@ -407,7 +426,8 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
 1. **The Socratic Method:** Do not spoon-feed answers. Ask leading questions. If the student makes a mistake, ask them: "What did your opponent's last move threaten?" Make them think.
 2. **Objective vs. Practical Reality:** Synthesize objective truth (Stockfish) and human probability (Maia / Lichess database). 
    - If Stockfish suggests a move that is only good because of an impossible-to-see 5-move+ tactic, warn the student.
-   - If Maia predicts the opponent will blunder or play sub-optimally, tell the student: "At your level, your opponent is highly likely to play [Move] here. How would we set a trap for that?"
+   - The `predict_human_move` tool now returns BOTH the human impulse AND the Stockfish refutation of that impulse! If Maia predicts the student or opponent will play a tempting blunder, explicitly warn them: "I know [Maia's Move] looks tempting, but if you play it, the evaluation drops to [Evaluation] because of this refutation: [Stockfish Refutation Line]."
+   - IMPORTANT FORMATTING: Do NOT literally print the JSON keys like "stockfish_refutation_line" in your response. Weave the moves naturally into your explanation.
 3. **Speak in Concepts:** At {USER_ELO} Elo, a simple, solid plan is better than a complex engine sequence. Prioritize explaining concepts like King Safety, Piece Activity, controlling the center, and identifying undefended pieces.
 4. **Grounding in Theory:** If `get_opening_repertoire` provides a `theoretical_opening_name`, explicitly state it. Use your deep internal knowledge of chess theory to briefly explain the classical Grandmaster plans. Then, compare the `top_master_moves` against the `typical_amateur_moves` to show the student how their opponents are likely to deviate from GM theory and how to punish it!
 
@@ -433,7 +453,7 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
 config = types.GenerateContentConfig(
     system_instruction=system_instruction,
     tools=[
-        get_fen_from_moves, print_board, fetch_lichess_game_by_id, 
+        get_fen_from_moves, fetch_lichess_game_by_id, 
         fetch_chessgames_com_game,
         query_endgame_tablebase, analyze_position, predict_human_move, get_opening_repertoire
     ],
@@ -556,10 +576,6 @@ try:
                             starting_fen = args_dict.get("starting_fen", fen)
                             result = get_fen_from_moves(starting_fen, moves)
 
-                        elif fn_call.name == "print_board":
-                            console.print("[dim cyan]↳ Generating board visual...[/dim cyan]")
-                            result = print_board(fen)
-
                         elif fn_call.name == "fetch_lichess_game_by_id":
                             console.print("[dim cyan]↳ Fetching game from Lichess...[/dim cyan]")
                             game_id = args_dict.get("game_id", "")
@@ -600,7 +616,15 @@ try:
             except Exception as e:
                 console.print(f"\n[bold red]An API error occurred:[/bold red] {e}")
 
-except KeyboardInterrupt: pass
+except KeyboardInterrupt: 
+    pass
 finally:
     save_history(chat)
+    
+    # Gracefully shut down the background engine threads so the terminal doesn't hang!
+    if stockfish_engine:
+        stockfish_engine.quit()
+    if maia_engine:
+        maia_engine.quit()
+        
     console.print(f"\n[bold dim]Conversation saved to {HISTORY_FILE}. Goodbye![/bold dim]")
