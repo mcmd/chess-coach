@@ -11,6 +11,8 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from dotenv import load_dotenv
+from prompt_toolkit import prompt, HTML
+from prompt_toolkit.history import FileHistory
 
 load_dotenv()
 
@@ -421,7 +423,15 @@ console.print(Panel.fit(
 
 try:
     while True:
-        user_input = console.input("\n[bold blue]You:[/bold blue] ")
+        # Print a blank line using rich for spacing
+        console.print() 
+        
+        # Use prompt_toolkit for input, with cross-session up-arrow history!
+        user_input = prompt(
+            HTML("<b><ansiblue>You:</ansiblue></b> "), 
+            history=FileHistory("chess_cli_history.txt")
+        )
+        
         if user_input.strip().lower() in ['exit', 'quit']: break
         if not user_input.strip(): continue
             

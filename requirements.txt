@@ -9,3 +9,4 @@ stockfish
 rich
 google-genai
 python-dotenv
+prompt_toolkit
