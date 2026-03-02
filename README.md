@@ -13,6 +13,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 
 ## Key Features
 * **Elo-Parametrized Coaching:** The coach adapts its advice, Maia predictions, and Lichess database queries to your exact Elo rating configured in `config.json`.
+* **Profiles:** Create isolated learning environments using the `--profile` flag. This separates your configuration (Elo, model), chat memory, and CLI history into independent subdirectories, perfect for studying different openings or having multiple users.
 * **Socratic Pedagogy:** The agent is prompted to teach concepts (King Safety, Piece Activity) rather than just spoon-feeding Stockfish lines.
 * **Persistent Memory:** The conversation context is saved across sessions (`chess_coach_memory.json`), allowing you to resume your lessons later.
 * **Interactive CLI:** Built with `rich` and `prompt_toolkit`, featuring beautiful markdown rendering, color-coded chess notation, and cross-session up-arrow command history.
@@ -40,14 +41,15 @@ Before running the application, you **must** configure your environment and engi
    GEMINI_API_KEY=your_api_key_here
    ```
 
-2. Create a `config.json` file in the root directory to define your local engine paths and Elo:
+2. Create a `config.json` file in the root directory to define your local engine paths and Elo. **This will act as your default configuration and the template for new profiles:**
    ```json
    {
        "user_elo": 1200,
        "stockfish_path": "/path/to/your/stockfish",
        "lc0_path": "/path/to/your/lc0",
        "maia_weights_dir": "./maia_weights",
-       "gemini_model": "gemini-2.5-pro"
+       "gemini_model": "gemini-2.5-pro",
+       "profiles_dir": "./profiles"
    }
    ```
    *Note: Ensure you download and install [Stockfish](https://stockfishchess.org/download/) and [Lc0](https://lczero.org/play/download/) for your specific operating system.*
@@ -64,6 +66,10 @@ This project is pre-configured to run seamlessly in a Nix-based environment.
 3. **Run the Coach**: Execute the script:
    ```bash
    python coach.py
+   ```
+   *To use a profile, add the flag:*
+   ```bash
+   python coach.py --profile=mcmd
    ```
 
 ### Option 2: Generic Local Setup (From Scratch)

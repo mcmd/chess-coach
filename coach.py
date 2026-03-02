@@ -1,5 +1,7 @@
 import os
 import json
+import argparse
+import shutil
 import requests
 import subprocess
 import chess.pgn
@@ -22,11 +24,58 @@ console = Console()
 # 1. SETUP, CONFIGURATION & ELO PARAMETERIZATION
 # ======================================================================
 
-CONFIG_FILE = "config.json"
-if not os.path.exists(CONFIG_FILE):
-    console.print(f"[bold red]Error:[/bold red] {CONFIG_FILE} not found. Please create it.")
+parser = argparse.ArgumentParser(
+    description="Gemini Chess Coach: An AI-powered, tool-augmented chess coach.",
+    formatter_class=argparse.RawTextHelpFormatter,
+    epilog="""
+Examples:
+  python coach.py                  # Runs the coach using the default root configuration and memory.
+  python coach.py --profile=mcmd   # Loads (or creates) an isolated configuration and memory for 'mcmd'.
+"""
+)
+parser.add_argument(
+    "--profile", 
+    type=str, 
+    help="Name of the profile to load.\n"
+         "This isolates your Elo settings, chat memory, and command history.\n"
+         "If the profile does not exist, it will be created using the root config.json as a template.", 
+    default=None
+)
+args = parser.parse_args()
+
+# Default root paths
+ROOT_CONFIG_FILE = "config.json"
+CONFIG_FILE = ROOT_CONFIG_FILE
+HISTORY_FILE = "chess_coach_memory.json"
+CLI_HISTORY_FILE = "chess_cli_history.txt"
+
+if not os.path.exists(ROOT_CONFIG_FILE):
+    console.print(f"[bold red]Error:[/bold red] {ROOT_CONFIG_FILE} not found in the root directory. Please create it first.")
     exit(1)
 
+# Read the root config first to establish the base profiles directory
+with open(ROOT_CONFIG_FILE, "r") as f:
+    root_config = json.load(f)
+
+# Allow users to customize where profiles are stored via the root config
+BASE_PROFILES_DIR = root_config.get("profiles_dir", "./profiles")
+
+# Handle Profile Logic
+if args.profile:
+    profile_dir = os.path.join(BASE_PROFILES_DIR, args.profile)
+    # os.makedirs safely creates intermediate directories (like 'profiles') if they don't exist
+    os.makedirs(profile_dir, exist_ok=True)
+    
+    CONFIG_FILE = os.path.join(profile_dir, "config.json")
+    HISTORY_FILE = os.path.join(profile_dir, "chess_coach_memory.json")
+    CLI_HISTORY_FILE = os.path.join(profile_dir, "chess_cli_history.txt")
+    
+    # If the profile doesn't have a config yet, copy the root one
+    if not os.path.exists(CONFIG_FILE):
+        console.print(f"[yellow]Creating new config for profile '{args.profile}' from root config.[/yellow]")
+        shutil.copy(ROOT_CONFIG_FILE, CONFIG_FILE)
+
+# Now read the final, active config (either root or profile-specific)
 with open(CONFIG_FILE, "r") as f:
     app_config = json.load(f)
 
@@ -283,8 +332,6 @@ def query_endgame_tablebase(fen: str) -> dict:
 # 3. GEMINI AGENT & MEMORY SETUP
 # ======================================================================
 
-HISTORY_FILE = "chess_coach_memory.json"
-
 def load_history():
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r") as f:
@@ -414,8 +461,10 @@ def process_user_input(user_input):
     enriched_input = f"{user_input}\n\n[System Info: The current board FEN is {current_board.fen()}]"
     return enriched_input, None
 
+profile_text = f" (Profile: {args.profile})" if args.profile else ""
+
 console.print(Panel.fit(
-    f"[bold green]Gemini {GEMINI_MODEL} + Stockfish + Maia Coach (Elo: {USER_ELO})[/bold green]\n"
+    f"[bold green]Gemini {GEMINI_MODEL} + Stockfish + Maia Coach (Elo: {USER_ELO}){profile_text}[/bold green]\n"
     "Type [bold cyan]/load_pgn filename.pgn[/bold cyan] to load a game.\n"
     "Type [bold red]exit[/bold red] to save and close.",
     border_style="green"
@@ -429,7 +478,7 @@ try:
         # Use prompt_toolkit for input, with cross-session up-arrow history!
         user_input = prompt(
             HTML("<b><ansiblue>You:</ansiblue></b> "), 
-            history=FileHistory("chess_cli_history.txt")
+            history=FileHistory(CLI_HISTORY_FILE)
         )
         
         if user_input.strip().lower() in ['exit', 'quit']: break
@@ -522,4 +571,4 @@ try:
 except KeyboardInterrupt: pass
 finally:
     save_history(chat)
-    console.print("\n[bold dim]Conversation saved. Goodbye![/bold dim]")
+    console.print(f"\n[bold dim]Conversation saved to {HISTORY_FILE}. Goodbye![/bold dim]")

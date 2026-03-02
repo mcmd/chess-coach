@@ -1,8 +1,26 @@
+# Environment variables
+.env
+
+# Python virtual environment
+.venv/
 venv/
+env/
 __pycache__/
 *.pyc
-.env
+*.pyo
+
+# IDEs and Editors
+.vscode/
+.idea/
+
+# Application Data & Profiles
+profiles/
 chess_coach_memory.json
-.venv/
-.venv/
 chess_cli_history.txt
+
+# Do not commit the root config, as it often contains local paths to executables
+# Consider providing a `config.example.json` instead
+config.json
+
+# Downloaded games or large files
+*.pgn
