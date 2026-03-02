@@ -95,9 +95,9 @@ client = genai.Client(api_key=api_key)
 # We keep a persistent board state for conversational back-and-forth
 current_board = chess.Board()
 
-# Initialize Stockfish
+# Initialize Stockfish globally using python-chess (Better than the stockfish wrapper!)
 try:
-    stockfish = Stockfish(path=STOCKFISH_PATH)
+    stockfish_engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
 except FileNotFoundError:
     console.print(f"[bold red]Error:[/bold red] Stockfish not found at {STOCKFISH_PATH}.")
     exit(1)
@@ -121,16 +121,47 @@ def get_fen_from_moves(starting_fen: str, moves: list[str]) -> dict:
         return {"error": f"Invalid move sequence: {e}. Starting FEN was: {starting_fen}"}
 
 def analyze_position(fen: str, depth: int = 15) -> dict:
-    """Evaluates a position using Stockfish to find the objective best move."""
+    """Evaluates a position using Stockfish. Returns the objective evaluation, the deep continuation line (PV), and a visual board."""
     try:
-        if not stockfish.is_fen_valid(fen): return {"error": "Invalid FEN"}
-        stockfish.set_fen_position(fen)
-        stockfish.set_depth(depth)
+        board = chess.Board(fen)
+        
+        # multipv=2 tells Stockfish to calculate the top 2 best lines simultaneously
+        infos = stockfish_engine.analyse(board, chess.engine.Limit(depth=depth), multipv=2)
+        
+        top_lines = []
+        for i, info in enumerate(infos):
+            # Format the evaluation score cleanly
+            score = info["score"].white()
+            if score.is_mate(): eval_str = f"Mate in {score.mate()}"
+            else: eval_str = f"{score.score(mate_score=100000) / 100.0:+.2f}"
+            
+            # Extract the Principal Variation (PV) list of moves
+            pv_moves = []
+            temp_board = board.copy()
+            for move in info.get("pv", [])[:5]:  # Cap it at 5 moves deep
+                pv_moves.append(temp_board.san(move))
+                temp_board.push(move)
+                
+            top_lines.append({
+                "rank": i + 1,
+                "evaluation": eval_str,
+                "expected_engine_line": " ".join(pv_moves) # e.g., "Rfe1 exf3 Rxe8+ Rxe8"
+            })
+
+        # FORCE-FEED THE VISUAL BOARD:
+        raw_board = board.unicode(empty_square="·", invert_color=True)
+        lines = raw_board.split('\n')
+        labeled_board = [f"{8-i} │ {line} │  " for i, line in enumerate(lines)]
+        labeled_board.append("\u00A0\u00A0└" + "─" * 17 + "┘  ")
+        labeled_board.append("\u00A0\u00A0\u00A0\u00A0a b c d e f g h  ")
+        visual = "\n".join(labeled_board)
+
         return {
-            "evaluation": stockfish.get_evaluation(),
-            "top_moves": stockfish.get_top_moves(3)
+            "top_stockfish_lines": top_lines,
+            "mandatory_board_visual": f"\n\n{visual}\n\n"
         }
-    except Exception as e: return {"error": str(e)}
+    except Exception as e: 
+        return {"error": str(e)}
 
 def predict_human_move(fen: str) -> dict:
     """
@@ -364,7 +395,7 @@ If you say "Stockfish says" or "Maia predicts", you MUST have actually executed 
 ### ⚙️ MANDATORY GAME ANALYSIS WORKFLOW
 When the user asks you to analyze a downloaded game or a sequence of moves, you CANNOT just read the PGN and immediately reply. You MUST execute this exact step-by-step loop BEFORE generating your final text response:
 1. **Fetch:** Use the appropriate tool to download the game.
-2. **Identify:** Read the PGN silently and isolate 2 to 3 critical moments (e.g., blunders, missed tactics, or opening traps).
+2. **Identify:** Read the PGN silently and isolate 3 to 4 critical moments (e.g., blunders, missed tactics, or opening traps).
 3. **Generate:** For EACH critical moment, you MUST use the `get_fen_from_moves` tool to calculate the exact FEN of the board.
 4. **Analyze:** For EACH FEN generated in Step 3, you MUST call:
    - `analyze_position` (to get objective Stockfish truth).
@@ -383,17 +414,18 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
 ### 📝 FORMATTING & RULES OF ENGAGEMENT
 - **Current State:** The system automatically appends the current board state (FEN) to every message the user sends. You ALWAYS know the current board state.
 - **Endgames:** If there are 7 or fewer pieces on the board, immediately use `query_endgame_tablebase`.
+- **MANDATORY VISUALIZATIONS & LINES:** The `analyze_position` tool will now automatically return a `mandatory_board_visual` string and an `expected_engine_line`. 
+  - You MUST copy and paste the exact `mandatory_board_visual` string into your chat response whenever you analyze a position. NEVER discuss a position without showing the board! DO NOT wrap the board in markdown code blocks.
+  - Use the `expected_engine_line` to definitively prove *why* a move is bad by showing the student how the opponent would mathematically punish them!
+  - IMPORTANT FORMATTING: Do NOT literally print the JSON key "expected_engine_line" in your response. Weave the moves naturally into your explanation (e.g., "The engine calculates the following continuation:", or "Stockfish's optimal line is:").
 - **CHESS NOTATION FORMATTING (STRICT UI REQUIREMENT):**
-  - You MUST wrap EVERY single chess square, piece name, individual move, and move sequence in markdown backticks to render them as `inline code`. 
+  - You MUST wrap EVERY single chess square, individual move, and move sequence in markdown backticks to render them as `inline code` (e.g., `e4`, `Nf3`, `1. d4 d5`).
+  - DO NOT wrap plain English piece names in backticks! Write "your King" or "the Pawn", NEVER "your `King`" or "the `Pawn`". ONLY use backticks for formal algebraic notation and squares.
   - Our terminal UI relies entirely on these backticks to generate the visual highlight boxes. 
   - NEVER use standard bold (`**`) or plain text for anything related to chess notation.
   - ✅ DO THIS: Because your Knight is on `c3`, it no longer defends the `b2` pawn. 
+  - ❌ NEVER DO THIS: Because your `Knight` is on `c3`, it no longer defends the `b2` `Pawn`.
   - ❌ NEVER DO THIS: Because your Knight is on **c3**, it no longer defends the **b2** pawn.
-  - ❌ NEVER DO THIS: Because your Knight is on c3, it no longer defends the b2 pawn.
-  - ✅ DO THIS: The "Grandmaster" Antidote: `5. Na4!`
-  - ❌ NEVER DO THIS: The "Grandmaster" Antidote: **5. Na4!**
-  - ✅ DO THIS: `1. d4 d5 2. Nc3 Nf6`
-  - ❌ NEVER DO THIS: 1. d4 d5 2. Nc3 Nf6
 - Break up your text into easily readable paragraphs or bullet points.
 - Even if you are using the Socratic approach with the user, NEVER use the word "Socratic" in your output (e.g. Don't say "Socratic Question:", just say "Question").
 """
