@@ -5,3 +5,4 @@ __pycache__/
 chess_coach_memory.json
 .venv/
 .venv/
+chess_cli_history.txt
