@@ -106,9 +106,7 @@ except FileNotFoundError:
     console.print(f"[bold red]Error:[/bold red] Stockfish not found at {STOCKFISH_PATH}.")
     exit(1)
 
-# ======================================================================
-# NEW: Initialize Maia globally to eliminate latency!
-# ======================================================================
+# Initialize Maia globally to eliminate latency
 try:
     rounded_elo = round(USER_ELO / 100) * 100
     if rounded_elo <= 1300:
