@@ -1,3 +1,4 @@
+import io
 import os
 import json
 import argparse
@@ -129,6 +130,64 @@ except Exception as e:
 # ======================================================================
 # 2. THE TOOLS (STOCKFISH, MAIA, LICHESS EXPLORER)
 # ======================================================================
+
+def auto_annotate_pgn(user_text: str) -> str:
+    """Scans user text for unannotated PGNs and appends an auto-annotated version."""
+    # Quick bypass if no PGN is present, or if it's already annotated
+    if "1." not in user_text or "[%eval" in user_text:
+        return user_text 
+        
+    try:
+        pgn_io = io.StringIO(user_text)
+        
+        # Check if there's actually a valid game in the text
+        game = chess.pgn.read_game(pgn_io)
+        if not game or len(list(game.mainline_moves())) < 3:
+            return user_text
+            
+        console.print("\n[dim yellow]Unannotated PGN detected. Running fast local Auto-Annotator...[/dim yellow]")
+        
+        annotated_games = []
+        with console.status("[bold yellow]Stockfish is scoring positions...[/bold yellow]", spinner="dots"):
+            # Re-initialize StringIO to start from the beginning and get all games
+            pgn_io = io.StringIO(user_text)
+            while True:
+                game = chess.pgn.read_game(pgn_io)
+                if game is None:
+                    break
+                
+                board = game.board()
+                for node in game.mainline():
+                    board.push(node.move)
+                    
+                    # 0.1 seconds per move easily hits depth 14+
+                    info = stockfish_engine.analyse(board, chess.engine.Limit(time=0.1))
+                    score = info["score"].white()
+                    
+                    if score.is_mate(): 
+                        eval_str = f"#{score.mate()}"
+                    else: 
+                        eval_str = f"{score.score(mate_score=100000) / 100.0:+.2f}"
+                    
+                    # Inject the Lichess-style eval into the PGN comment
+                    if node.comment: 
+                        node.comment += f" [%eval {eval_str}]"
+                    else: 
+                        node.comment = f"[%eval {eval_str}]"
+                
+                exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
+                annotated_games.append(game.accept(exporter))
+                
+        if annotated_games:
+            console.print("[green]Auto-Annotation complete![/green]")
+            annotated_text = "\n\n".join(annotated_games)
+            # Append it to the user's prompt so we don't lose their original question/instructions
+            return f"{user_text}\n\n[System Info: The PGN above lacked engine evaluations. The system has automatically annotated it for you below to use for your analysis:]\n\n{annotated_text}"
+            
+    except Exception as e:
+        console.print(f"[dim red]Auto-annotation failed: {e}[/dim red]")
+        
+    return user_text
 
 def get_fen_from_moves(starting_fen: str, moves: list[str]) -> dict:
     """
@@ -498,21 +557,20 @@ def process_user_input(user_input):
              return None, f"Could not find the file: {file_path}"
              
         try:
-            # 1. Read the raw text so we can send the [%clk] tags to the AI
             with open(file_path, "r") as f:
                 raw_pgn_text = f.read()
                 
-            # 2. Parse it with python-chess just to update our current_board state
-            with open(file_path, "r") as f:
-                game = chess.pgn.read_game(f)
-                if game is None:
-                    return None, "Could not parse PGN file."
-                
+            # RUN AUTO-ANNOTATOR
+            enriched_pgn = auto_annotate_pgn(raw_pgn_text)
+            
+            # Parse it with python-chess just to update our current_board state
+            # (We use StringIO to safely parse the newly generated string)
+            game = chess.pgn.read_game(io.StringIO(enriched_pgn))
+            if game:
                 current_board = game.end().board()
                 
-            # 3. Send the FULL game text to the LLM instead of just the final FEN
-            prompt = f"I have loaded a local game. Here is the full PGN:\n\n{raw_pgn_text}\n\nPlease analyze my play and my time management."
-            return prompt, f"[green]Successfully loaded {file_path}. Processing game and clocks...[/green]"
+            prompt = f"I have loaded a local game. Here is the full PGN:\n\n{enriched_pgn}\n\nPlease analyze my play and my time management."
+            return prompt, f"[green]Successfully loaded {file_path}. Processing game...[/green]"
         except Exception as e:
              return None, f"Error reading PGN: {e}"
 
@@ -529,16 +587,18 @@ def process_user_input(user_input):
         except ValueError:
             return None, f"[red]Invalid or illegal move: {move_str}[/red]"
              
-    # Generate readable algebraic move history
+    # --- NEW: IF THE USER PASTED A RAW PGN INTO THE TERMINAL ---
+    # We pass their raw input through the auto-annotator before handing it to the LLM.
+    processed_input = auto_annotate_pgn(user_input)
+
+    # Generate readable algebraic move history for live sparring
     try:
-        # python-chess natively translates the internal move stack into standard notation (e.g., "1. e4 c5 2. Nf3")
         history_str = chess.Board().variation_san(current_board.move_stack) if current_board.move_stack else "Starting Position"
     except Exception:
         history_str = "Unknown"
 
-    # Secretly append rich context to the user's message
     enriched_input = (
-        f"{user_input}\n\n"
+        f"{processed_input}\n\n"
         f"[System Context for Coach: Current FEN: {current_board.fen()} | Move History: {history_str}]"
     )
     return enriched_input, None

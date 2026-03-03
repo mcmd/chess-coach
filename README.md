@@ -14,6 +14,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 ## Key Features
 * **Elo-Parametrized Coaching:** The coach adapts its advice, Maia predictions, and Lichess database queries to your exact Elo rating configured in `config.json`.
 * **Global Engine Initialization:** Maia and Stockfish engines are initialized globally, reducing latency when loading weights for move predictions and tactical evaluations.
+* **Auto-Annotation Engine:** The system automatically detects unannotated PGNs (whether loaded via file or pasted directly into the chat). It uses a local Stockfish instance to perform a high-speed analysis, injecting `[%eval]` tags into the game text so the LLM can see exactly where the evaluation swings.
 * **Context Enrichment:** User inputs are secretly enriched with the current board's FEN and full algebraic move history (e.g., "1. e4 c5..."), ensuring the LLM always has perfect situational awareness of the ongoing game.
 * **Clock & Time Analysis:** When loading games via PGN, the coach now analyzes clock timestamps (`[%clk]`). It can identify "Hope Chess" (playing too fast on blunders) or "Freezing" (overthinking forced moves), providing feedback on the student's psychological state during the game.
 * **Profiles:** Create isolated learning environments using the `--profile` flag. This separates your configuration (Elo, model), chat memory, and CLI history into independent subdirectories, perfect for studying different openings or having multiple users.
