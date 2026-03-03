@@ -144,11 +144,20 @@ def get_fen_from_moves(starting_fen: str, moves: list[str]) -> dict:
     except ValueError as e:
         return {"error": f"Invalid move sequence: {e}. Starting FEN was: {starting_fen}"}
 
-def analyze_position(fen: str, depth: int = 15) -> dict:
-    """Evaluates a position using Stockfish. Returns the objective evaluation, the deep continuation line (PV), and a visual board."""
+def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 15) -> dict:
+    """
+    Evaluates a position using Stockfish. 
+    If 'moves_to_apply' is provided, it applies those hypothetical moves first before evaluating.
+    Returns the objective evaluation, the deep continuation line (PV), and a visual board.
+    """
     try:
         board = chess.Board(fen)
         
+        # NEW: Apply hypothetical moves if the user is asking "What if I play..."
+        if moves_to_apply:
+            for move_str in moves_to_apply:
+                board.push_san(move_str)
+                
         # multipv=2 tells Stockfish to calculate the top 2 best lines simultaneously
         infos = stockfish_engine.analyse(board, chess.engine.Limit(depth=depth), multipv=2)
         
@@ -162,17 +171,17 @@ def analyze_position(fen: str, depth: int = 15) -> dict:
             # Extract the Principal Variation (PV) list of moves
             pv_moves = []
             temp_board = board.copy()
-            for move in info.get("pv", [])[:5]:  # Cap it at 5 moves deep
+            for move in info.get("pv", [])[:5]:  
                 pv_moves.append(temp_board.san(move))
                 temp_board.push(move)
                 
             top_lines.append({
                 "rank": i + 1,
                 "evaluation": eval_str,
-                "expected_engine_line": " ".join(pv_moves) # e.g., "Rfe1 exf3 Rxe8+ Rxe8"
+                "expected_engine_line": " ".join(pv_moves) 
             })
 
-        # FORCE-FEED THE VISUAL BOARD:
+        # FORCE-FEED THE VISUAL BOARD (Now shows the board AFTER the hypothetical moves!)
         raw_board = board.unicode(empty_square="·", invert_color=True)
         lines = raw_board.split('\n')
         labeled_board = [f"{8-i} │ {line} │  " for i, line in enumerate(lines)]
@@ -430,6 +439,7 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
    - IMPORTANT FORMATTING: Do NOT literally print the JSON keys like "stockfish_refutation_line" in your response. Weave the moves naturally into your explanation.
 3. **Speak in Concepts:** At {USER_ELO} Elo, a simple, solid plan is better than a complex engine sequence. Prioritize explaining concepts like King Safety, Piece Activity, controlling the center, and identifying undefended pieces.
 4. **Grounding in Theory:** If `get_opening_repertoire` provides a `theoretical_opening_name`, explicitly state it. Use your deep internal knowledge of chess theory to briefly explain the classical Grandmaster plans. Then, compare the `top_master_moves` against the `typical_amateur_moves` to show the student how their opponents are likely to deviate from GM theory and how to punish it!
+5. **Handling Hypotheticals:** If the user asks "What if I play [Move]?", "Why can't I play [Move]?", or suggests an alternative idea, IMMEDIATELY use the `analyze_position` tool and pass their proposed move sequence into the `moves_to_apply` parameter. Use the returned `expected_engine_line` to prove exactly how their idea would be mathematically punished or rewarded!
 
 ### 📝 FORMATTING & RULES OF ENGAGEMENT
 - **Current State:** The system automatically appends the current board state (FEN) to every message the user sends. You ALWAYS know the current board state.
@@ -602,7 +612,8 @@ try:
 
                         elif fn_call.name == "analyze_position":
                             console.print("[dim cyan]↳ Interfacing with local Stockfish...[/dim cyan]")
-                            result = analyze_position(fen, int(args_dict.get("depth", 15)))
+                            moves = args_dict.get("moves_to_apply", None)
+                            result = analyze_position(fen, moves_to_apply=moves, depth=int(args_dict.get("depth", 15)))
                         
                         elif fn_call.name == "predict_human_move":
                             console.print(f"[dim magenta]↳ Asking Maia what a {USER_ELO} human would do...[/dim magenta]")
