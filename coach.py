@@ -34,6 +34,7 @@ Examples:
   python coach.py --profile=mcmd   # Loads (or creates) an isolated configuration and memory for 'mcmd'.
 """
 )
+parser.add_argument("--wipe_memory", action="store_true", help="Clear the chat memory (chess_coach_memory.json) before starting the coach.")
 parser.add_argument(
     "--profile", 
     type=str, 
@@ -75,6 +76,9 @@ if args.profile:
     if not os.path.exists(CONFIG_FILE):
         console.print(f"[yellow]Creating new config for profile '{args.profile}' from root config.[/yellow]")
         shutil.copy(ROOT_CONFIG_FILE, CONFIG_FILE)
+if args.wipe_memory and os.path.exists(HISTORY_FILE):
+    os.remove(HISTORY_FILE)
+    console.print(f"[bold red]Memory wiped:[/bold red] {HISTORY_FILE} has been cleared.")
 
 # Now read the final, active config (either root or profile-specific)
 with open(CONFIG_FILE, "r") as f:
@@ -131,61 +135,115 @@ except Exception as e:
 # 2. THE TOOLS (STOCKFISH, MAIA, LICHESS EXPLORER)
 # ======================================================================
 
-def auto_annotate_pgn(user_text: str) -> str:
-    """Scans user text for unannotated PGNs and appends an auto-annotated version."""
-    # Quick bypass if no PGN is present, or if it's already annotated
-    if "1." not in user_text or "[%eval" in user_text:
+def scan_game_for_critical_moments(user_text: str) -> str:
+    """Scans the PGN and injects custom tags for Only Moves and Dodged Traps."""
+    if "1." not in user_text:
         return user_text 
         
     try:
         pgn_io = io.StringIO(user_text)
-        
-        # Check if there's actually a valid game in the text
         game = chess.pgn.read_game(pgn_io)
         if not game or len(list(game.mainline_moves())) < 3:
             return user_text
             
-        console.print("\n[dim yellow]Unannotated PGN detected. Running fast local Auto-Annotator...[/dim yellow]")
+        console.print("\n[dim yellow]Scanning game(s) for brilliant moments and blunders...[/dim yellow]")
         
         annotated_games = []
-        with console.status("[bold yellow]Stockfish is scoring positions...[/bold yellow]", spinner="dots"):
-            # Re-initialize StringIO to start from the beginning and get all games
+        with console.status("[bold yellow]Stockfish & Maia are analyzing critical paths...[/bold yellow]", spinner="dots"):
             pgn_io = io.StringIO(user_text)
             while True:
                 game = chess.pgn.read_game(pgn_io)
-                if game is None:
-                    break
+                if game is None: break
                 
                 board = game.board()
                 for node in game.mainline():
-                    board.push(node.move)
+                    played_move = node.move
+                    is_only_move = False
+                    dodged_trap = False
+                    maia_san = ""
                     
-                    # 0.1 seconds per move easily hits depth 14+
-                    info = stockfish_engine.analyse(board, chess.engine.Limit(time=0.1))
-                    score = info["score"].white()
+                    if stockfish_engine:
+                        turn_color = board.turn
+                        # Baseline the position BEFORE the move
+                        info = stockfish_engine.analyse(board, chess.engine.Limit(time=0.1), multipv=2)
+                        
+                        if info and len(info) > 0 and "pv" in info[0]:
+                            best_move = info[0]["pv"][0]
+                            best_score = info[0]["score"].pov(turn_color).score(mate_score=100000)
+                            
+                            if best_score is not None:
+                                # 1. ONLY MOVE CHECK
+                                if len(info) > 1 and played_move == best_move and "pv" in info[1]:
+                                    second_score = info[1]["score"].pov(turn_color).score(mate_score=100000)
+                                    if second_score is not None and (best_score - second_score) >= 150: # 1.5 pawn gap
+                                        is_only_move = True
+                                
+                                # 2. DODGED HUMAN TRAP CHECK (Completely Independent!)
+                                if maia_engine:
+                                    maia_res = maia_engine.play(board, chess.engine.Limit(nodes=1))
+                                    maia_move = maia_res.move if maia_res else None
+                                    
+                                    if maia_move and maia_move != played_move:
+                                        # Fast Eval: How good was the move you actually played?
+                                        if played_move == best_move:
+                                            played_score = best_score
+                                        elif len(info) > 1 and "pv" in info[1] and played_move == info[1]["pv"][0]:
+                                            played_score = info[1]["score"].pov(turn_color).score(mate_score=100000)
+                                        else:
+                                            board.push(played_move)
+                                            info_played = stockfish_engine.analyse(board, chess.engine.Limit(time=0.05))
+                                            played_score = info_played["score"].pov(turn_color).score(mate_score=100000)
+                                            board.pop()
+                                            
+                                        # Fast Eval: How bad was the move Maia predicted?
+                                        if maia_move == best_move:
+                                            maia_score = best_score
+                                        elif len(info) > 1 and "pv" in info[1] and maia_move == info[1]["pv"][0]:
+                                            maia_score = info[1]["score"].pov(turn_color).score(mate_score=100000)
+                                        else:
+                                            board.push(maia_move)
+                                            info_maia = stockfish_engine.analyse(board, chess.engine.Limit(time=0.05))
+                                            maia_score = info_maia["score"].pov(turn_color).score(mate_score=100000)
+                                            board.pop()
+                                            
+                                        if played_score is not None and maia_score is not None:
+                                            # If your move was solid (within 1 pawn of the absolute best move)
+                                            # AND Maia's predicted move was a blunder (at least 1.5 pawns worse than what you played)
+                                            if (best_score - played_score) <= 100 and (played_score - maia_score) >= 150:
+                                                dodged_trap = True
+                                                maia_san = board.san(maia_move)
                     
-                    if score.is_mate(): 
-                        eval_str = f"#{score.mate()}"
-                    else: 
-                        eval_str = f"{score.score(mate_score=100000) / 100.0:+.2f}"
+                    comment = node.comment if node.comment else ""
+                    board.push(played_move)
                     
-                    # Inject the Lichess-style eval into the PGN comment
-                    if node.comment: 
-                        node.comment += f" [%eval {eval_str}]"
-                    else: 
-                        node.comment = f"[%eval {eval_str}]"
+                    # Apply the tags
+                    tag_string = ""
+                    if is_only_move:
+                        tag_string += " [⭐ ONLY MOVE FOUND!]"
+                    if dodged_trap:
+                        tag_string += f" [🛡️ DODGED HUMAN TRAP! Maia predicted {maia_san}]"
+                            
+                    # Inject basic evaluation if missing
+                    if "[%eval" not in user_text and stockfish_engine:
+                        info_after = stockfish_engine.analyse(board, chess.engine.Limit(time=0.1))
+                        score_after = info_after["score"].white()
+                        if score_after.is_mate(): eval_str = f"#{score_after.mate()}"
+                        else: eval_str = f"{score_after.score(mate_score=100000) / 100.0:+.2f}"
+                        tag_string += f" [%eval {eval_str}]"
+
+                    if tag_string:
+                        node.comment = (comment + tag_string).strip()
                 
                 exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
                 annotated_games.append(game.accept(exporter))
                 
         if annotated_games:
-            console.print("[green]Auto-Annotation complete![/green]")
+            console.print("[green]Scan complete![/green]")
             annotated_text = "\n\n".join(annotated_games)
-            # Append it to the user's prompt so we don't lose their original question/instructions
-            return f"{user_text}\n\n[System Info: The PGN above lacked engine evaluations. The system has automatically annotated it for you below to use for your analysis:]\n\n{annotated_text}"
+            return f"{user_text}\n\n[System Info: I have scanned the PGN and added Brilliancy tags below. Please use THIS version of the PGN for your analysis:]\n\n{annotated_text}"
             
     except Exception as e:
-        console.print(f"[dim red]Auto-annotation failed: {e}[/dim red]")
+        console.print(f"[dim red]Game scan failed: {e}[/dim red]")
         
     return user_text
 
@@ -385,7 +443,9 @@ def fetch_lichess_game_by_id(game_id: str) -> dict:
         response = requests.get(url, params=params, headers=headers)
         
         if response.status_code == 200:
-            return {"pgn": response.text}
+            console.print("[dim yellow]↳ Running Brilliancy Scanner on downloaded Lichess game...[/dim yellow]")
+            scanned_pgn = scan_game_for_critical_moments(response.text)
+            return {"pgn": scanned_pgn}
         elif response.status_code == 404:
             return {"error": f"Game with ID '{game_id}' not found."}
         else:
@@ -482,7 +542,9 @@ If you say "Stockfish says" or "Maia predicts", you MUST have actually executed 
 ### ⚙️ MANDATORY GAME ANALYSIS WORKFLOW
 When the user asks you to analyze a downloaded game or a sequence of moves, you CANNOT just read the PGN and immediately reply. You MUST execute this exact step-by-step loop BEFORE generating your final text response:
 1. **Fetch:** Use the appropriate tool to download the game.
-2. **Identify:** Read the PGN silently and isolate 3 to 4 critical moments (e.g., blunders, missed tactics, or opening traps).
+2. **Identify:** Read the PGN silently and isolate 4 to 5 critical moments. You MUST strive for a balance of negative and positive reinforcement:
+   - **Mistakes:** Identify critical blunders or mistakes (look for sudden drops in `[%eval]`).
+   - **Brilliant Saves:** Look specifically for moves explicitly tagged with `[⭐ ONLY MOVE FOUND!]` or `[🛡️ DODGED HUMAN TRAP!]` in the PGN. If the student navigated a minefield or successfully avoided a tempting human blunder, heavily praise them!
 3. **Generate:** For EACH critical moment, you MUST use the `get_fen_from_moves` tool to calculate the exact FEN of the board.
 4. **Analyze:** For EACH FEN generated in Step 3, you MUST call:
    - `analyze_position` (to get objective Stockfish truth).
@@ -504,6 +566,10 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
    - **"Hope Chess" (Impulse Blunders):** If they make a critical blunder or miss a tactic in under 10 seconds, explicitly call them out! Tell them: "You only spent X seconds on this move. You played 'Hope Chess' instead of calculating."
    - **"Freezing" (Overthinking):** If they spend over 60 seconds on a completely forced move (like escaping a check or making an obvious recapture), warn them about "freezing" and hallucinating phantom threats.
    - ALWAYS weave the exact time they spent into your explanation (e.g., "You played this blunder in only 6 seconds!").
+7. **Positive Reinforcement:** 
+   - If the student found a move tagged with `[⭐ ONLY MOVE FOUND!]`, explicitly praise them for navigating a tactical minefield where any other move would lose.
+   - If a move is tagged with `[🛡️ DODGED HUMAN TRAP!]`, explicitly praise them for resisting temptation! Explain *why* the natural human impulse (the move Maia predicted) was a dangerous trap, and how the student's actual move brilliantly bypassed it.
+   - 🛑 CRITICAL FORMATTING RULE: The tags `[⭐ ONLY MOVE FOUND!]` and `[🛡️ DODGED HUMAN TRAP!]` are secret backend metadata for your eyes only. NEVER literally print these bracketed tags or emojis in your final text response to the student! Instead, translate the concept into natural, conversational human language (e.g., "You found the absolute only move on the board to save the game!", or "Maia predicted most players would play X, but you successfully dodged the trap!").
 
 ### 📝 FORMATTING & RULES OF ENGAGEMENT
 - **Current State:** The system automatically appends the current board state (FEN) to every message the user sends. You ALWAYS know the current board state.
@@ -560,8 +626,8 @@ def process_user_input(user_input):
             with open(file_path, "r") as f:
                 raw_pgn_text = f.read()
                 
-            # RUN AUTO-ANNOTATOR
-            enriched_pgn = auto_annotate_pgn(raw_pgn_text)
+            # RUN SCANNER
+            enriched_pgn = scan_game_for_critical_moments(raw_pgn_text)
             
             # Parse it with python-chess just to update our current_board state
             # (We use StringIO to safely parse the newly generated string)
@@ -588,8 +654,8 @@ def process_user_input(user_input):
             return None, f"[red]Invalid or illegal move: {move_str}[/red]"
              
     # --- NEW: IF THE USER PASTED A RAW PGN INTO THE TERMINAL ---
-    # We pass their raw input through the auto-annotator before handing it to the LLM.
-    processed_input = auto_annotate_pgn(user_input)
+    # We pass their raw input through the scanner before handing it to the LLM.
+    processed_input = scan_game_for_critical_moments(user_input)
 
     # Generate readable algebraic move history for live sparring
     try:
