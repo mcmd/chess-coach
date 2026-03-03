@@ -440,6 +440,11 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
 3. **Speak in Concepts:** At {USER_ELO} Elo, a simple, solid plan is better than a complex engine sequence. Prioritize explaining concepts like King Safety, Piece Activity, controlling the center, and identifying undefended pieces.
 4. **Grounding in Theory:** If `get_opening_repertoire` provides a `theoretical_opening_name`, explicitly state it. Use your deep internal knowledge of chess theory to briefly explain the classical Grandmaster plans. Then, compare the `top_master_moves` against the `typical_amateur_moves` to show the student how their opponents are likely to deviate from GM theory and how to punish it!
 5. **Handling Hypotheticals:** If the user asks "What if I play [Move]?", "Why can't I play [Move]?", or suggests an alternative idea, IMMEDIATELY use the `analyze_position` tool and pass their proposed move sequence into the `moves_to_apply` parameter. Use the returned `expected_engine_line` to prove exactly how their idea would be mathematically punished or rewarded!
+6. **Time Management (Clock Analysis):** If the provided PGN contains clock timestamps (e.g., `[%clk 0:10:00]`), you MUST evaluate the student's time management on their critical mistakes. 
+   - Calculate the estimated time spent by comparing the clock on their blunder to the clock on their *previous* turn (factor in any time increment if noted in the headers). 
+   - **"Hope Chess" (Impulse Blunders):** If they make a critical blunder or miss a tactic in under 10 seconds, explicitly call them out! Tell them: "You only spent X seconds on this move. You played 'Hope Chess' instead of calculating."
+   - **"Freezing" (Overthinking):** If they spend over 60 seconds on a completely forced move (like escaping a check or making an obvious recapture), warn them about "freezing" and hallucinating phantom threats.
+   - ALWAYS weave the exact time they spent into your explanation (e.g., "You played this blunder in only 6 seconds!").
 
 ### 📝 FORMATTING & RULES OF ENGAGEMENT
 - **Current State:** The system automatically appends the current board state (FEN) to every message the user sends. You ALWAYS know the current board state.
@@ -493,16 +498,21 @@ def process_user_input(user_input):
              return None, f"Could not find the file: {file_path}"
              
         try:
+            # 1. Read the raw text so we can send the [%clk] tags to the AI
+            with open(file_path, "r") as f:
+                raw_pgn_text = f.read()
+                
+            # 2. Parse it with python-chess just to update our current_board state
             with open(file_path, "r") as f:
                 game = chess.pgn.read_game(f)
                 if game is None:
                     return None, "Could not parse PGN file."
                 
                 current_board = game.end().board()
-                fen = current_board.fen()
                 
-                prompt = f"I have loaded a game. The final position FEN is: {fen}. Please analyze this position."
-                return prompt, f"[green]Successfully loaded {file_path}. Processing position...[/green]"
+            # 3. Send the FULL game text to the LLM instead of just the final FEN
+            prompt = f"I have loaded a local game. Here is the full PGN:\n\n{raw_pgn_text}\n\nPlease analyze my play and my time management."
+            return prompt, f"[green]Successfully loaded {file_path}. Processing game and clocks...[/green]"
         except Exception as e:
              return None, f"Error reading PGN: {e}"
 
