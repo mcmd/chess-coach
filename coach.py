@@ -9,7 +9,6 @@ import chess.pgn
 import chess.engine
 from google import genai
 from google.genai import types
-from stockfish import Stockfish
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -479,7 +478,10 @@ def fetch_chessgames_com_game(game_id: str) -> dict:
             if not pgn_text or not pgn_text.startswith("[Event"):
                 return {"error": "Received malformed data. Are you sure this is a valid game ID?"}
                 
-            return {"pgn": pgn_text}
+            console.print("[dim yellow]↳ Running Brilliancy Scanner on downloaded Master game...[/dim yellow]")
+            scanned_pgn = scan_game_for_critical_moments(pgn_text)
+            
+            return {"pgn": scanned_pgn}
             
         elif response.status_code == 404:
             return {"error": f"Game with ID '{game_id}' not found on chessgames.com."}
