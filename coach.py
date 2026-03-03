@@ -509,8 +509,18 @@ def process_user_input(user_input):
         except ValueError:
             return None, f"[red]Invalid or illegal move: {move_str}[/red]"
              
-    # If it's a normal message, secretly append the current FEN so Gemini knows what the board looks like right now
-    enriched_input = f"{user_input}\n\n[System Info: The current board FEN is {current_board.fen()}]"
+    # Generate readable algebraic move history
+    try:
+        # python-chess natively translates the internal move stack into standard notation (e.g., "1. e4 c5 2. Nf3")
+        history_str = chess.Board().variation_san(current_board.move_stack) if current_board.move_stack else "Starting Position"
+    except Exception:
+        history_str = "Unknown"
+
+    # Secretly append rich context to the user's message
+    enriched_input = (
+        f"{user_input}\n\n"
+        f"[System Context for Coach: Current FEN: {current_board.fen()} | Move History: {history_str}]"
+    )
     return enriched_input, None
 
 profile_text = f" (Profile: {args.profile})" if args.profile else ""
