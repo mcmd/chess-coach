@@ -91,6 +91,10 @@ client = genai.Client(api_key=api_key)
 
 current_board = chess.Board()
 
+# Set up storage for board sleight of hand
+board_visuals = {}
+board_counter = 0
+
 # ======================================================================
 # ENGINE INITIALIZATION (Now with optimized Threads and Hash!)
 # ======================================================================
@@ -320,9 +324,36 @@ def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 15
             labeled_board.append("  └" + "─" * 17 + "┘")
             labeled_board.append("    a b c d e f g h")
 
+        # FORMAT THE VISUAL BOARD
+        raw_board = board.unicode(empty_square="·")
+        lines = raw_board.split('\n')
+        
+        labeled_board = []
+        if pov.lower() == "black":
+            lines.reverse() # Flips ranks 1-8 to 8-1
+            for i, line in enumerate(lines):
+                reversed_chars = " ".join(line.split(" ")[::-1])
+                labeled_board.append(f"{i+1} │ {reversed_chars} │")
+            labeled_board.append("  └" + "─" * 17 + "┘")
+            labeled_board.append("    h g f e d c b a")
+        else:
+            for i, line in enumerate(lines):
+                labeled_board.append(f"{8-i} │ {line} │")
+            labeled_board.append("  └" + "─" * 17 + "┘")
+            labeled_board.append("    a b c d e f g h")
+
         visual = "```text\n" + "\n".join(labeled_board) + "\n```"
 
-        return {"top_stockfish_lines": top_lines, "mandatory_board_visual": f"\n{visual}\n"}
+        # --- NEW: TOKEN REPLACEMENT LOGIC ---
+        global board_counter, board_visuals
+        board_counter += 1
+        token = f"[[BOARD_{board_counter}]]"
+        board_visuals[token] = visual
+
+        return {
+            "top_stockfish_lines": top_lines, 
+            "board_token_to_insert": token
+        }
     except Exception as e: return {"error": str(e)}
 
 def predict_human_move(fen: str) -> dict:
@@ -507,11 +538,11 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
 - **Current State:** The system automatically appends the current board state (FEN) to every message the user sends. You ALWAYS know the current board state.
 - **Handling Follow-ups & Past Moves:** If the user asks a follow-up question about a specific past move, DO NOT guess the board state! Find that move in the PGN, grab the `[%fen "..."]` tag from the move *prior* to it, and pass it to `analyze_position` to get the true visual board before replying.
 - **Endgames:** If there are 7 or fewer pieces on the board, immediately use `query_endgame_tablebase`.
-- **MANDATORY VISUALIZATIONS & LINES:** The `analyze_position` tool will now automatically return a `mandatory_board_visual` string and an `expected_engine_line`. 
-  - 🛑 CRITICAL: NEVER attempt to draw, type, or format an ASCII chess board yourself! You are highly prone to hallucinating piece locations and colors (e.g., putting White pieces on Rank 8).
-  - You MUST copy and paste the exact `mandatory_board_visual` string into your chat response whenever you analyze a position. NEVER discuss a position without showing the board! DO NOT wrap the board in markdown code blocks.
+- **MANDATORY VISUALIZATIONS & LINES:** The `analyze_position` tool will return a `board_token_to_insert` (e.g., `[[BOARD_1]]`). 
+  - 🛑 CRITICAL: NEVER attempt to draw, type, or format an ASCII chess board yourself! You are highly prone to hallucinating piece locations.
+  - You MUST copy and paste the EXACT token (like `[[BOARD_1]]`) into your chat response wherever you want the board to appear. The backend system will automatically replace your token with the correct graphical board.
   - Use the `expected_engine_line` to definitively prove *why* a move is bad by showing the student how the opponent would mathematically punish them!
-  - **Board POV:** The `analyze_position` tool accepts a `pov` argument ("white" or "black"). You MUST set `pov="black"` if the student played the Black pieces in the analyzed game, so the board renders correctly from their perspective. Otherwise, default to "white".
+  - **Board POV:** The `analyze_position` tool accepts a `pov` argument ("white" or "black"). You MUST set `pov="black"` if the student played the Black pieces.
 - **CHESS NOTATION FORMATTING (STRICT UI REQUIREMENT):**
   - You MUST wrap EVERY single chess square, individual move, and move sequence in markdown backticks to render them as `inline code` (e.g., `e4`, `Nf3`, `1. d4 d5`).
   - DO NOT wrap plain English piece names in backticks! Write "your King" or "the Pawn", NEVER "your `King`" or "the `Pawn`". ONLY use backticks for formal algebraic notation and squares.
@@ -664,10 +695,16 @@ try:
                     
                     response = chat.send_message(tool_parts)
                 if response.text:
+                    output_text = response.text
+                    
+                    # Swap the tokens for the actual ASCII graphics
+                    for token, visual in board_visuals.items():
+                        output_text = output_text.replace(token, f"\n{visual}\n")
+                        
                     console.print("\n[bold purple]Coach Gemini:[/bold purple]")
-                    console.print(Markdown(response.text))
-                else: console.print("\n[bold red]Error: Received no text response from the model.[/bold red]")
-
+                    console.print(Markdown(output_text))
+                else: 
+                    console.print("\n[bold red]Error: Received no text response from the model.[/bold red]")
             except Exception as e: console.print(f"\n[bold red]An API error occurred:[/bold red] {e}")
 
 except KeyboardInterrupt: pass
