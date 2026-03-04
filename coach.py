@@ -5,6 +5,7 @@ import argparse
 import shutil
 import requests
 import subprocess
+import chess
 import chess.pgn
 import chess.engine
 from google import genai
@@ -140,6 +141,78 @@ def eval_move(board, move, time_limit, turn_color):
     score = engine_cache[key]["score"].pov(turn_color).score(mate_score=100000)
     board.pop()
     return score
+
+def extract_board_features(board: chess.Board) -> dict:
+    """Fast, pure-python extraction of structural and safety features."""
+    features = {
+        "pawn_structure": {},
+        "piece_safety": {"hanging_white": [], "hanging_black": [], "pinned_white": [], "pinned_black": []}
+    }
+    
+    files = "abcdefgh"
+    
+    def get_pawn_data(color):
+        counts = {f: 0 for f in files}
+        pawns = list(board.pieces(chess.PAWN, color))
+        for sq in pawns: counts[files[chess.square_file(sq)]] += 1
+            
+        islands = 0
+        in_island = False
+        for f in files:
+            if counts[f] > 0 and not in_island:
+                islands += 1
+                in_island = True
+            elif counts[f] == 0:
+                in_island = False
+                
+        isolated = []
+        for sq in pawns:
+            f = chess.square_file(sq)
+            left = counts[files[f - 1]] > 0 if f > 0 else False
+            right = counts[files[f + 1]] > 0 if f < 7 else False
+            if not left and not right:
+                isolated.append(chess.square_name(sq))
+                
+        return {"islands": islands, "isolated": isolated, "file_counts": counts}
+
+    w_data = get_pawn_data(chess.WHITE)
+    b_data = get_pawn_data(chess.BLACK)
+    
+    open_files, half_open_w, half_open_b = [], [], []
+    for f in files:
+        w, b = w_data["file_counts"][f], b_data["file_counts"][f]
+        if w == 0 and b == 0: open_files.append(f)
+        elif w == 0 and b > 0: half_open_w.append(f)
+        elif b == 0 and w > 0: half_open_b.append(f)
+        
+    features["pawn_structure"] = {
+        "white_pawn_islands": w_data["islands"],
+        "black_pawn_islands": b_data["islands"],
+        "white_isolated_pawns": w_data["isolated"],
+        "black_isolated_pawns": b_data["isolated"],
+        "open_files": open_files,
+        "half_open_for_white": half_open_w,
+        "half_open_for_black": half_open_b
+    }
+    
+    # --- Piece Safety ---
+    for color, hanging_key, pinned_key in [(chess.WHITE, "hanging_white", "pinned_white"), 
+                                           (chess.BLACK, "hanging_black", "pinned_black")]:
+        opp_color = not color
+        for sq in chess.SQUARES:
+            piece = board.piece_at(sq)
+            if piece and piece.color == color:
+                sq_name = chess.square_name(sq)
+                if board.is_pinned(color, sq):
+                    features["piece_safety"][pinned_key].append(f"{piece.symbol()} on {sq_name}")
+                # Check hanging (attacked but 0 defenders) - skip king
+                if piece.piece_type != chess.KING:
+                    attackers = board.attackers(opp_color, sq)
+                    defenders = board.attackers(color, sq)
+                    if attackers and not defenders:
+                        features["piece_safety"][hanging_key].append(f"{piece.symbol()} on {sq_name}")
+
+    return features
 
 def _safe_get_json(url: str, params: dict = None) -> dict:
     """Robust network request helper to prevent terminal hanging and encoding errors."""
@@ -303,27 +376,6 @@ def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 15
                 
             top_lines.append({"rank": i + 1, "evaluation": eval_str, "expected_engine_line": " ".join(pv_moves)})
 
-        # FORCE-FEED THE VISUAL BOARD
-        raw_board = board.unicode(empty_square="·", invert_color=True)
-        lines = raw_board.split('\n')
-        
-        labeled_board = []
-        
-        # --- NEW: POV FLIPPING LOGIC ---
-        if pov.lower() == "black":
-            lines.reverse() # Flips ranks 1-8 to 8-1
-            for i, line in enumerate(lines):
-                # Reverse the characters in the line (flips files a-h to h-a)
-                reversed_chars = " ".join(line.split(" ")[::-1])
-                labeled_board.append(f"{i+1} │ {reversed_chars} │")
-            labeled_board.append("  └" + "─" * 17 + "┘")
-            labeled_board.append("    h g f e d c b a")
-        else:
-            for i, line in enumerate(lines):
-                labeled_board.append(f"{8-i} │ {line} │")
-            labeled_board.append("  └" + "─" * 17 + "┘")
-            labeled_board.append("    a b c d e f g h")
-
         # FORMAT THE VISUAL BOARD
         raw_board = board.unicode(empty_square="·")
         lines = raw_board.split('\n')
@@ -344,15 +396,19 @@ def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 15
 
         visual = "```text\n" + "\n".join(labeled_board) + "\n```"
 
-        # --- NEW: TOKEN REPLACEMENT LOGIC ---
+        # --- TOKEN REPLACEMENT LOGIC ---
         global board_counter, board_visuals
         board_counter += 1
         token = f"[[BOARD_{board_counter}]]"
         board_visuals[token] = visual
 
+        # --- NEW: EXTRACT BOARD GEOMETRY ---
+        board_features = extract_board_features(board)
+
         return {
             "top_stockfish_lines": top_lines, 
-            "board_token_to_insert": token
+            "board_token_to_insert": token,
+            "positional_and_safety_features": board_features # <-- INJECTED HERE!
         }
     except Exception as e: return {"error": str(e)}
 
@@ -521,6 +577,9 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
    - If Stockfish suggests a move that is only good because of an impossible-to-see 5-move+ tactic, warn the student.
    - The `predict_human_move` tool now returns BOTH the human impulse AND the Stockfish refutation of that impulse! If Maia predicts the student or opponent will play a tempting blunder, explicitly warn them: "I know [Maia's Move] looks tempting, but if you play it, the evaluation drops to [Evaluation] because of this refutation: [Stockfish Refutation Line]."
 3. **Speak in Concepts:** At {USER_ELO} Elo, a simple, solid plan is better than a complex engine sequence. Prioritize explaining concepts like King Safety, Piece Activity, controlling the center, and identifying undefended pieces.
+   - **Positional & Safety Lenses:** The `analyze_position` tool now automatically returns `positional_and_safety_features` (e.g., open files, pawn islands, hanging pieces, pinned pieces). 
+   - 🛑 ANTI-BLOAT RULE: DO NOT print these features as a robotic checklist (e.g., do not write "Piece safety flags: None"). 
+   - DO use this data to organically explain *why* a move is good or bad. If the student blunders, check the data: did they leave a piece hanging? Did they ignore a pin? Weave these geometric truths naturally into your prose (e.g., "You missed that your Knight on f3 was completely hanging!").
 4. **Grounding in Theory:** If `get_opening_repertoire` provides a `theoretical_opening_name`, explicitly state it. Use your deep internal knowledge of chess theory to briefly explain the classical Grandmaster plans. Then, compare the `top_master_moves` against the `typical_amateur_moves` to show the student how their opponents are likely to deviate from GM theory and how to punish it!
 5. **Handling Hypotheticals:** If the user asks "What if I play [Move]?", "Why can't I play [Move]?", or suggests an alternative idea, IMMEDIATELY use the `analyze_position` tool and pass their proposed move sequence into the `moves_to_apply` parameter. Use the returned `expected_engine_line` to prove exactly how their idea would be mathematically punished or rewarded!
 6. **Time Management (Clock Analysis):** If the provided PGN contains clock timestamps (e.g., `[%clk 0:10:00]`), you MUST evaluate the student's time management on their critical mistakes. 
