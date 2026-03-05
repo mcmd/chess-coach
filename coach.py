@@ -156,14 +156,18 @@ def extract_board_features(board: chess.Board) -> dict:
         pawns = list(board.pieces(chess.PAWN, color))
         for sq in pawns: counts[files[chess.square_file(sq)]] += 1
             
-        islands = 0
-        in_island = False
+        # 1. Map exact island spans (e.g. ["a-d", "f-h"]) so the AI can't guess!
+        islands = []
+        current_island = []
         for f in files:
-            if counts[f] > 0 and not in_island:
-                islands += 1
-                in_island = True
-            elif counts[f] == 0:
-                in_island = False
+            if counts[f] > 0:
+                current_island.append(f)
+            else:
+                if current_island:
+                    islands.append(f"{current_island[0]}-{current_island[-1]}" if len(current_island) > 1 else current_island[0])
+                    current_island = []
+        if current_island:
+            islands.append(f"{current_island[0]}-{current_island[-1]}" if len(current_island) > 1 else current_island[0])
                 
         isolated = []
         for sq in pawns:
@@ -173,11 +177,21 @@ def extract_board_features(board: chess.Board) -> dict:
             if not left and not right:
                 isolated.append(chess.square_name(sq))
                 
-        return {"islands": islands, "isolated": isolated, "file_counts": counts}
+        doubled = [f for f in files if counts[f] > 1]
+                
+        return {
+            "total_pawns": len(pawns),
+            "island_count": len(islands),
+            "island_spans": islands,
+            "isolated": isolated,
+            "doubled_files": doubled,
+            "file_counts": counts
+        }
 
     w_data = get_pawn_data(chess.WHITE)
     b_data = get_pawn_data(chess.BLACK)
     
+    # 2. Find Open and Half-Open Files
     open_files, half_open_w, half_open_b = [], [], []
     for f in files:
         w, b = w_data["file_counts"][f], b_data["file_counts"][f]
@@ -185,11 +199,33 @@ def extract_board_features(board: chess.Board) -> dict:
         elif w == 0 and b > 0: half_open_w.append(f)
         elif b == 0 and w > 0: half_open_b.append(f)
         
+    # 3. Find Passed Pawns (NEW!)
+    passed_w, passed_b = [], []
+    for sq in board.pieces(chess.PAWN, chess.WHITE):
+        f, r = chess.square_file(sq), chess.square_rank(sq)
+        blockers = [osq for osq in board.pieces(chess.PAWN, chess.BLACK) 
+                    if abs(chess.square_file(osq) - f) <= 1 and chess.square_rank(osq) > r]
+        if not blockers: passed_w.append(chess.square_name(sq))
+        
+    for sq in board.pieces(chess.PAWN, chess.BLACK):
+        f, r = chess.square_file(sq), chess.square_rank(sq)
+        blockers = [osq for osq in board.pieces(chess.PAWN, chess.WHITE) 
+                    if abs(chess.square_file(osq) - f) <= 1 and chess.square_rank(osq) < r]
+        if not blockers: passed_b.append(chess.square_name(sq))
+        
     features["pawn_structure"] = {
-        "white_pawn_islands": w_data["islands"],
-        "black_pawn_islands": b_data["islands"],
+        "white_total_pawns": w_data["total_pawns"],
+        "black_total_pawns": b_data["total_pawns"],
+        "white_pawn_islands_count": w_data["island_count"],
+        "black_pawn_islands_count": b_data["island_count"],
+        "white_pawn_islands_spans": w_data["island_spans"],
+        "black_pawn_islands_spans": b_data["island_spans"],
+        "white_doubled_files": w_data["doubled_files"],
+        "black_doubled_files": b_data["doubled_files"],
         "white_isolated_pawns": w_data["isolated"],
         "black_isolated_pawns": b_data["isolated"],
+        "white_passed_pawns": passed_w,
+        "black_passed_pawns": passed_b,
         "open_files": open_files,
         "half_open_for_white": half_open_w,
         "half_open_for_black": half_open_b
@@ -205,7 +241,6 @@ def extract_board_features(board: chess.Board) -> dict:
                 sq_name = chess.square_name(sq)
                 if board.is_pinned(color, sq):
                     features["piece_safety"][pinned_key].append(f"{piece.symbol()} on {sq_name}")
-                # Check hanging (attacked but 0 defenders) - skip king
                 if piece.piece_type != chess.KING:
                     attackers = board.attackers(opp_color, sq)
                     defenders = board.attackers(color, sq)
@@ -376,7 +411,7 @@ def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 15
                 
             top_lines.append({"rank": i + 1, "evaluation": eval_str, "expected_engine_line": " ".join(pv_moves)})
 
-        # FORMAT THE VISUAL BOARD
+        # FORMAT THE VISUAL BOARD (Clean, deduplicated, no invert_color!)
         raw_board = board.unicode(empty_square="·")
         lines = raw_board.split('\n')
         
@@ -408,7 +443,7 @@ def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 15
         return {
             "top_stockfish_lines": top_lines, 
             "board_token_to_insert": token,
-            "positional_and_safety_features": board_features # <-- INJECTED HERE!
+            "positional_and_safety_features": board_features
         }
     except Exception as e: return {"error": str(e)}
 
@@ -580,6 +615,7 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
    - **Positional & Safety Lenses:** The `analyze_position` tool now automatically returns `positional_and_safety_features` (e.g., open files, pawn islands, hanging pieces, pinned pieces). 
    - 🛑 ANTI-BLOAT RULE: DO NOT print these features as a robotic checklist (e.g., do not write "Piece safety flags: None"). 
    - DO use this data to organically explain *why* a move is good or bad. If the student blunders, check the data: did they leave a piece hanging? Did they ignore a pin? Weave these geometric truths naturally into your prose (e.g., "You missed that your Knight on f3 was completely hanging!").
+   - Pawn Structure Overlap: If the data shows pawns on the same file in BOTH isolated_pawns and doubled_files, do NOT list them as multiple separate weaknesses. Synthesize this data and refer to it conceptually as a single "isolated doubled pawn complex" on that file.
 4. **Grounding in Theory:** If `get_opening_repertoire` provides a `theoretical_opening_name`, explicitly state it. Use your deep internal knowledge of chess theory to briefly explain the classical Grandmaster plans. Then, compare the `top_master_moves` against the `typical_amateur_moves` to show the student how their opponents are likely to deviate from GM theory and how to punish it!
 5. **Handling Hypotheticals:** If the user asks "What if I play [Move]?", "Why can't I play [Move]?", or suggests an alternative idea, IMMEDIATELY use the `analyze_position` tool and pass their proposed move sequence into the `moves_to_apply` parameter. Use the returned `expected_engine_line` to prove exactly how their idea would be mathematically punished or rewarded!
 6. **Time Management (Clock Analysis):** If the provided PGN contains clock timestamps (e.g., `[%clk 0:10:00]`), you MUST evaluate the student's time management on their critical mistakes. 
