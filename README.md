@@ -13,6 +13,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 
 ## Key Features
 * **Localization:** The coach communicates natively in the language of your choice, defined by the `language` variable in `config.json`.
+* **Structured Chain-of-Thought (The Diagnostician):** The coach uses a strict taxonomy to explicitly diagnose decision failure modes (e.g., *threat_blindness*, *calculation_truncation*) before it speaks, ensuring highly focused, pedagogical output. This diagnostic reasoning is displayed as a sleek UI panel before the main conversational response.
 * **Interactive Live Sparring:** The coach now features full interactive sparring. Use the `/move` command to play on the global board, ask the Coach to play a response, and use the new `/undo` command to take back moves during practice. The Coach uses the `execute_coach_move` tool to physically update the board state in real-time.
 * **Game Stepping (VCR):** Loaded games can now be stepped through chronologically. Use `/reset` to jump to the starting position of a loaded PGN, and `/next` or `/prev` to step through the moves one by one, allowing you to ask the Coach questions at specific, exact moments in the game without fast-forwarding to the end. You can even use `/clear` to hard-reset the board and wipe the AI's memory entirely.
 * **Elo-Parametrized Coaching:** The coach adapts its advice, Maia predictions, and Lichess database queries to your exact Elo rating configured in `config.json`.

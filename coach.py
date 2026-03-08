@@ -8,6 +8,7 @@ import subprocess
 import chess
 import chess.pgn
 import chess.engine
+import re
 from google import genai
 from google.genai import types
 from rich.console import Console
@@ -607,9 +608,26 @@ system_instruction = f"""
 You are an elite, Grandmaster-level chess coach. You are currently working one-on-one with a student rated {USER_ELO} Elo. 
 Your goal is not just to give the student the engine's top move, but to improve their understanding of chess concepts, calculation, and human psychology.
 
-### 🌐 LANGUAGE OVERRIDE
-You MUST communicate, explain concepts, and format your final text responses exclusively in **{USER_LANGUAGE}**. 
-(Note: Continue to use standard English algebraic notation like 'Nf3' or 'O-O' for the actual chess moves, but all conversational text must be in {USER_LANGUAGE}).
+### 🌐 LANGUAGE OVERRIDE & JSON PROTECTION
+You MUST communicate, explain concepts, and format your final conversational text exclusively in **{USER_LANGUAGE}**. 
+- Continue to use standard English algebraic notation like 'Nf3' or 'O-O' for chess moves.
+- 🛑 CRITICAL: The internal JSON diagnostic block (defined below) MUST remain entirely in English. Do NOT translate the JSON keys or values.
+
+### 🧠 THE DIAGNOSTICIAN (MANDATORY CHAIN-OF-THOUGHT)
+Before you write a single word of your conversational response to the user, you MUST output a hidden JSON block containing your internal diagnosis of the critical moment. 
+This JSON block MUST be wrapped in ```json ... ``` tags and placed at the absolute beginning of your text response.
+
+You MUST answer the four diagnostic questions using the exact schema and closed vocabularies below. Do not invent new tags!
+
+Required JSON Schema:
+```json
+{{
+    "opponent_last_move_delta": "What changed on the opponent's last move? Did they create a threat, open a file, or change the urgency?",
+    "primary_task": "MUST BE EXACTLY ONE OF:[urgent_defense, prophylaxis, consolidation, conversion, simplification, improve_worst_piece, activate_pieces, prepare_break, calculate_forcing_line, seek_counterplay]",
+    "error_diagnosis": "MUST BE EXACTLY ONE OF:[threat_blindness, single_candidate_fixation, calculation_truncation, board_vision_failure, king_danger_underestimation, strategic_misread, bad_transformation, time_pressure_collapse, impulsivity, passivity_bias, conversion_failure, defensive_resource_miss, material_greed, plan_abandonment, phantom_threat, none]",
+    "preventative_habit": "What specific, actionable thinking habit would prevent this miss next time?"
+}}
+```
 
 ### 🛑 CRITICAL RULE: NO TOOL HALLUCINATIONS
 You are STRICTLY FORBIDDEN from guessing, inferring, or fabricating engine evaluations, Maia predictions, or opening statistics. 
@@ -895,6 +913,33 @@ try:
                 if response.text:
                     output_text = response.text
                     
+                    # --- Extract and Parse the Diagnostician JSON ---
+                    # Use regex with DOTALL to capture multi-line JSON blocks safely
+                    json_match = re.search(r"```json\s*(\{.*?\})\s*```", output_text, re.DOTALL | re.IGNORECASE)
+                    
+                    if json_match:
+                        raw_json_str = json_match.group(1)
+                        try:
+                            diagnosis = json.loads(raw_json_str)
+                            
+                            # Remove the JSON block from the main text
+                            output_text = output_text.replace(json_match.group(0), "").strip()
+                            
+                            # Build the highly structured UI panel
+                            diagnosis_panel = Panel(
+                                f"[dim white]1. ∆ Opponent Move:[/dim white] [dim yellow]{diagnosis.get('opponent_last_move_delta', 'N/A')}[/dim yellow]\n"
+                                f"[dim white]2. Primary Task:[/dim white]    [dim cyan]{diagnosis.get('primary_task', 'N/A')}[/dim cyan]\n"
+                                f"[dim white]3. Error Diagnosis:[/dim white] [dim red]{diagnosis.get('error_diagnosis', 'N/A')}[/dim red]\n"
+                                f"[dim white]4. Required Habit:[/dim white]  [dim green]{diagnosis.get('preventative_habit', 'N/A')}[/dim green]",
+                                title="[dim italic]Coach's Diagnostic Taxonomy[/dim italic]",
+                                border_style="dim blue",
+                                expand=False
+                            )
+                            console.print()
+                            console.print(diagnosis_panel)
+                        except json.JSONDecodeError:
+                            pass # If the LLM generates malformed JSON, ignore the panel and print the text normally
+
                     # Swap the tokens for the actual ASCII graphics
                     for token, visual in board_visuals.items():
                         output_text = output_text.replace(token, f"\n{visual}\n")
