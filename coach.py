@@ -789,6 +789,17 @@ def process_user_input(user_input):
     # --- IF THE USER PASTED A RAW PGN INTO THE TERMINAL ---
     was_scanned, processed_input = scan_game_for_critical_moments(user_input)
 
+    # NEW: Sync the Python backend VCR state if the pasted text was actually a chess game!
+    if "1." in user_input or "[Event" in user_input:
+        try:
+            game = chess.pgn.read_game(io.StringIO(user_input))
+            if game and len(list(game.mainline_moves())) > 0:
+                current_board = game.end().board()
+                loaded_moves = list(game.mainline_moves())
+                current_move_index = len(loaded_moves) # Fast-forward to the end
+        except Exception:
+            pass # It was just a normal chat message, fail silently and safely.
+
     try: history_str = chess.Board().variation_san(current_board.move_stack) if current_board.move_stack else "Starting Position"
     except Exception: history_str = "Unknown"
 
