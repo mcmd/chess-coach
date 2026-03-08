@@ -16,6 +16,7 @@ from rich.panel import Panel
 from dotenv import load_dotenv
 from prompt_toolkit import prompt, HTML
 from prompt_toolkit.history import FileHistory
+from functools import lru_cache
 
 load_dotenv()
 
@@ -128,19 +129,19 @@ except Exception as e:
 # 2. THE TOOLS & EXPERT-REFINED BRILLIANCY SCANNER
 # ======================================================================
 
-engine_cache = {}
+@lru_cache(maxsize=2000)
+def get_cached_eval(fen: str, time_limit: float):
+    """Bounded LRU cache for engine evaluations to prevent memory leaks."""
+    board = chess.Board(fen)
+    info = stockfish_engine.analyse(board, chess.engine.Limit(time=time_limit))
+    return info["score"]
 
 def eval_move(board, move, time_limit, turn_color):
-    """Helper for evaluating non-PV moves safely with LRU caching."""
+    """Helper for evaluating non-PV moves safely."""
     board.push(move)
-    fen = board.fen()
-    key = (fen, time_limit)
-    if key not in engine_cache:
-        engine_cache[key] = stockfish_engine.analyse(board, chess.engine.Limit(time=time_limit))
-    
-    score = engine_cache[key]["score"].pov(turn_color).score(mate_score=100000)
+    score_obj = get_cached_eval(board.fen(), time_limit)
     board.pop()
-    return score
+    return score_obj.pov(turn_color).score(mate_score=100000)
 
 def extract_board_features(board: chess.Board) -> dict:
     """Fast, pure-python extraction of structural and safety features."""
@@ -359,13 +360,9 @@ def scan_game_for_critical_moments(user_text: str) -> tuple[bool, str]:
                     if is_only_move: tag_string += " [⭐ ONLY MOVE FOUND!]"
                     if dodged_trap: tag_string += f" [🛡️ DODGED HUMAN TRAP! Maia predicted {maia_san}]"
                             
-                    # Inject basic evaluation if missing
-                    if "[%eval" not in user_text and stockfish_engine:
-                        fen_after = board.fen()
-                        if (fen_after, 0.25) not in engine_cache:
-                            engine_cache[(fen_after, 0.25)] = stockfish_engine.analyse(board, chess.engine.Limit(time=0.25))
-                        score_after = engine_cache[(fen_after, 0.25)]["score"].white()
-                        
+                    # Inject basic evaluation if missing (FIXED: Scoped to 'comment', not 'user_text')
+                    if "[%eval" not in comment and stockfish_engine:
+                        score_after = get_cached_eval(board.fen(), 0.25).white()
                         eval_str = f"#{score_after.mate()}" if score_after.is_mate() else f"{score_after.score(mate_score=100000) / 100.0:+.2f}"
                         tag_string += f" [%eval {eval_str}]"
 
