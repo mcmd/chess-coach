@@ -79,6 +79,7 @@ with open(CONFIG_FILE, "r") as f:
     app_config = json.load(f)
 
 USER_ELO = app_config.get("user_elo", 1100)
+USER_LANGUAGE = app_config.get("language", "English") # NEW: Defaults to English if missing
 STOCKFISH_PATH = app_config.get("stockfish_path")
 LC0_PATH = app_config.get("lc0_path")
 MAIA_DIR = app_config.get("maia_weights_dir", "./maia_weights")
@@ -605,6 +606,10 @@ def save_history(chat_session):
 system_instruction = f"""
 You are an elite, Grandmaster-level chess coach. You are currently working one-on-one with a student rated {USER_ELO} Elo. 
 Your goal is not just to give the student the engine's top move, but to improve their understanding of chess concepts, calculation, and human psychology.
+
+### 🌐 LANGUAGE OVERRIDE
+You MUST communicate, explain concepts, and format your final text responses exclusively in **{USER_LANGUAGE}**. 
+(Note: Continue to use standard English algebraic notation like 'Nf3' or 'O-O' for the actual chess moves, but all conversational text must be in {USER_LANGUAGE}).
 
 ### 🛑 CRITICAL RULE: NO TOOL HALLUCINATIONS
 You are STRICTLY FORBIDDEN from guessing, inferring, or fabricating engine evaluations, Maia predictions, or opening statistics. 

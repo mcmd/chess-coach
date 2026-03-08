@@ -12,6 +12,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 *(Note: While the project structure contains remnants of a Flask web template, such as `main.py` and `src/index.html`, the current primary functionality is executed via the CLI. Future updates may introduce a web-based API.)*
 
 ## Key Features
+* **Localization:** The coach communicates natively in the language of your choice, defined by the `language` variable in `config.json`.
 * **Interactive Live Sparring:** The coach now features full interactive sparring. Use the `/move` command to play on the global board, ask the Coach to play a response, and use the new `/undo` command to take back moves during practice. The Coach uses the `execute_coach_move` tool to physically update the board state in real-time.
 * **Game Stepping (VCR):** Loaded games can now be stepped through chronologically. Use `/reset` to jump to the starting position of a loaded PGN, and `/next` or `/prev` to step through the moves one by one, allowing you to ask the Coach questions at specific, exact moments in the game without fast-forwarding to the end. You can even use `/clear` to hard-reset the board and wipe the AI's memory entirely.
 * **Elo-Parametrized Coaching:** The coach adapts its advice, Maia predictions, and Lichess database queries to your exact Elo rating configured in `config.json`.
@@ -56,6 +57,7 @@ Before running the application, you **must** configure your environment and engi
    ```json
    {
        "user_elo": 1200,
+       "language": "English",
        "stockfish_path": "/path/to/your/stockfish",
        "lc0_path": "/path/to/your/lc0",
        "maia_weights_dir": "./maia_weights",
