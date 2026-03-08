@@ -250,6 +250,18 @@ def extract_board_features(board: chess.Board) -> dict:
 
     return features
 
+def execute_coach_move(move_san: str) -> dict:
+    """
+    Plays a chess move on the persistent global board.
+    ONLY call this tool if the user explicitly asks you to make a move or play against them!
+    """
+    global current_board
+    try:
+        current_board.push_san(move_san)
+        return {"success": True, "new_fen": current_board.fen(), "message": f"Successfully played {move_san}."}
+    except ValueError as e:
+        return {"error": f"Illegal or invalid move: {e}"}
+
 def _safe_get_json(url: str, params: dict = None) -> dict:
     """Robust network request helper to prevent terminal hanging and encoding errors."""
     try:
@@ -625,6 +637,9 @@ When the user asks you to analyze a downloaded game or a sequence of moves, you 
    - If a move is tagged with `[🛡️ DODGED HUMAN TRAP!]`, explicitly praise them for resisting temptation! Explain *why* the natural human impulse (the move Maia predicted) was a dangerous trap, and how the student's actual move brilliantly bypassed it.
    - 🛑 CRITICAL FORMATTING RULE: The tags `[⭐ ONLY MOVE FOUND!]` and `[🛡️ DODGED HUMAN TRAP!]` are secret backend metadata for your eyes only. NEVER literally print these bracketed tags or emojis in your final text response to the student! Instead, translate the concept into natural, conversational human language (e.g., "You found the absolute only move on the board to save the game!", or "Maia predicted most players would play X, but you successfully dodged the trap!").
 8. **Make Annotations Provable:** For every "avoid X" or "X is a blunder" claim you make, you MUST include a 2-to-4 move refutation line derived from your engine tool results to prove *why* (unless it's mate, then show the whole line). Do not just say a move loses; mathematically prove it with the Stockfish continuation.
+9. **Interactive Sparring:** If the user explicitly asks you to play a move against them (e.g., "Your turn," "Play your best response," or "Let's play from here"), you MUST use the `execute_coach_move` tool to physically apply your chosen move to the board. 
+   - ALWAYS use `analyze_position` first to decide what move to play! 
+   - Do NOT use `execute_coach_move` during normal analysis, ONLY when actively sparring.
 
 ### 📝 FORMATTING & RULES OF ENGAGEMENT
 - **Current State:** The system automatically appends the current board state (FEN) to every message the user sends. You ALWAYS know the current board state.
@@ -648,7 +663,7 @@ config = types.GenerateContentConfig(
     tools=[
         fetch_lichess_game_by_id, 
         fetch_chessgames_com_game, query_endgame_tablebase, 
-        analyze_position, predict_human_move, get_opening_repertoire
+        analyze_position, predict_human_move, get_opening_repertoire, execute_coach_move
     ],
     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True) 
 )
@@ -701,6 +716,14 @@ def process_user_input(user_input):
             prompt = f"I have played {move_str}. The new position FEN is: {current_board.fen()}. Please evaluate."
             return prompt, f"[green]Played {move_str}. Board updated.[/green]"
         except ValueError: return None, f"[red]Invalid or illegal move: {move_str}[/red]"
+
+    elif user_input.startswith("/undo"):
+        try:
+            popped = current_board.pop()
+            prompt = f"I took back my last move. The FEN is now: {current_board.fen()}. What should I play instead?"
+            return prompt, "[green]Move taken back. Board updated.[/green]"
+        except IndexError:
+            return None, "[red]No moves to undo![/red]"
              
     # --- IF THE USER PASTED A RAW PGN INTO THE TERMINAL ---
     was_scanned, processed_input = scan_game_for_critical_moments(user_input)
@@ -720,6 +743,8 @@ profile_text = f" (Profile: {args.profile})" if args.profile else ""
 console.print(Panel.fit(
     f"[bold green]Gemini {GEMINI_MODEL} + Stockfish + Maia Coach (Elo: {USER_ELO}){profile_text}[/bold green]\n"
     "Type [bold cyan]/load_pgn filename.pgn[/bold cyan] to load a game.\n"
+    "Type [bold cyan]/move e4[/bold cyan] to play a move interactively.\n"
+    "Type [bold cyan]/undo[/bold cyan] to take back a move.\n"
     "Type [bold red]exit[/bold red] to save and close.",
     border_style="green"
 ))
@@ -782,6 +807,9 @@ try:
                         elif fn_call.name == "get_opening_repertoire":
                             console.print("[dim yellow]↳ Checking Lichess Opening Databases...[/dim yellow]")
                             result = get_opening_repertoire(fen)
+                        elif fn_call.name == "execute_coach_move":
+                            console.print(f"[dim green]↳ The Coach is playing a move on the board...[/dim green]")
+                            result = execute_coach_move(args_dict.get("move_san", ""))
                             
                         tool_parts.append(types.Part.from_function_response(name=fn_call.name, response={"result": result}))
                     

@@ -12,6 +12,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 *(Note: While the project structure contains remnants of a Flask web template, such as `main.py` and `src/index.html`, the current primary functionality is executed via the CLI. Future updates may introduce a web-based API.)*
 
 ## Key Features
+* **Interactive Live Sparring:** The coach now features full interactive sparring. Use the `/move` command to play on the global board, ask the Coach to play a response, and use the new `/undo` command to take back moves during practice. The Coach uses the `execute_coach_move` tool to physically update the board state in real-time.
 * **Elo-Parametrized Coaching:** The coach adapts its advice, Maia predictions, and Lichess database queries to your exact Elo rating configured in `config.json`.
 * **Global Engine Initialization:** Maia and Stockfish engines are initialized globally, reducing latency when loading weights for move predictions and tactical evaluations. Stockfish is now configured to use maximum available threads and Hash memory for superior depth-per-second performance.
 * **Brilliancy & Trap Scanner (2-Pass Algorithm):** The system uses a sophisticated 2-pass engine scan on all loaded games. 
@@ -27,7 +28,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 * **Socratic Pedagogy:** The agent is prompted to teach concepts (King Safety, Piece Activity) rather than just spoon-feeding Stockfish lines.
 * **Persistent Memory:** The conversation context is saved across sessions (`chess_coach_memory.json`), allowing you to resume your lessons later.
 * **Interactive CLI:** Built with `rich` and `prompt_toolkit`, featuring beautiful markdown rendering, color-coded chess notation, and cross-session up-arrow command history.
-* **Built-in Commands:** Use `/load_pgn <filename>` to instantly import games for analysis, or `/move <san>` to play moves on the internal board.
+* **Built-in Commands:** Use `/load_pgn <filename>` to instantly import games for analysis, `/move <san>` to play moves on the internal board, or `/undo` to take back a move.
 
 ## The Agent's Tools
 The orchestrating Gemini LLM has autonomous access to the following tools to ground its knowledge:
@@ -38,6 +39,7 @@ The orchestrating Gemini LLM has autonomous access to the following tools to gro
 - **`query_endgame_tablebase`**: Accesses the Syzygy 7-piece endgame tablebase. When 7 or fewer pieces are left, the agent uses this tool to get mathematically perfect endgame play (win/draw/loss statuses and exact distance to mate).
 - **`fetch_lichess_game_by_id`**: Pulls specific games from Lichess using their game ID, fetching PGNs, clock times, and computer evaluations.
 - **`fetch_chessgames_com_game`**: Imports Master-level games (using their numeric ID) from chessgames.com to teach concepts using examples from legends like Fischer or Kasparov.
+- **`execute_coach_move`**: A highly privileged tool that allows the Coach to push a chosen move onto the global board during interactive live sparring with the user.
 
 ## Setup Instructions
 
