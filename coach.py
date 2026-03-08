@@ -92,6 +92,8 @@ if not api_key:
 client = genai.Client(api_key=api_key)
 
 current_board = chess.Board()
+loaded_moves = []         # Stores the sequence of moves from a loaded PGN
+current_move_index = 0    # Tracks our current position in the loaded game timeline
 
 # Set up storage for board sleight of hand
 board_visuals = {}
@@ -255,9 +257,15 @@ def execute_coach_move(move_san: str) -> dict:
     Plays a chess move on the persistent global board.
     ONLY call this tool if the user explicitly asks you to make a move or play against them!
     """
-    global current_board
+    global current_board, loaded_moves, current_move_index
     try:
         current_board.push_san(move_san)
+        
+        # --- NEW: Timeline Branching! ---
+        loaded_moves = loaded_moves[:current_move_index]
+        loaded_moves.append(current_board.move_stack[-1])
+        current_move_index += 1
+        
         return {"success": True, "new_fen": current_board.fen(), "message": f"Successfully played {move_san}."}
     except ValueError as e:
         return {"error": f"Illegal or invalid move: {e}"}
@@ -679,7 +687,7 @@ chat = client.chats.create(
 # ======================================================================
 
 def process_user_input(user_input):
-    global current_board
+    global current_board, loaded_moves, current_move_index
     
     if user_input.startswith("/load_pgn"):
         parts = user_input.split(" ", 1)
@@ -696,7 +704,10 @@ def process_user_input(user_input):
             was_scanned, enriched_pgn = scan_game_for_critical_moments(raw_pgn_text)
             
             game = chess.pgn.read_game(io.StringIO(enriched_pgn))
-            if game: current_board = game.end().board()
+            if game: 
+                current_board = game.end().board()
+                loaded_moves = list(game.mainline_moves())
+                current_move_index = len(loaded_moves) # Default to the end of the game
                 
             # Safely inject the system prompt outside the PGN text
             prompt = f"I have loaded a local game. Here is the full PGN:\n\n{enriched_pgn}\n\nPlease analyze my play and my time management."
@@ -713,17 +724,45 @@ def process_user_input(user_input):
         move_str = parts[1].strip()
         try:
             current_board.push_san(move_str)
+            
+            # --- NEW: Timeline Branching! ---
+            loaded_moves = loaded_moves[:current_move_index]
+            loaded_moves.append(current_board.move_stack[-1])
+            current_move_index += 1
+            # --------------------------------
+            
             prompt = f"I have played {move_str}. The new position FEN is: {current_board.fen()}. Please evaluate."
             return prompt, f"[green]Played {move_str}. Board updated.[/green]"
         except ValueError: return None, f"[red]Invalid or illegal move: {move_str}[/red]"
 
-    elif user_input.startswith("/undo"):
+    elif user_input.startswith("/undo") or user_input.startswith("/prev"):
         try:
             popped = current_board.pop()
+            if current_move_index > 0:
+                current_move_index -= 1
             prompt = f"I took back my last move. The FEN is now: {current_board.fen()}. What should I play instead?"
             return prompt, "[green]Move taken back. Board updated.[/green]"
         except IndexError:
             return None, "[red]No moves to undo![/red]"
+            
+    elif user_input.startswith("/next"):
+        if current_move_index < len(loaded_moves):
+            next_move = loaded_moves[current_move_index]
+            # We must calculate the SAN string BEFORE we push the move to the board!
+            move_san = current_board.san(next_move) 
+            current_board.push(next_move)
+            current_move_index += 1
+            
+            prompt = f"I have played the next move from the game: {move_san}. The new position FEN is: {current_board.fen()}. Please evaluate."
+            return prompt, f"[green]Stepped forward: played {move_san}. Board updated.[/green]"
+        else:
+            return None, "[red]You are at the end of the loaded game (or no game is loaded)![/red]"
+
+    elif user_input.startswith("/reset"):
+        current_board.reset()
+        current_move_index = 0
+        prompt = "I have reset the board to the starting position. What opening should we look at?"
+        return prompt, "[green]Board reset to the starting position.[/green]"
              
     # --- IF THE USER PASTED A RAW PGN INTO THE TERMINAL ---
     was_scanned, processed_input = scan_game_for_critical_moments(user_input)
@@ -743,8 +782,8 @@ profile_text = f" (Profile: {args.profile})" if args.profile else ""
 console.print(Panel.fit(
     f"[bold green]Gemini {GEMINI_MODEL} + Stockfish + Maia Coach (Elo: {USER_ELO}){profile_text}[/bold green]\n"
     "Type [bold cyan]/load_pgn filename.pgn[/bold cyan] to load a game.\n"
+    "Type [bold cyan]/reset[/bold cyan] to jump to the start, then [bold cyan]/next[/bold cyan] or [bold cyan]/prev[/bold cyan] to step through it.\n"
     "Type [bold cyan]/move e4[/bold cyan] to play a move interactively.\n"
-    "Type [bold cyan]/undo[/bold cyan] to take back a move.\n"
     "Type [bold red]exit[/bold red] to save and close.",
     border_style="green"
 ))
