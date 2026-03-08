@@ -13,7 +13,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 
 ## Key Features
 * **Interactive Live Sparring:** The coach now features full interactive sparring. Use the `/move` command to play on the global board, ask the Coach to play a response, and use the new `/undo` command to take back moves during practice. The Coach uses the `execute_coach_move` tool to physically update the board state in real-time.
-* **Game Stepping (VCR):** Loaded games can now be stepped through chronologically. Use `/reset` to jump to the starting position of a loaded PGN, and `/next` or `/prev` to step through the moves one by one, allowing you to ask the Coach questions at specific, exact moments in the game without fast-forwarding to the end.
+* **Game Stepping (VCR):** Loaded games can now be stepped through chronologically. Use `/reset` to jump to the starting position of a loaded PGN, and `/next` or `/prev` to step through the moves one by one, allowing you to ask the Coach questions at specific, exact moments in the game without fast-forwarding to the end. You can even use `/clear` to hard-reset the board and wipe the AI's memory entirely.
 * **Elo-Parametrized Coaching:** The coach adapts its advice, Maia predictions, and Lichess database queries to your exact Elo rating configured in `config.json`.
 * **Global Engine Initialization:** Maia and Stockfish engines are initialized globally, reducing latency when loading weights for move predictions and tactical evaluations. Stockfish is now configured to use maximum available threads and Hash memory for superior depth-per-second performance.
 * **Brilliancy & Trap Scanner (2-Pass Algorithm):** The system uses a sophisticated 2-pass engine scan on all loaded games. 
@@ -29,7 +29,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 * **Socratic Pedagogy:** The agent is prompted to teach concepts (King Safety, Piece Activity) rather than just spoon-feeding Stockfish lines.
 * **Persistent Memory:** The conversation context is saved across sessions (`chess_coach_memory.json`), allowing you to resume your lessons later.
 * **Interactive CLI:** Built with `rich` and `prompt_toolkit`, featuring beautiful markdown rendering, color-coded chess notation, and cross-session up-arrow command history.
-* **Built-in Commands:** Use `/load_pgn <filename>` to instantly import games for analysis, `/move <san>` to play moves on the internal board, or `/undo` to take back a move. Or use `/reset`, `/next`, and `/prev` to step through a loaded PGN.
+* **Built-in Commands:** Use `/load_pgn <filename>` to instantly import games for analysis, `/move <san>` to play moves on the internal board, or `/undo` to take back a move. Or use `/reset`, `/clear`, `/next`, and `/prev` to manage your session and timeline.
 
 ## The Agent's Tools
 The orchestrating Gemini LLM has autonomous access to the following tools to ground its knowledge:

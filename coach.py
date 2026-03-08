@@ -687,7 +687,7 @@ chat = client.chats.create(
 # ======================================================================
 
 def process_user_input(user_input):
-    global current_board, loaded_moves, current_move_index
+    global current_board, loaded_moves, current_move_index, chat
     
     if user_input.startswith("/load_pgn"):
         parts = user_input.split(" ", 1)
@@ -763,6 +763,28 @@ def process_user_input(user_input):
         current_move_index = 0
         prompt = "I have reset the board to the starting position. What opening should we look at?"
         return prompt, "[green]Board reset to the starting position.[/green]"
+
+    elif user_input.startswith("/clear"):
+        # 1. Reset physical board state and VCR timeline
+        current_board.reset()
+        loaded_moves = []
+        current_move_index = 0
+        
+        # 2. Re-instantiate the Gemini chat session with an empty history
+        chat = client.chats.create(
+            model=GEMINI_MODEL,
+            config=config,
+            history=[]
+        )
+        
+        # 3. Delete the physical memory file so old data doesn't persist
+        if os.path.exists(HISTORY_FILE):
+            try:
+                os.remove(HISTORY_FILE)
+            except Exception as e:
+                pass # Fail silently if file is locked
+                
+        return None, "[bold green]✨ Session memory, board state, and timeline wiped clean![/bold green]"
              
     # --- IF THE USER PASTED A RAW PGN INTO THE TERMINAL ---
     was_scanned, processed_input = scan_game_for_critical_moments(user_input)
@@ -782,7 +804,8 @@ profile_text = f" (Profile: {args.profile})" if args.profile else ""
 console.print(Panel.fit(
     f"[bold green]Gemini {GEMINI_MODEL} + Stockfish + Maia Coach (Elo: {USER_ELO}){profile_text}[/bold green]\n"
     "Type [bold cyan]/load_pgn filename.pgn[/bold cyan] to load a game.\n"
-    "Type [bold cyan]/reset[/bold cyan] to jump to the start, then [bold cyan]/next[/bold cyan] or [bold cyan]/prev[/bold cyan] to step through it.\n"
+    "Type [bold cyan]/reset[/bold cyan] to rewind board, or [bold cyan]/clear[/bold cyan] to completely wipe AI memory and start fresh.\n"
+    "Type [bold cyan]/next[/bold cyan] or [bold cyan]/prev[/bold cyan] to step through the timeline.\n"
     "Type [bold cyan]/move e4[/bold cyan] to play a move interactively.\n"
     "Type [bold red]exit[/bold red] to save and close.",
     border_style="green"
