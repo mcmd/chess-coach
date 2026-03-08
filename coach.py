@@ -49,6 +49,7 @@ args = parser.parse_args()
 ROOT_CONFIG_FILE = "config.json"
 CONFIG_FILE = ROOT_CONFIG_FILE
 HISTORY_FILE = "chess_coach_memory.json"
+DOSSIER_FILE = "player_dossier.json" # NEW
 CLI_HISTORY_FILE = "chess_cli_history.txt"
 
 if not os.path.exists(ROOT_CONFIG_FILE):
@@ -66,6 +67,7 @@ if args.profile:
     
     CONFIG_FILE = os.path.join(profile_dir, "config.json")
     HISTORY_FILE = os.path.join(profile_dir, "chess_coach_memory.json")
+    DOSSIER_FILE = os.path.join(profile_dir, "player_dossier.json") # NEW
     CLI_HISTORY_FILE = os.path.join(profile_dir, "chess_cli_history.txt")
     
     if not os.path.exists(CONFIG_FILE):
@@ -96,6 +98,7 @@ client = genai.Client(api_key=api_key)
 current_board = chess.Board()
 loaded_moves = []         # Stores the sequence of moves from a loaded PGN
 current_move_index = 0    # Tracks our current position in the loaded game timeline
+session_diagnostics = []  # NEW: Tracks JSON tags generated this session
 
 # Set up storage for board sleight of hand
 board_visuals = {}
@@ -604,9 +607,32 @@ def save_history(chat_session):
         if parts: serializable.append({"role": message.role, "parts": parts})
     with open(HISTORY_FILE, "w") as f: json.dump(serializable, f)
 
+# --- NEW: LOAD DOSSIER FOR PROMPT INJECTION ---
+dossier_context = "No historical data available yet. This is your first session with the student."
+if os.path.exists(DOSSIER_FILE):
+    try:
+        with open(DOSSIER_FILE, "r") as f:
+            d = json.load(f)
+            if d.get("total_blunders_analyzed", 0) > 0:
+                # Sort errors by frequency (highest first)
+                sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
+                error_str = ", ".join([f"{k} ({v} times)" for k, v in sorted_errors])
+                habits_str = "\n- ".join(d.get("recent_habits",[]))
+                
+                dossier_context = (
+                    f"You have historically analyzed {d['total_blunders_analyzed']} critical blunders for this student.\n"
+                    f"Historical Error Frequencies (Most Frequent = Biggest Weakness):\n{error_str}\n\n"
+                    f"Recent Preventative Habits you have assigned them:\n- {habits_str}"
+                )
+    except Exception: pass
+
 system_instruction = f"""
 You are an elite, Grandmaster-level chess coach. You are currently working one-on-one with a student rated {USER_ELO} Elo. 
 Your goal is not just to give the student the engine's top move, but to improve their understanding of chess concepts, calculation, and human psychology.
+
+### 📂 STUDENT DOSSIER (LONG-TERM MEMORY)
+{dossier_context}
+*(Use this historical data to personalize your coaching. If they make a mistake that matches their highest frequency error, point out that this is a recurring pattern!)*
 
 ### 🌐 LANGUAGE OVERRIDE & JSON PROTECTION
 You MUST communicate, explain concepts, and format your final conversational text exclusively in **{USER_LANGUAGE}**. 
@@ -710,7 +736,7 @@ chat = client.chats.create(
 # ======================================================================
 
 def process_user_input(user_input):
-    global current_board, loaded_moves, current_move_index, chat
+    global current_board, loaded_moves, current_move_index, chat, session_diagnostics
     
     if user_input.startswith("/load_pgn"):
         parts = user_input.split(" ", 1)
@@ -808,6 +834,52 @@ def process_user_input(user_input):
                 pass # Fail silently if file is locked
                 
         return None, "[bold green]✨ Session memory, board state, and timeline wiped clean![/bold green]"
+
+    elif user_input.startswith("/memorize"):
+        if not session_diagnostics:
+            return None, "[yellow]No diagnostics generated this session to memorize.[/yellow]"
+
+        # 1. Load existing dossier or create a new one
+        dossier = {"total_blunders_analyzed": 0, "error_frequencies": {}, "recent_habits": []}
+        if os.path.exists(DOSSIER_FILE):
+            try:
+                with open(DOSSIER_FILE, "r") as f:
+                    dossier = json.load(f)
+            except json.JSONDecodeError:
+                pass
+                
+        # 2. Aggregate the session data into the dossier
+        for diag in session_diagnostics:
+            err = diag.get("error_diagnosis", "unknown")
+            if err != "none":
+                dossier["total_blunders_analyzed"] += 1
+                dossier["error_frequencies"][err] = dossier["error_frequencies"].get(err, 0) + 1
+            
+            habit = diag.get("preventative_habit")
+            if habit and habit != "N/A":
+                dossier["recent_habits"].insert(0, habit)
+                
+        # Keep only the 5 most recent habits to prevent bloat
+        dossier["recent_habits"] = dossier["recent_habits"][:5]
+        
+        # 3. Save the updated dossier
+        with open(DOSSIER_FILE, "w") as f:
+            json.dump(dossier, f, indent=4)
+            
+        # 4. Wipe the session state (Hard Reset)
+        session_diagnostics = []
+        current_board.reset()
+        loaded_moves = []
+        current_move_index = 0
+        chat = client.chats.create(model=GEMINI_MODEL, config=config, history=[])
+        if os.path.exists(HISTORY_FILE):
+            try: os.remove(HISTORY_FILE)
+            except: pass
+            
+        # 5. Clear the terminal screen visually
+        console.clear()
+        
+        return None, f"[bold green]✨ Session memorized! Dossier updated. Memory wiped and screen cleared.[/bold green]"
              
     # --- IF THE USER PASTED A RAW PGN INTO THE TERMINAL ---
     was_scanned, processed_input = scan_game_for_critical_moments(user_input)
@@ -841,6 +913,7 @@ console.print(Panel.fit(
     "Type [bold cyan]/reset[/bold cyan] to rewind board, or [bold cyan]/clear[/bold cyan] to completely wipe AI memory and start fresh.\n"
     "Type [bold cyan]/next[/bold cyan] or [bold cyan]/prev[/bold cyan] to step through the timeline.\n"
     "Type [bold cyan]/move e4[/bold cyan] to play a move interactively.\n"
+    "Type [bold cyan]/memorize[/bold cyan] to save session diagnoses to your long-term dossier and clear memory.\n"
     "Type [bold red]exit[/bold red] to save and close.",
     border_style="green"
 ))
@@ -921,6 +994,9 @@ try:
                         raw_json_str = json_match.group(1)
                         try:
                             diagnosis = json.loads(raw_json_str)
+                            
+                            # NEW: Save to session memory for the /memorize command
+                            session_diagnostics.append(diagnosis)
                             
                             # Remove the JSON block from the main text
                             output_text = output_text.replace(json_match.group(0), "").strip()
