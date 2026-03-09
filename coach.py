@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from prompt_toolkit import prompt, HTML
 from prompt_toolkit.history import FileHistory
 from functools import lru_cache
+from dataclasses import dataclass, field
 
 load_dotenv()
 
@@ -95,17 +96,68 @@ if not api_key:
 
 client = genai.Client(api_key=api_key)
 
-current_board = chess.Board()
-loaded_moves = []         
-current_move_index = 0    
-session_diagnostics = []  
+# ======================================================================
+# 2. APPLICATION STATE & TIMELINE MANAGER (PHASE 2 UPGRADE)
+# ======================================================================
 
-# --- NEW: SECURITY & STATE FLAGS ---
-SPARRING_MODE = False
+@dataclass
+class SessionState:
+    """The Single Source of Truth for the local application."""
+    board: chess.Board = field(default_factory=chess.Board)
+    loaded_moves: list[chess.Move] = field(default_factory=list)
+    move_index: int = 0
+    sparring_mode: bool = False
+    diagnostics: list[dict] = field(default_factory=list)
+    board_visuals: dict = field(default_factory=dict)
+    board_counter: int = 0
 
-# Set up storage for board sleight of hand
-board_visuals = {}
-board_counter = 0
+class TimelineManager:
+    """Safely manages all physical board mutations and branching invariants."""
+    def __init__(self, state: SessionState):
+        self.state = state
+
+    def reset(self):
+        self.state.board.reset()
+        self.state.loaded_moves = []
+        self.state.move_index = 0
+        self.state.diagnostics.clear()
+
+    def load_game(self, game: chess.pgn.Game):
+        if game and len(list(game.mainline_moves())) > 0:
+            self.state.board = game.end().board()
+            self.state.loaded_moves = list(game.mainline_moves())
+            self.state.move_index = len(self.state.loaded_moves)
+
+    def play_san(self, move_san: str) -> str:
+        """Plays a move, handling timeline truncation if the user branches."""
+        move = self.state.board.parse_san(move_san)
+        if self.state.move_index < len(self.state.loaded_moves):
+            self.state.loaded_moves = self.state.loaded_moves[:self.state.move_index]
+        self.state.board.push(move)
+        self.state.loaded_moves.append(move)
+        self.state.move_index += 1
+        return self.state.board.san(move)
+
+    def step_forward(self) -> str:
+        if self.state.move_index < len(self.state.loaded_moves):
+            next_move = self.state.loaded_moves[self.state.move_index]
+            move_san = self.state.board.san(next_move)
+            self.state.board.push(next_move)
+            self.state.move_index += 1
+            return move_san
+        raise IndexError("End of timeline.")
+
+    def step_backward(self):
+        if self.state.move_index > 0:
+            self.state.board.pop()
+            self.state.move_index -= 1
+        else:
+            raise IndexError("No moves to undo.")
+
+# Instantiate the Single Source of Truth
+app_state = SessionState()
+timeline = TimelineManager(app_state)
+
 
 # ======================================================================
 # ENGINE INITIALIZATION (Now with optimized Threads and Hash!)
@@ -262,19 +314,15 @@ def extract_board_features(board: chess.Board) -> dict:
 
 def execute_coach_move(move_san: str) -> dict:
     """Plays a chess move. ONLY allowed if SPARRING_MODE is True."""
-    global current_board, loaded_moves, current_move_index, SPARRING_MODE
-    if not SPARRING_MODE:
+    if not app_state.sparring_mode:
         return {"error": "Sparring mode is DISABLED. Tell the user to type /spar to enable it."}
     
     try:
-        current_board.push_san(move_san)
-        loaded_moves = loaded_moves[:current_move_index]
-        loaded_moves.append(current_board.move_stack[-1])
-        current_move_index += 1
-        return {"success": True, "new_fen": current_board.fen(), "message": f"Successfully played {move_san}."}
+        timeline.play_san(move_san)
+        return {"success": True, "new_fen": app_state.board.fen(), "message": f"Successfully played {move_san}."}
     except ValueError as e:
-        # --- THE LOGIC TUTOR PARADIGM ---
-        legal_moves_str = ", ".join([current_board.san(m) for m in current_board.legal_moves])
+        # THE LOGIC TUTOR PARADIGM
+        legal_moves_str = ", ".join([app_state.board.san(m) for m in app_state.board.legal_moves])
         return {
             "error": f"Logic Tutor Intervention: Move '{move_san}' is ILLEGAL in this position.",
             "causal_trace": str(e),
@@ -285,7 +333,6 @@ def execute_coach_move(move_san: str) -> dict:
 def submit_diagnosis(opponent_last_move_delta: str, primary_task: str, error_diagnosis: str, 
                      weakest_reasoning_claim: str, lowest_confidence_score: float, preventative_habit: str) -> dict:
     """Submits a structured diagnosis of the user's mistake to the backend state."""
-    global session_diagnostics
     
     # Claim-Level Behavioral Calibration (Anti-Hallucination)
     if float(lowest_confidence_score) < 0.90:
@@ -299,7 +346,7 @@ def submit_diagnosis(opponent_last_move_delta: str, primary_task: str, error_dia
         "lowest_confidence_score": float(lowest_confidence_score), 
         "preventative_habit": preventative_habit[:200] 
     }
-    session_diagnostics.append(diagnosis)
+    app_state.diagnostics.append(diagnosis)
     
     # Render the UI Panel immediately!
     console.print()
@@ -494,14 +541,13 @@ def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 20
 
         visual = "```text\n" + "\n".join(labeled_board) + "\n```"
 
-        # MEMORY BOUNDARY: Cap visual storage to the 50 most recent boards
-        global board_counter, board_visuals
-        if len(board_visuals) > 50:
-            board_visuals.pop(next(iter(board_visuals)))
+        # MEMORY BOUNDARY
+        if len(app_state.board_visuals) > 50:
+            app_state.board_visuals.pop(next(iter(app_state.board_visuals)))
             
-        board_counter += 1
-        token = f"[[BOARD_{board_counter}]]"
-        board_visuals[token] = visual
+        app_state.board_counter += 1
+        token = f"[[BOARD_{app_state.board_counter}]]"
+        app_state.board_visuals[token] = visual
 
         # MATHEMATICAL GROUNDING: Inject Legal Moves to prevent Pointer Misbinding
         legal_moves_str = ", ".join([board.san(m) for m in board.legal_moves])
@@ -583,7 +629,6 @@ def get_opening_repertoire(fen: str) -> dict:
     except Exception as e: return {"error": str(e)}
 
 def fetch_lichess_game_by_id(game_id: str) -> dict:
-    global current_board, loaded_moves, current_move_index # <--- CRITICAL STATE SYNC
     try:
         url = f"https://lichess.org/game/export/{game_id}"
         params = {"evals": "true", "clocks": "true", "accuracy": "true", "opening": "true", "literate": "true", "tags": "true"}
@@ -596,10 +641,7 @@ def fetch_lichess_game_by_id(game_id: str) -> dict:
             # --- SYNC BACKEND STATE ---
             try:
                 parsed_game = chess.pgn.read_game(io.StringIO(scanned_pgn))
-                if parsed_game and len(list(parsed_game.mainline_moves())) > 0:
-                    current_board = parsed_game.end().board()
-                    loaded_moves = list(parsed_game.mainline_moves())
-                    current_move_index = len(loaded_moves)
+                timeline.load_game(parsed_game)
             except Exception: pass
             # --------------------------
             
@@ -612,7 +654,6 @@ def fetch_lichess_game_by_id(game_id: str) -> dict:
     except Exception as e: return {"error": str(e)}
 
 def fetch_chessgames_com_game(game_id: str) -> dict:
-    global current_board, loaded_moves, current_move_index # <--- CRITICAL STATE SYNC
     try:
         url = f"https://www.chessgames.com/njs/api/game/viewPGN/{game_id}"
         headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/plain, application/x-chess-pgn, */*"}
@@ -628,10 +669,7 @@ def fetch_chessgames_com_game(game_id: str) -> dict:
             # --- SYNC BACKEND STATE ---
             try:
                 parsed_game = chess.pgn.read_game(io.StringIO(scanned_pgn))
-                if parsed_game and len(list(parsed_game.mainline_moves())) > 0:
-                    current_board = parsed_game.end().board()
-                    loaded_moves = list(parsed_game.mainline_moves())
-                    current_move_index = len(loaded_moves)
+                timeline.load_game(parsed_game)
             except Exception: pass
             # --------------------------
             
@@ -736,7 +774,7 @@ chat = create_chat_session()
 # ======================================================================
 
 def process_user_input(user_input):
-    global current_board, loaded_moves, current_move_index, chat, session_diagnostics, SPARRING_MODE
+    global chat # 'chat' is the ONLY global we need now!
     
     if user_input.startswith("/load_pgn"):
         parts = user_input.split(" ", 1)
@@ -749,19 +787,15 @@ def process_user_input(user_input):
             with open(file_path, "r") as f:
                 raw_pgn_text = f.read()
                 
-            # RUN SCANNER
             was_scanned, enriched_pgn = scan_game_for_critical_moments(raw_pgn_text)
             
             game = chess.pgn.read_game(io.StringIO(enriched_pgn))
-            if game: 
-                current_board = game.end().board()
-                loaded_moves = list(game.mainline_moves())
-                current_move_index = len(loaded_moves) # Default to the end of the game
+            timeline.load_game(game)
                 
-            # Safely inject the system prompt outside the PGN text
-            prompt = f"I have loaded a local game. Here is the full PGN:\n\n{enriched_pgn}\n\nPlease analyze my play and my time management."
+            # THE ANTI-POISONING FIX: Do not dump the raw PGN into the prompt. Just the FEN!
+            prompt = f"I have loaded a local game. The new position FEN is: {app_state.board.fen()}. Please analyze my play."
             if was_scanned:
-                prompt += "\n\n[System Info: I have mathematically scanned the PGN above and added Brilliancy tags. Please use them for your analysis.]"
+                prompt += "\n\n[System Info: I have mathematically scanned the game and added Brilliancy tags.]"
                 
             return prompt, f"[green]Successfully loaded {file_path}. Processing game...[/green]"
         except Exception as e: return None, f"Error reading PGN: {e}"
@@ -770,92 +804,62 @@ def process_user_input(user_input):
         parts = user_input.split(" ", 1)
         if len(parts) < 2: return None, "[red]Please provide a move: /move e4[/red]"
             
-        move_str = parts[1].strip()
         try:
-            current_board.push_san(move_str)
-            
-            # --- NEW: Timeline Branching! ---
-            loaded_moves = loaded_moves[:current_move_index]
-            loaded_moves.append(current_board.move_stack[-1])
-            current_move_index += 1
-            # --------------------------------
-            
-            prompt = f"I have played {move_str}. The new position FEN is: {current_board.fen()}. Please evaluate."
-            return prompt, f"[green]Played {move_str}. Board updated.[/green]"
-        except ValueError: return None, f"[red]Invalid or illegal move: {move_str}[/red]"
+            move_san = parts[1].strip()
+            timeline.play_san(move_san)
+            prompt = f"I have played {move_san}. The new position FEN is: {app_state.board.fen()}. Please evaluate."
+            return prompt, f"[green]Played {move_san}. Board updated.[/green]"
+        except ValueError: return None, f"[red]Invalid or illegal move.[/red]"
 
     elif user_input.startswith("/undo") or user_input.startswith("/prev"):
         try:
-            popped = current_board.pop()
-            if current_move_index > 0:
-                current_move_index -= 1
-            prompt = f"I took back my last move. The FEN is now: {current_board.fen()}. What should I play instead?"
+            timeline.step_backward()
+            prompt = f"I took back my last move. The FEN is now: {app_state.board.fen()}. What should I play instead?"
             return prompt, "[green]Move taken back. Board updated.[/green]"
         except IndexError:
             return None, "[red]No moves to undo![/red]"
             
     elif user_input.startswith("/next"):
-        if current_move_index < len(loaded_moves):
-            next_move = loaded_moves[current_move_index]
-            # We must calculate the SAN string BEFORE we push the move to the board!
-            move_san = current_board.san(next_move) 
-            current_board.push(next_move)
-            current_move_index += 1
-            
-            prompt = f"I have played the next move from the game: {move_san}. The new position FEN is: {current_board.fen()}. Please evaluate."
+        try:
+            move_san = timeline.step_forward()
+            prompt = f"I have played the next move from the game: {move_san}. The new position FEN is: {app_state.board.fen()}. Please evaluate."
             return prompt, f"[green]Stepped forward: played {move_san}. Board updated.[/green]"
-        else:
+        except IndexError:
             return None, "[red]You are at the end of the loaded game (or no game is loaded)![/red]"
 
     elif user_input.startswith("/reset"):
-        current_board.reset()
-        current_move_index = 0
+        timeline.reset()
         prompt = "I have reset the board to the starting position. What opening should we look at?"
         return prompt, "[green]Board reset to the starting position.[/green]"
 
     elif user_input.startswith("/spar"):
-        SPARRING_MODE = True
+        app_state.sparring_mode = True
         return "I am ready to spar! Play a move.", "[bold green]🥊 Sparring mode ENABLED.[/bold green]"
         
     elif user_input.startswith("/nospar"):
-        SPARRING_MODE = False
+        app_state.sparring_mode = False
         return None, "[bold yellow]🛑 Sparring mode DISABLED.[/bold yellow]"
 
     elif user_input.startswith("/clear"):
-        # 1. Reset physical board state and VCR timeline
-        current_board.reset()
-        loaded_moves = []
-        current_move_index = 0
-        session_diagnostics.clear() # <--- PATCH: Clear the un-memorized session data!
-        
-        # 2. Re-instantiate the Gemini chat session with an empty history
-        get_cached_eval.cache_clear() # Free RAM
-        chat = create_chat_session()  # <--- HOT RELOAD FIX
-        
-        # 3. Delete the physical memory file so old data doesn't persist
+        timeline.reset()
+        get_cached_eval.cache_clear() 
+        chat = create_chat_session() 
         if os.path.exists(HISTORY_FILE):
-            try:
-                os.remove(HISTORY_FILE)
-            except Exception as e:
-                pass # Fail silently if file is locked
-                
+            try: os.remove(HISTORY_FILE)
+            except Exception: pass
         return None, "[bold green]✨ Session memory, board state, and timeline wiped clean![/bold green]"
 
     elif user_input.startswith("/memorize"):
-        if not session_diagnostics:
+        if not app_state.diagnostics:
             return None, "[yellow]No diagnostics generated this session to memorize.[/yellow]"
 
-        # 1. Load existing dossier or create a new one
         dossier = {"total_blunders_analyzed": 0, "error_frequencies": {}, "recent_habits": []}
         if os.path.exists(DOSSIER_FILE):
             try:
-                with open(DOSSIER_FILE, "r") as f:
-                    dossier = json.load(f)
-            except json.JSONDecodeError:
-                pass
+                with open(DOSSIER_FILE, "r") as f: dossier = json.load(f)
+            except json.JSONDecodeError: pass
                 
-        # 2. Aggregate the session data into the dossier
-        for diag in session_diagnostics:
+        for diag in app_state.diagnostics:
             err = diag.get("error_diagnosis", "unknown")
             if err != "none":
                 dossier["total_blunders_analyzed"] += 1
@@ -865,53 +869,45 @@ def process_user_input(user_input):
             if habit and habit != "N/A":
                 dossier["recent_habits"].insert(0, habit)
                 
-        # Keep only the 5 most recent habits to prevent bloat
         dossier["recent_habits"] = dossier["recent_habits"][:5]
         
-        # 3. Save the updated dossier
-        with open(DOSSIER_FILE, "w") as f:
-            json.dump(dossier, f, indent=4)
+        with open(DOSSIER_FILE, "w") as f: json.dump(dossier, f, indent=4)
             
-        # 4. Wipe the session state (Hard Reset)
-        session_diagnostics.clear()
-        current_board.reset()
-        loaded_moves = []
-        current_move_index = 0
-        get_cached_eval.cache_clear() # Free RAM
-        chat = create_chat_session()  # <--- HOT RELOAD FIX
+        timeline.reset()
+        get_cached_eval.cache_clear() 
+        chat = create_chat_session()
         if os.path.exists(HISTORY_FILE):
             try: os.remove(HISTORY_FILE)
             except: pass
             
-        # 5. Clear the terminal screen visually
         console.clear()
-        
         return None, f"[bold green]✨ Session memorized! Dossier updated. Memory wiped and screen cleared.[/bold green]"
              
-    # --- IF THE USER PASTED A RAW PGN INTO THE TERMINAL ---
+    # --- HANDLE RAW PGN PASTES ---
     was_scanned, processed_input = scan_game_for_critical_moments(user_input)
 
-    # NEW: Sync the Python backend VCR state if the pasted text was actually a chess game!
+    is_pgn = False
     if "1." in user_input or "[Event" in user_input:
         try:
             game = chess.pgn.read_game(io.StringIO(user_input))
-            if game and len(list(game.mainline_moves())) > 0:
-                current_board = game.end().board()
-                loaded_moves = list(game.mainline_moves())
-                current_move_index = len(loaded_moves) # Fast-forward to the end
-        except Exception:
-            pass # It was just a normal chat message, fail silently and safely.
+            timeline.load_game(game)
+            is_pgn = True
+        except Exception: pass 
 
-    try: history_str = chess.Board().variation_san(current_board.move_stack[-5:]) if current_board.move_stack else "Starting Position"
+    # THE ANTI-POISONING FIX: Prevent pasted PGNs from dumping into the prompt
+    if is_pgn:
+        processed_input = f"I have pasted a game. The new position FEN is: {app_state.board.fen()}. Please analyze my play."
+
+    # Only pass the immediate history (last 5 moves) instead of the entire game context!
+    try: history_str = chess.Board().variation_san(app_state.board.move_stack[-5:]) if app_state.board.move_stack else "Starting Position"
     except Exception: history_str = "Unknown"
     
-    # NEW: Legal move injection to prevent Spatial Hallucinations
-    legal_moves_str = ", ".join([current_board.san(m) for m in current_board.legal_moves])
+    legal_moves_str = ", ".join([app_state.board.san(m) for m in app_state.board.legal_moves])
 
-    enriched_input = f"{processed_input}\n\n[System Context: Current FEN: {current_board.fen()} | Legal Moves: {legal_moves_str} | Move History: {history_str}]"
+    enriched_input = f"{processed_input}\n\n[System Context: Current FEN: {app_state.board.fen()} | Legal Moves: {legal_moves_str} | Move History: {history_str}]"
     
     if was_scanned:
-        enriched_input += "\n[System Info: If the text above was a PGN, I have automatically added Brilliancy and Evaluation tags to it.]"
+        enriched_input += "\n[System Info: I have automatically added Brilliancy and Evaluation tags to the backend PGN.]"
         
     return enriched_input, None
 
@@ -1023,7 +1019,7 @@ try:
                         ))
                     
                     # 2. Swap the tokens for the actual ASCII graphics
-                    for token, visual in board_visuals.items():
+                    for token, visual in app_state.board_visuals.items():
                         output_text = output_text.replace(token, f"\n{visual}\n")
                         
                     # 3. Print the final Socratic System 2 response
