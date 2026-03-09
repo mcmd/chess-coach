@@ -96,9 +96,12 @@ if not api_key:
 client = genai.Client(api_key=api_key)
 
 current_board = chess.Board()
-loaded_moves = []         # Stores the sequence of moves from a loaded PGN
-current_move_index = 0    # Tracks our current position in the loaded game timeline
-session_diagnostics = []  # NEW: Tracks JSON tags generated this session
+loaded_moves = []         
+current_move_index = 0    
+session_diagnostics = []  
+
+# --- NEW: SECURITY & STATE FLAGS ---
+SPARRING_MODE = False
 
 # Set up storage for board sleight of hand
 board_visuals = {}
@@ -258,22 +261,59 @@ def extract_board_features(board: chess.Board) -> dict:
     return features
 
 def execute_coach_move(move_san: str) -> dict:
-    """
-    Plays a chess move on the persistent global board.
-    ONLY call this tool if the user explicitly asks you to make a move or play against them!
-    """
-    global current_board, loaded_moves, current_move_index
+    """Plays a chess move. ONLY allowed if SPARRING_MODE is True."""
+    global current_board, loaded_moves, current_move_index, SPARRING_MODE
+    if not SPARRING_MODE:
+        return {"error": "Sparring mode is DISABLED. Tell the user to type /spar to enable it."}
+    
     try:
         current_board.push_san(move_san)
-        
-        # --- NEW: Timeline Branching! ---
         loaded_moves = loaded_moves[:current_move_index]
         loaded_moves.append(current_board.move_stack[-1])
         current_move_index += 1
-        
         return {"success": True, "new_fen": current_board.fen(), "message": f"Successfully played {move_san}."}
     except ValueError as e:
-        return {"error": f"Illegal or invalid move: {e}"}
+        # --- THE LOGIC TUTOR PARADIGM ---
+        legal_moves_str = ", ".join([current_board.san(m) for m in current_board.legal_moves])
+        return {
+            "error": f"Logic Tutor Intervention: Move '{move_san}' is ILLEGAL in this position.",
+            "causal_trace": str(e),
+            "pedagogical_hint": "The piece is either pinned, blocked, or your King is in check.",
+            "required_action": f"To repair your plan, you MUST choose from these mathematically verified valid moves: [{legal_moves_str}]"
+        }
+
+def submit_diagnosis(opponent_last_move_delta: str, primary_task: str, error_diagnosis: str, 
+                     weakest_reasoning_claim: str, lowest_confidence_score: float, preventative_habit: str) -> dict:
+    """Submits a structured diagnosis of the user's mistake to the backend state."""
+    global session_diagnostics
+    
+    # Claim-Level Behavioral Calibration (Anti-Hallucination)
+    if float(lowest_confidence_score) < 0.90:
+        error_diagnosis = "none" # Prevent logging low-confidence guesses to the Dossier
+        
+    diagnosis = {
+        "opponent_last_move_delta": opponent_last_move_delta[:150], 
+        "primary_task": primary_task,
+        "error_diagnosis": error_diagnosis,
+        "weakest_reasoning_claim": weakest_reasoning_claim[:150], 
+        "lowest_confidence_score": float(lowest_confidence_score), 
+        "preventative_habit": preventative_habit[:200] 
+    }
+    session_diagnostics.append(diagnosis)
+    
+    # Render the UI Panel immediately!
+    console.print()
+    console.print(Panel(
+        f"[dim white]1. ∆ Opponent Move:[/dim white] [dim yellow]{diagnosis['opponent_last_move_delta']}[/dim yellow]\n"
+        f"[dim white]2. Primary Task:[/dim white]    [dim cyan]{diagnosis['primary_task']}[/dim cyan]\n"
+        f"[dim white]3. Error Diagnosis:[/dim white] [dim red]{diagnosis['error_diagnosis']}[/dim red]\n"
+        f"[dim white]4. Weakest Claim:[/dim white]   [dim magenta]\"{diagnosis['weakest_reasoning_claim']}\" (Conf: {diagnosis['lowest_confidence_score']:.2f})[/dim magenta]\n"
+        f"[dim white]5. Required Habit:[/dim white]  [dim green]{diagnosis['preventative_habit']}[/dim green]",
+        title="[dim italic]Coach's Diagnostic Taxonomy[/dim italic]",
+        border_style="dim blue",
+        expand=False
+    ))
+    return {"status": "success", "message": "Diagnosis recorded in backend. Proceed with your final text response."}
 
 def _safe_get_json(url: str, params: dict = None) -> dict:
     """Robust network request helper to prevent terminal hanging and encoding errors."""
@@ -378,6 +418,10 @@ def scan_game_for_critical_moments(user_text: str) -> tuple[bool, str]:
                                                 maia_san = board.san(maia_move)
                     
                     comment = node.comment if node.comment else ""
+                    
+                    # 1. FAANG FEN INVARIANT: Grab FEN BEFORE pushing the move!
+                    fen_before = board.fen()
+                    
                     board.push(played_move)
                     
                     # Apply tags
@@ -385,15 +429,15 @@ def scan_game_for_critical_moments(user_text: str) -> tuple[bool, str]:
                     if is_only_move: tag_string += " [⭐ ONLY MOVE FOUND!]"
                     if dodged_trap: tag_string += f" [🛡️ DODGED HUMAN TRAP! Maia predicted {maia_san}]"
                             
-                    # Inject basic evaluation if missing (FIXED: Scoped to 'comment', not 'user_text')
+                    # Inject basic evaluation if missing (Scoped strictly to 'comment')
                     if "[%eval" not in comment and stockfish_engine:
                         score_after = get_cached_eval(board.fen(), 0.25).white()
                         eval_str = f"#{score_after.mate()}" if score_after.is_mate() else f"{score_after.score(mate_score=100000) / 100.0:+.2f}"
                         tag_string += f" [%eval {eval_str}]"
 
-                    # --- NEW: ALWAYS INJECT THE EXACT FEN SO THE AI NEVER HAS TO GUESS! ---
+                    # 3. ALWAYS inject the pre-move FEN so the AI never guesses
                     if "[%fen" not in comment:
-                        tag_string += f' [%fen "{board.fen()}"]'
+                        tag_string += f' [%fen "{fen_before}"]'
 
                     if tag_string: node.comment = (comment + tag_string).strip()
                 exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
@@ -408,38 +452,35 @@ def scan_game_for_critical_moments(user_text: str) -> tuple[bool, str]:
         
     return False, user_text
 
-def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 15, pov: str = "white") -> dict:
-    """
-    Evaluates a position using Stockfish. 
-    'moves_to_apply' applies hypothetical moves first.
-    'pov' determines board orientation ('white' or 'black').
-    """
+def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 20, pov: str = "white") -> dict:
+    """Evaluates a position safely with input boundaries and Long-Round depth."""
     try:
+        # SECURITY BOUNDARY: Cap depth to prevent infinite hangs (Default pushed to 20)
+        safe_depth = max(1, min(int(depth), 25)) 
+        
         board = chess.Board(fen)
         if moves_to_apply:
-            for move_str in moves_to_apply: board.push_san(move_str)
+            for move_str in moves_to_apply[:10]: # Cap hypothetical moves
+                board.push_san(move_str)
                 
-        infos = stockfish_engine.analyse(board, chess.engine.Limit(depth=depth), multipv=2)
+        infos = stockfish_engine.analyse(board, chess.engine.Limit(depth=safe_depth), multipv=2)
+        
         top_lines = []
         for i, info in enumerate(infos):
             score = info["score"].white()
             eval_str = f"#{score.mate()}" if score.is_mate() else f"{score.score(mate_score=100000) / 100.0:+.2f}"
-            
             pv_moves = []
             temp_board = board.copy()
             for move in info.get("pv", [])[:10]:  
                 pv_moves.append(temp_board.san(move))
                 temp_board.push(move)
-                
             top_lines.append({"rank": i + 1, "evaluation": eval_str, "expected_engine_line": " ".join(pv_moves)})
 
-        # FORMAT THE VISUAL BOARD (Clean, deduplicated, no invert_color!)
         raw_board = board.unicode(empty_square="·")
         lines = raw_board.split('\n')
-        
         labeled_board = []
         if pov.lower() == "black":
-            lines.reverse() # Flips ranks 1-8 to 8-1
+            lines.reverse() 
             for i, line in enumerate(lines):
                 reversed_chars = " ".join(line.split(" ")[::-1])
                 labeled_board.append(f"{i+1} │ {reversed_chars} │")
@@ -453,19 +494,23 @@ def analyze_position(fen: str, moves_to_apply: list[str] = None, depth: int = 15
 
         visual = "```text\n" + "\n".join(labeled_board) + "\n```"
 
-        # --- TOKEN REPLACEMENT LOGIC ---
+        # MEMORY BOUNDARY: Cap visual storage to the 50 most recent boards
         global board_counter, board_visuals
+        if len(board_visuals) > 50:
+            board_visuals.pop(next(iter(board_visuals)))
+            
         board_counter += 1
         token = f"[[BOARD_{board_counter}]]"
         board_visuals[token] = visual
 
-        # --- NEW: EXTRACT BOARD GEOMETRY ---
-        board_features = extract_board_features(board)
+        # MATHEMATICAL GROUNDING: Inject Legal Moves to prevent Pointer Misbinding
+        legal_moves_str = ", ".join([board.san(m) for m in board.legal_moves])
 
         return {
             "top_stockfish_lines": top_lines, 
             "board_token_to_insert": token,
-            "positional_and_safety_features": board_features
+            "mathematically_legal_moves": legal_moves_str,
+            "positional_and_safety_features": extract_board_features(board)
         }
     except Exception as e: return {"error": str(e)}
 
@@ -479,7 +524,7 @@ def predict_human_move(fen: str) -> dict:
         maia_move_san = board.san(result.move)
         board.push(result.move)
         
-        info = stockfish_engine.analyse(board, chess.engine.Limit(depth=15))
+        info = stockfish_engine.analyse(board, chess.engine.Limit(depth=20))
         score = info["score"].white()
         eval_str = f"#{score.mate()}" if score.is_mate() else f"{score.score(mate_score=100000) / 100.0:+.2f}"
         
@@ -538,6 +583,7 @@ def get_opening_repertoire(fen: str) -> dict:
     except Exception as e: return {"error": str(e)}
 
 def fetch_lichess_game_by_id(game_id: str) -> dict:
+    global current_board, loaded_moves, current_move_index # <--- CRITICAL STATE SYNC
     try:
         url = f"https://lichess.org/game/export/{game_id}"
         params = {"evals": "true", "clocks": "true", "accuracy": "true", "opening": "true", "literate": "true", "tags": "true"}
@@ -546,6 +592,16 @@ def fetch_lichess_game_by_id(game_id: str) -> dict:
         if r.status_code == 200:
             console.print("[dim yellow]↳ Running Brilliancy Scanner on downloaded Lichess game...[/dim yellow]")
             was_scanned, scanned_pgn = scan_game_for_critical_moments(r.text)
+            
+            # --- SYNC BACKEND STATE ---
+            try:
+                parsed_game = chess.pgn.read_game(io.StringIO(scanned_pgn))
+                if parsed_game and len(list(parsed_game.mainline_moves())) > 0:
+                    current_board = parsed_game.end().board()
+                    loaded_moves = list(parsed_game.mainline_moves())
+                    current_move_index = len(loaded_moves)
+            except Exception: pass
+            # --------------------------
             
             if was_scanned:
                 sys_msg = "\n\n[System Info: I have mathematically scanned the PGN above and added Brilliancy tags. Please use them for your analysis.]"
@@ -556,6 +612,7 @@ def fetch_lichess_game_by_id(game_id: str) -> dict:
     except Exception as e: return {"error": str(e)}
 
 def fetch_chessgames_com_game(game_id: str) -> dict:
+    global current_board, loaded_moves, current_move_index # <--- CRITICAL STATE SYNC
     try:
         url = f"https://www.chessgames.com/njs/api/game/viewPGN/{game_id}"
         headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/plain, application/x-chess-pgn, */*"}
@@ -567,6 +624,16 @@ def fetch_chessgames_com_game(game_id: str) -> dict:
             
             console.print("[dim yellow]↳ Running Brilliancy Scanner on downloaded Master game...[/dim yellow]")
             was_scanned, scanned_pgn = scan_game_for_critical_moments(pgn_text)
+            
+            # --- SYNC BACKEND STATE ---
+            try:
+                parsed_game = chess.pgn.read_game(io.StringIO(scanned_pgn))
+                if parsed_game and len(list(parsed_game.mainline_moves())) > 0:
+                    current_board = parsed_game.end().board()
+                    loaded_moves = list(parsed_game.mainline_moves())
+                    current_move_index = len(loaded_moves)
+            except Exception: pass
+            # --------------------------
             
             if was_scanned:
                 sys_msg = "\n\n[System Info: I have mathematically scanned the PGN above and added Brilliancy tags. Please use them for your analysis.]"
@@ -607,136 +674,69 @@ def save_history(chat_session):
         if parts: serializable.append({"role": message.role, "parts": parts})
     with open(HISTORY_FILE, "w") as f: json.dump(serializable, f)
 
-# --- NEW: LOAD DOSSIER FOR PROMPT INJECTION ---
-dossier_context = "No historical data available yet. This is your first session with the student."
-if os.path.exists(DOSSIER_FILE):
-    try:
-        with open(DOSSIER_FILE, "r") as f:
-            d = json.load(f)
-            if d.get("total_blunders_analyzed", 0) > 0:
-                # Sort errors by frequency (highest first)
-                sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
-                error_str = ", ".join([f"{k} ({v} times)" for k, v in sorted_errors])
-                habits_str = "\n- ".join(d.get("recent_habits",[]))
-                
-                dossier_context = (
-                    f"You have historically analyzed {d['total_blunders_analyzed']} critical blunders for this student.\n"
-                    f"Historical Error Frequencies (Most Frequent = Biggest Weakness):\n{error_str}\n\n"
-                    f"Recent Preventative Habits you have assigned them:\n- {habits_str}"
-                )
-    except Exception: pass
+def create_chat_session():
+    """Builds a fresh chat session by hot-reloading the latest Dossier from disk."""
+    dossier_context = "No historical data available yet. This is your first session."
+    if os.path.exists(DOSSIER_FILE):
+        try:
+            with open(DOSSIER_FILE, "r") as f:
+                d = json.load(f)
+                if d.get("total_blunders_analyzed", 0) > 0:
+                    sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
+                    error_str = ", ".join([f"{k} ({v} times)" for k, v in sorted_errors])
+                    habits_str = "\n- ".join(d.get("recent_habits",[]))
+                    dossier_context = f"Analyzed {d['total_blunders_analyzed']} blunders.\nTop Weaknesses:\n{error_str}\nAssigned Habits:\n- {habits_str}"
+        except Exception: pass
 
-system_instruction = f"""
-You are an elite, Grandmaster-level chess coach. You are currently working one-on-one with a student rated {USER_ELO} Elo. 
-Your goal is not just to give the student the engine's top move, but to improve their understanding of chess concepts, calculation, and human psychology.
+    system_instruction = f"""
+You are an elite, Grandmaster-level chess coach working with a {USER_ELO} Elo student.
 
-### 📂 STUDENT DOSSIER (LONG-TERM MEMORY)
+### 📂 STUDENT DOSSIER
 {dossier_context}
-*(Use this historical data to personalize your coaching. If they make a mistake that matches their highest frequency error, point out that this is a recurring pattern!)*
 
-### 🌐 LANGUAGE OVERRIDE & JSON PROTECTION
-You MUST communicate, explain concepts, and format your final conversational text exclusively in **{USER_LANGUAGE}**. 
-- Continue to use standard English algebraic notation like 'Nf3' or 'O-O' for chess moves.
-- 🛑 CRITICAL: The internal JSON diagnostic block (defined below) MUST remain entirely in English. Do NOT translate the JSON keys or values.
+### 🌐 LOCALIZATION & NOTATION
+Conduct this session strictly in {USER_LANGUAGE}. The tools run in English, but translate your prose. 🛑 CRITICAL: ALWAYS use standard English Algebraic Notation inside markdown backticks (e.g., `Nf3`). Do NOT translate piece letters.
 
-### 🧠 THE DIAGNOSTICIAN (MANDATORY CHAIN-OF-THOUGHT)
-Before you write a single word of your conversational response to the user, you MUST output a hidden JSON block containing your internal diagnosis of the critical moment. 
-This JSON block MUST be wrapped in ```json ... ``` tags and placed at the absolute beginning of your text response.
+### ⚙️ THE NEURO-SYMBOLIC WORKFLOW
+1. **Identify & Weigh:** Review the PGN. Select UP TO 5 critical moments. Do not fabricate moments to hit a quota! Weigh your selection based on:
+   - 35% Eval Drop (Objective math).
+   - 25% Practical Relevance (Was the right move humanly findable?).
+   - 20% Recurrence (Does this align with their Dossier weaknesses?).
+   - 20% Diagnostic Clarity.
+2. **Analyze:** For EACH FEN, you MUST call `analyze_position` (to get objective Stockfish truth) and `predict_human_move` (to get amateur reality).
+3. **Partial KL & Free Exploration:** You must wrap your internal reasoning in a `<think>` block. Inside `<think>`, you must map the engine's evaluation strictly into the 5 MATE Dimensions: Material Count, Piece Activity, Pawn Structure, Space, and King Safety.
+4. **Submit Diagnosis (TOOL CALL):** AFTER exploring in `<think>`, but BEFORE writing your final prose to the user, you MUST call the `submit_diagnosis` tool to securely log the error into the backend state.
+5. **Speak:** Write your final Socratic prose to the user.
 
-You MUST answer the four diagnostic questions using the exact schema and closed vocabularies below. Do not invent new tags!
+### 🧠 BEHAVIORAL CALIBRATION & EPISTEMIC HUMILITY
+You are explicitly rewarded for recognizing when an engine evaluation is incomprehensible to a human. 
+- **Claim-Level Confidence:** When calling `submit_diagnosis`, isolate your `weakest_reasoning_claim` and score your confidence (0.0 to 1.0). If you are < 0.90 confident, you MUST log the `error_diagnosis` as "none".
+- **The Anti-Bluffing Rule:** If Stockfish flags a move as a blunder, but the refutation relies on an impossible 15-move computer calculation that makes no conceptual sense, DO NOT BLUFF. Do not invent fake positional reasons. Explicitly state: *"Stockfish hates this move, but the computer's refutation is completely unhuman. Let's focus on a more practical human mistake."*
 
-Required JSON Schema:
-```json
-{{
-    "opponent_last_move_delta": "What changed on the opponent's last move? Did they create a threat, open a file, or change the urgency?",
-    "primary_task": "MUST BE EXACTLY ONE OF:[urgent_defense, prophylaxis, consolidation, conversion, simplification, improve_worst_piece, activate_pieces, prepare_break, calculate_forcing_line, seek_counterplay]",
-    "error_diagnosis": "MUST BE EXACTLY ONE OF:[threat_blindness, single_candidate_fixation, calculation_truncation, board_vision_failure, king_danger_underestimation, strategic_misread, bad_transformation, time_pressure_collapse, impulsivity, passivity_bias, conversion_failure, defensive_resource_miss, material_greed, plan_abandonment, phantom_threat, none]",
-    "preventative_habit": "What specific, actionable thinking habit would prevent this miss next time?"
-}}
-```
-
-### 🛑 CRITICAL RULE: NO TOOL HALLUCINATIONS
-You are STRICTLY FORBIDDEN from guessing, inferring, or fabricating engine evaluations, Maia predictions, or opening statistics. 
-If you say "Stockfish says" or "Maia predicts", you MUST have actually executed the `analyze_position` or `predict_human_move` tools for that exact position during this conversation turn. 
-
-### ⚙️ MANDATORY GAME ANALYSIS WORKFLOW
-When the user asks you to analyze a downloaded game or a sequence of moves, you CANNOT just read the PGN and immediately reply. You MUST execute this exact step-by-step loop BEFORE generating your final text response:
-1. **Fetch:** Use the appropriate tool to download the game.
-2. **Identify:** Read the PGN silently and isolate 4 to 5 critical moments. You MUST strive for a balance of negative and positive reinforcement:
-   - **Mistakes:** Identify critical blunders or mistakes (look for sudden drops in `[%eval]`).
-   - **Brilliant Saves:** Look specifically for moves explicitly tagged with `[⭐ ONLY MOVE FOUND!]` or `[🛡️ DODGED HUMAN TRAP!]` in the PGN. If the student navigated a minefield or successfully avoided a tempting human blunder, heavily praise them!
-3. **Extract FENs:** To analyze a specific move, you need the mathematically exact FEN of the board *before* that move was played. Do NOT calculate this or use tools to reconstruct it! The system secretly injects the true FEN into the PGN comments after every single move (e.g., `[%fen "..."]`). Simply copy the exact FEN string from the comment of the move *immediately preceding* the blunder/moment! (For White's Move 1, use the starting FEN: `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1`).
-4. **Analyze:** For EACH FEN generated in Step 3, you MUST call:
-   - `analyze_position` (to get objective Stockfish truth).
-   - `predict_human_move` (to see what a {USER_ELO} player would actually do).
-    - `get_opening_repertoire` (if it is the opening phase, to compare Grandmaster theory against amateur reality).
-5. **Respond:** ONLY AFTER you have gathered real data using these tools are you allowed to synthesize your final textual response to the student.
-
-### ♟️ COACHING METHODOLOGY & PEDAGOGY
-1. **The Socratic Method:** Do not spoon-feed answers. Ask leading questions. If the student makes a mistake, ask them: "What did your opponent's last move threaten?" Make them think.
-2. **Objective vs. Practical Reality:** Synthesize objective truth (Stockfish) and human probability (Maia / Lichess database). 
-   - If Stockfish suggests a move that is only good because of an impossible-to-see 5-move+ tactic, warn the student.
-   - The `predict_human_move` tool now returns BOTH the human impulse AND the Stockfish refutation of that impulse! If Maia predicts the student or opponent will play a tempting blunder, explicitly warn them: "I know [Maia's Move] looks tempting, but if you play it, the evaluation drops to [Evaluation] because of this refutation: [Stockfish Refutation Line]."
-3. **Speak in Concepts:** At {USER_ELO} Elo, a simple, solid plan is better than a complex engine sequence. Prioritize explaining concepts like King Safety, Piece Activity, controlling the center, and identifying undefended pieces.
-   - **Positional & Safety Lenses:** The `analyze_position` tool now automatically returns `positional_and_safety_features` (e.g., open files, pawn islands, hanging pieces, pinned pieces). 
-   - 🛑 ANTI-BLOAT RULE: DO NOT print these features as a robotic checklist (e.g., do not write "Piece safety flags: None"). 
-   - DO use this data to organically explain *why* a move is good or bad. If the student blunders, check the data: did they leave a piece hanging? Did they ignore a pin? Weave these geometric truths naturally into your prose (e.g., "You missed that your Knight on f3 was completely hanging!").
-   - Pawn Structure Overlap: If the data shows pawns on the same file in BOTH isolated_pawns and doubled_files, do NOT list them as multiple separate weaknesses. Synthesize this data and refer to it conceptually as a single "isolated doubled pawn complex" on that file.
-4. **Grounding in Theory:** If `get_opening_repertoire` provides a `theoretical_opening_name`, explicitly state it. Use your deep internal knowledge of chess theory to briefly explain the classical Grandmaster plans. Then, compare the `top_master_moves` against the `typical_amateur_moves` to show the student how their opponents are likely to deviate from GM theory and how to punish it!
-5. **Handling Hypotheticals:** If the user asks "What if I play [Move]?", "Why can't I play [Move]?", or suggests an alternative idea, IMMEDIATELY use the `analyze_position` tool and pass their proposed move sequence into the `moves_to_apply` parameter. Use the returned `expected_engine_line` to prove exactly how their idea would be mathematically punished or rewarded!
-6. **Time Management (Clock Analysis):** If the provided PGN contains clock timestamps (e.g., `[%clk 0:10:00]`), you MUST evaluate the student's time management on their critical mistakes. 
-   - Calculate the estimated time spent by comparing the clock on their blunder to the clock on their *previous* turn (factor in any time increment if noted in the headers). 
-   - **"Hope Chess" (Impulse Blunders):** If they make a critical blunder or miss a tactic in under 10 seconds, explicitly call them out! Tell them: "You only spent X seconds on this move. You played 'Hope Chess' instead of calculating."
-   - **"Freezing" (Overthinking):** If they spend over 60 seconds on a completely forced move (like escaping a check or making an obvious recapture), warn them about "freezing" and hallucinating phantom threats.
-   - ALWAYS weave the exact time they spent into your explanation.
-7. **Positive Reinforcement:** 
-   - If the student found a move tagged with `[⭐ ONLY MOVE FOUND!]`, explicitly praise them for navigating a tactical minefield where any other move would lose.
-   - If a move is tagged with `[🛡️ DODGED HUMAN TRAP!]`, explicitly praise them for resisting temptation! Explain *why* the natural human impulse (the move Maia predicted) was a dangerous trap, and how the student's actual move brilliantly bypassed it.
-   - 🛑 CRITICAL FORMATTING RULE: The tags `[⭐ ONLY MOVE FOUND!]` and `[🛡️ DODGED HUMAN TRAP!]` are secret backend metadata for your eyes only. NEVER literally print these bracketed tags or emojis in your final text response to the student! Instead, translate the concept into natural, conversational human language (e.g., "You found the absolute only move on the board to save the game!", or "Maia predicted most players would play X, but you successfully dodged the trap!").
-8. **Make Annotations Provable:** For every "avoid X" or "X is a blunder" claim you make, you MUST include a 2-to-4 move refutation line derived from your engine tool results to prove *why* (unless it's mate, then show the whole line). Do not just say a move loses; mathematically prove it with the Stockfish continuation.
-9. **Interactive Sparring:** If the user explicitly asks you to play a move against them (e.g., "Your turn," "Play your best response," or "Let's play from here"), you MUST use the `execute_coach_move` tool to physically apply your chosen move to the board. 
-   - ALWAYS use `analyze_position` first to decide what move to play! 
-   - Do NOT use `execute_coach_move` during normal analysis, ONLY when actively sparring.
-
-### 📝 FORMATTING & RULES OF ENGAGEMENT
-- **Current State:** The system automatically appends the current board state (FEN) to every message the user sends. You ALWAYS know the current board state.
-- **Handling Follow-ups & Past Moves:** If the user asks a follow-up question about a specific past move, DO NOT guess the board state! Find that move in the PGN, grab the `[%fen "..."]` tag from the move *prior* to it, and pass it to `analyze_position` to get the true visual board before replying.
-- **Endgames:** If there are 7 or fewer pieces on the board, immediately use `query_endgame_tablebase`.
-- **MANDATORY VISUALIZATIONS & LINES:** The `analyze_position` tool will return a `board_token_to_insert` (e.g., `[[BOARD_1]]`). 
-  - 🛑 CRITICAL: NEVER attempt to draw, type, or format an ASCII chess board yourself! You are highly prone to hallucinating piece locations.
-  - You MUST copy and paste the EXACT token (like `[[BOARD_1]]`) into your chat response wherever you want the board to appear. The backend system will automatically replace your token with the correct graphical board.
-  - Use the `expected_engine_line` to definitively prove *why* a move is bad by showing the student how the opponent would mathematically punish them!
-  - **Board POV:** The `analyze_position` tool accepts a `pov` argument ("white" or "black"). You MUST set `pov="black"` if the student played the Black pieces.
-- **CHESS NOTATION FORMATTING (STRICT UI REQUIREMENT):**
-  - You MUST wrap EVERY single chess square, individual move, and move sequence in markdown backticks to render them as `inline code` (e.g., `e4`, `Nf3`, `1. d4 d5`).
-  - DO NOT wrap plain English piece names in backticks! Write "your King" or "the Pawn", NEVER "your `King`" or "the `Pawn`". ONLY use backticks for formal algebraic notation and squares.
-  - Our terminal UI relies entirely on these backticks to generate the visual highlight boxes. 
-- Break up your text into easily readable paragraphs or bullet points.
-- Even if you are using the Socratic approach with the user, NEVER use the word "Socratic" in your output.
+### 📝 FORMATTING RULES
+- **Visuals:** Copy and paste the EXACT token (like `[[BOARD_1]]`) returned by the tools.
+- **Sparring:** Use `execute_coach_move` if the user wants to play. If the Logic Tutor rejects your move, read the causal trace and try again from the provided legal moves list.
 """
 
-config = types.GenerateContentConfig(
-    system_instruction=system_instruction,
-    tools=[
-        fetch_lichess_game_by_id, 
-        fetch_chessgames_com_game, query_endgame_tablebase, 
-        analyze_position, predict_human_move, get_opening_repertoire, execute_coach_move
-    ],
-    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True) 
-)
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        tools=[
+            fetch_lichess_game_by_id, fetch_chessgames_com_game, query_endgame_tablebase, 
+            analyze_position, predict_human_move, get_opening_repertoire, execute_coach_move, submit_diagnosis
+        ],
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True) 
+    )
+    return client.chats.create(model=GEMINI_MODEL, config=config, history=[])
 
-chat = client.chats.create(
-    model=GEMINI_MODEL,
-    config=config,
-    history=load_history()
-)
+# Initialize first session
+chat = create_chat_session()
 
 # ======================================================================
 # 4. COMMAND PROCESSING & CHAT LOOP
 # ======================================================================
 
 def process_user_input(user_input):
-    global current_board, loaded_moves, current_move_index, chat, session_diagnostics
+    global current_board, loaded_moves, current_move_index, chat, session_diagnostics, SPARRING_MODE
     
     if user_input.startswith("/load_pgn"):
         parts = user_input.split(" ", 1)
@@ -813,18 +813,24 @@ def process_user_input(user_input):
         prompt = "I have reset the board to the starting position. What opening should we look at?"
         return prompt, "[green]Board reset to the starting position.[/green]"
 
+    elif user_input.startswith("/spar"):
+        SPARRING_MODE = True
+        return "I am ready to spar! Play a move.", "[bold green]🥊 Sparring mode ENABLED.[/bold green]"
+        
+    elif user_input.startswith("/nospar"):
+        SPARRING_MODE = False
+        return None, "[bold yellow]🛑 Sparring mode DISABLED.[/bold yellow]"
+
     elif user_input.startswith("/clear"):
         # 1. Reset physical board state and VCR timeline
         current_board.reset()
         loaded_moves = []
         current_move_index = 0
+        session_diagnostics.clear() # <--- PATCH: Clear the un-memorized session data!
         
         # 2. Re-instantiate the Gemini chat session with an empty history
-        chat = client.chats.create(
-            model=GEMINI_MODEL,
-            config=config,
-            history=[]
-        )
+        get_cached_eval.cache_clear() # Free RAM
+        chat = create_chat_session()  # <--- HOT RELOAD FIX
         
         # 3. Delete the physical memory file so old data doesn't persist
         if os.path.exists(HISTORY_FILE):
@@ -867,11 +873,12 @@ def process_user_input(user_input):
             json.dump(dossier, f, indent=4)
             
         # 4. Wipe the session state (Hard Reset)
-        session_diagnostics = []
+        session_diagnostics.clear()
         current_board.reset()
         loaded_moves = []
         current_move_index = 0
-        chat = client.chats.create(model=GEMINI_MODEL, config=config, history=[])
+        get_cached_eval.cache_clear() # Free RAM
+        chat = create_chat_session()  # <--- HOT RELOAD FIX
         if os.path.exists(HISTORY_FILE):
             try: os.remove(HISTORY_FILE)
             except: pass
@@ -895,10 +902,13 @@ def process_user_input(user_input):
         except Exception:
             pass # It was just a normal chat message, fail silently and safely.
 
-    try: history_str = chess.Board().variation_san(current_board.move_stack) if current_board.move_stack else "Starting Position"
+    try: history_str = chess.Board().variation_san(current_board.move_stack[-5:]) if current_board.move_stack else "Starting Position"
     except Exception: history_str = "Unknown"
+    
+    # NEW: Legal move injection to prevent Spatial Hallucinations
+    legal_moves_str = ", ".join([current_board.san(m) for m in current_board.legal_moves])
 
-    enriched_input = f"{processed_input}\n\n[System Context for Coach: Current FEN: {current_board.fen()} | Move History: {history_str}]"
+    enriched_input = f"{processed_input}\n\n[System Context: Current FEN: {current_board.fen()} | Legal Moves: {legal_moves_str} | Move History: {history_str}]"
     
     if was_scanned:
         enriched_input += "\n[System Info: If the text above was a PGN, I have automatically added Brilliancy and Evaluation tags to it.]"
@@ -967,7 +977,7 @@ try:
                             result = analyze_position(
                                 fen, 
                                 moves_to_apply=args_dict.get("moves_to_apply", None), 
-                                depth=int(args_dict.get("depth", 15)),
+                                depth=int(args_dict.get("depth", 20)),
                                 pov=args_dict.get("pov", "white") # <-- Add this!
                             )
                         elif fn_call.name == "predict_human_move":
@@ -977,51 +987,49 @@ try:
                             console.print("[dim yellow]↳ Checking Lichess Opening Databases...[/dim yellow]")
                             result = get_opening_repertoire(fen)
                         elif fn_call.name == "execute_coach_move":
-                            console.print(f"[dim green]↳ The Coach is playing a move on the board...[/dim green]")
+                            console.print(f"[dim green]↳ The Logic Tutor is evaluating the move...[/dim green]")
                             result = execute_coach_move(args_dict.get("move_san", ""))
+                        elif fn_call.name == "submit_diagnosis":
+                            console.print(f"[dim magenta]↳ Recording structural diagnosis to backend...[/dim magenta]")
+                            result = submit_diagnosis(
+                                args_dict.get("opponent_last_move_delta", "N/A"),
+                                args_dict.get("primary_task", "N/A"),
+                                args_dict.get("error_diagnosis", "none"),
+                                args_dict.get("weakest_reasoning_claim", "N/A"),
+                                float(args_dict.get("lowest_confidence_score", 0.0)),
+                                args_dict.get("preventative_habit", "N/A")
+                            )
                             
+                        # Modern SDK tool response formulation
                         tool_parts.append(types.Part.from_function_response(name=fn_call.name, response={"result": result}))
                     
                     response = chat.send_message(tool_parts)
+                
+                # --- RESPONSE RENDERING ---
                 if response.text:
                     output_text = response.text
                     
-                    # --- Extract and Parse the Diagnostician JSON ---
-                    # Use regex with DOTALL to capture multi-line JSON blocks safely
-                    json_match = re.search(r"```json\s*(\{.*?\})\s*```", output_text, re.DOTALL | re.IGNORECASE)
+                    # 1. UI POLISH: Intercept and render the <think> block beautifully
+                    think_match = re.search(r"<think>(.*?)</think>", output_text, re.DOTALL | re.IGNORECASE)
+                    if think_match:
+                        thought_process = think_match.group(1).strip()
+                        output_text = output_text.replace(think_match.group(0), "").strip()
+                        
+                        console.print(Panel(
+                            Markdown(thought_process),
+                            title="[dim italic]🧠 Coach's Internal Monologue[/dim italic]",
+                            border_style="dim white",
+                            expand=False
+                        ))
                     
-                    if json_match:
-                        raw_json_str = json_match.group(1)
-                        try:
-                            diagnosis = json.loads(raw_json_str)
-                            
-                            # NEW: Save to session memory for the /memorize command
-                            session_diagnostics.append(diagnosis)
-                            
-                            # Remove the JSON block from the main text
-                            output_text = output_text.replace(json_match.group(0), "").strip()
-                            
-                            # Build the highly structured UI panel
-                            diagnosis_panel = Panel(
-                                f"[dim white]1. ∆ Opponent Move:[/dim white] [dim yellow]{diagnosis.get('opponent_last_move_delta', 'N/A')}[/dim yellow]\n"
-                                f"[dim white]2. Primary Task:[/dim white]    [dim cyan]{diagnosis.get('primary_task', 'N/A')}[/dim cyan]\n"
-                                f"[dim white]3. Error Diagnosis:[/dim white] [dim red]{diagnosis.get('error_diagnosis', 'N/A')}[/dim red]\n"
-                                f"[dim white]4. Required Habit:[/dim white]  [dim green]{diagnosis.get('preventative_habit', 'N/A')}[/dim green]",
-                                title="[dim italic]Coach's Diagnostic Taxonomy[/dim italic]",
-                                border_style="dim blue",
-                                expand=False
-                            )
-                            console.print()
-                            console.print(diagnosis_panel)
-                        except json.JSONDecodeError:
-                            pass # If the LLM generates malformed JSON, ignore the panel and print the text normally
-
-                    # Swap the tokens for the actual ASCII graphics
+                    # 2. Swap the tokens for the actual ASCII graphics
                     for token, visual in board_visuals.items():
                         output_text = output_text.replace(token, f"\n{visual}\n")
                         
-                    console.print("\n[bold purple]Coach Gemini:[/bold purple]")
-                    console.print(Markdown(output_text))
+                    # 3. Print the final Socratic System 2 response
+                    if output_text: # Ensure there is text left after stripping <think>
+                        console.print("\n[bold purple]Coach Gemini:[/bold purple]")
+                        console.print(Markdown(output_text))
                 else: 
                     console.print("\n[bold red]Error: Received no text response from the model.[/bold red]")
             except Exception as e: console.print(f"\n[bold red]An API error occurred:[/bold red] {e}")
