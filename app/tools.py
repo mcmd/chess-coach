@@ -1,3 +1,4 @@
+import uuid
 import chess
 import requests
 import io
@@ -5,8 +6,8 @@ import chess.pgn
 import chess.engine
 from rich.panel import Panel
 from app.ui import console
-from app.engines import extract_board_features
 from app.scanner import scan_game_for_critical_moments
+from app.concepts import extract_board_features
 
 class CoachTools:
     def __init__(self, state, timeline, engines):
@@ -69,37 +70,44 @@ class CoachTools:
             safe_depth = max(1, min(int(depth), 25)) 
             board = chess.Board(fen)
             
-            # 🚨 2A. MEDIUM BUG FIX: Render the ASCII string BEFORE pushing hypothetical moves!
-            raw_board = board.unicode(empty_square="·")
-            lines = raw_board.split('\n')
-            labeled_board = []
-            if pov.lower() == "black":
-                lines.reverse() 
-                for i, line in enumerate(lines):
-                    reversed_chars = " ".join(line.split(" ")[::-1])
-                    labeled_board.append(f"{i+1} │ {reversed_chars} │")
-                labeled_board.append("  └" + "─" * 17 + "┘")
-                labeled_board.append("    h g f e d c b a")
-            else:
-                for i, line in enumerate(lines):
-                    labeled_board.append(f"{8-i} │ {line} │")
-                labeled_board.append("  └" + "─" * 17 + "┘")
-                labeled_board.append("    a b c d e f g h")
-
-            visual = "```text\n" + "\n".join(labeled_board) + "\n```"
-
-            if len(self.state.board_visuals) > 50:
-                self.state.board_visuals.pop(next(iter(self.state.board_visuals)))
+            # --- HELPER: Generate Unique Visual Tokens ---
+            def get_visual_token(b):
+                raw = b.unicode(empty_square="·")
+                lines = raw.split('\n')
+                labeled = []
+                if pov.lower() == "black":
+                    lines.reverse() 
+                    for i, line in enumerate(lines):
+                        reversed_chars = " ".join(line.split(" ")[::-1])
+                        labeled.append(f"{i+1} │ {reversed_chars} │")
+                    labeled.append("  └" + "─" * 17 + "┘")
+                    labeled.append("    h g f e d c b a")
+                else:
+                    for i, line in enumerate(lines):
+                        labeled.append(f"{8-i} │ {line} │")
+                    labeled.append("  └" + "─" * 17 + "┘")
+                    labeled.append("    a b c d e f g h")
                 
-            self.state.board_counter += 1
-            token = f"[[BOARD_{self.state.board_counter}]]"
-            self.state.board_visuals[token] = visual
+                visual = "```text\n" + "\n".join(labeled) + "\n```"
+                if len(self.state.board_visuals) > 50:
+                    self.state.board_visuals.pop(next(iter(self.state.board_visuals)))
+                
+                # Your brilliant UUID addition!
+                render_id = str(uuid.uuid4())[:8] 
+                tkn = f"[[BOARD_{render_id}]]"
+                self.state.board_visuals[tkn] = visual
+                return tkn
 
-            # NOW it is safe to apply hypothetical moves for engine evaluation
+            # 📸 1. Snapshot BEFORE moves (The Past)
+            token_before = get_visual_token(board)
+            
+            token_after = None
             if moves_to_apply:
                 for move_str in moves_to_apply[:10]: 
                     board.push_san(move_str)
-                    
+                # 📸 2. Snapshot AFTER moves (The Future)
+                token_after = get_visual_token(board)
+                
             infos = self.engines.stockfish.analyse(board, chess.engine.Limit(depth=safe_depth), multipv=2)
             
             top_lines = []
@@ -114,12 +122,16 @@ class CoachTools:
                 top_lines.append({"rank": i + 1, "evaluation": eval_str, "expected_engine_line": " ".join(pv_moves)})
 
             legal_moves_str = ", ".join([board.san(m) for m in board.legal_moves])
+            
+            # --- 3. EXTRACT FEATURES ---
+            features = extract_board_features(board)
 
             return {
                 "top_stockfish_lines": top_lines, 
-                "board_token_to_insert": token,
+                "board_token_before_moves": token_before, # <-- Hand the AI BOTH tokens!
+                "board_token_after_moves": token_after,
                 "mathematically_legal_moves": legal_moves_str,
-                "positional_and_safety_features": extract_board_features(board)
+                "positional_and_safety_features": features
             }
         except Exception as e: return {"error": str(e)}
 
@@ -133,7 +145,7 @@ class CoachTools:
             maia_move_san = board.san(result.move)
             board.push(result.move)
             
-            info = self.engines.stockfish.analyse(board, chess.engine.Limit(depth=20))
+            info = self.engines.stockfish.analyse(board, chess.engine.Limit(depth=25))
             score = info["score"].white()
             eval_str = f"#{score.mate()}" if score.is_mate() else f"{score.score(mate_score=100000) / 100.0:+.2f}"
             
