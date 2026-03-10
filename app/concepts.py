@@ -209,12 +209,39 @@ def extract_board_features(board: chess.Board) -> dict:
     
     features["pawn_structure"]["pawn_majorities"] = majorities
 
+    # ... [keep your Bad Bishop & Heavy Piece Coordination blocks exactly as they are] ...
+
     # --- 9. DEVELOPMENT PHASE ---
     features["development"] = {
-        "white_can_castle": bool(board.castling_rights & chess.WHITE),
-        "black_can_castle": bool(board.castling_rights & chess.BLACK),
+        # 🐛 BUG FIX: Use has_castling_rights() instead of bitwise &
+        "white_can_castle": board.has_castling_rights(chess.WHITE),
+        "black_can_castle": board.has_castling_rights(chess.BLACK),
         "white_undeveloped_minors": len([sq for sq in board.pieces(chess.KNIGHT, chess.WHITE) | board.pieces(chess.BISHOP, chess.WHITE) if chess.square_rank(sq) == 0]),
         "black_undeveloped_minors": len([sq for sq in board.pieces(chess.KNIGHT, chess.BLACK) | board.pieces(chess.BISHOP, chess.BLACK) if chess.square_rank(sq) == 7])
     }
 
+    # --- 10. PAWN MAJORITIES ---
+    def get_majorities():
+        w_pawns = list(board.pieces(chess.PAWN, chess.WHITE))
+        b_pawns = list(board.pieces(chess.PAWN, chess.BLACK))
+        
+        def count_pawns(pawns_list, files):
+            return sum(1 for sq in pawns_list if chess.square_file(sq) in files)
+            
+        # Queenside (files a,b,c = 0,1,2), Kingside (f,g,h = 5,6,7)
+        regions = {"queenside": [0, 1, 2], "kingside": [5, 6, 7]}
+        majorities = {"white": [], "black": []}
+        
+        for region, f_list in regions.items():
+            w_count = count_pawns(w_pawns, f_list)
+            b_count = count_pawns(b_pawns, f_list)
+            if w_count > b_count:
+                majorities["white"].append(region)
+            elif b_count > w_count:
+                majorities["black"].append(region)
+                
+        return majorities
+
+    features["pawn_structure"]["pawn_majorities"] = get_majorities()
+    
     return features
