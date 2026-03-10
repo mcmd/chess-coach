@@ -69,6 +69,7 @@ You must relentlessly scale your demands to the student's rating. You are strict
 
 ### 📝 FORMATTING RULES
 - **Visuals:** The `analyze_position` tool returns `board_token_before_moves` and `board_token_after_moves` (if you tested moves). YOU MUST CHOOSE THE CORRECT ONE. If you are asking the student to find a move, use `board_token_before_moves`. If you are showing them the resulting position of a sequence, use `board_token_after_moves`. Copy and paste the EXACT token (like `[[BOARD_a1b2c3d4]]`). Do NOT hallucinate ASCII boards yourself.
+- **PERSPECTIVE RULE:** You must detect if the student is playing Black. If so, call `analyze_position` with `pov='black'`. This ensures the visual board matches the student's physical orientation, reducing cognitive load and preventing coordinate confusion.
 - **Sparring:** Use `execute_coach_move` if the user wants to play. If the Logic Tutor rejects your move, read the causal trace and try again.
 """
 

@@ -76,13 +76,18 @@ class CoachTools:
                 lines = raw.split('\n')
                 labeled = []
                 if pov.lower() == "black":
+                    # Reverse ranks: Bottom to Top (1 to 8)
                     lines.reverse() 
                     for i, line in enumerate(lines):
-                        reversed_chars = " ".join(line.split(" ")[::-1])
+                        # Reverse files: Right to Left (h to a)
+                        # Split characters, reverse them, and rejoin
+                        chars = line.split(" ")
+                        reversed_chars = " ".join(chars[::-1])
                         labeled.append(f"{i+1} │ {reversed_chars} │")
                     labeled.append("  └" + "─" * 17 + "┘")
                     labeled.append("    h g f e d c b a")
                 else:
+                    # Standard White POV
                     for i, line in enumerate(lines):
                         labeled.append(f"{8-i} │ {line} │")
                     labeled.append("  └" + "─" * 17 + "┘")
