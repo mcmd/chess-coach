@@ -249,7 +249,13 @@ def main():
 
                             if hasattr(coach_tools, fn_call.name):
                                 method = getattr(coach_tools, fn_call.name)
-                                result = method(**args_dict)
+                                # 🐛 CRASH FIX: Catch bad AI syntax and allow it to self-correct!
+                                try:
+                                    result = method(**args_dict)
+                                except TypeError as e:
+                                    result = {"error": f"Invalid arguments passed to tool '{fn_call.name}': {e}. Please check the tool's parameters and try again."}
+                                except Exception as e:
+                                    result = {"error": f"Tool execution failed: {e}"}
                             else:
                                 result = {"error": f"Tool {fn_call.name} not found."}
                                 

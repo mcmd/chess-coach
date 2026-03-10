@@ -31,19 +31,30 @@ class CoachTools:
                 "required_action": f"To repair your plan, you MUST choose from these mathematically verified valid moves: [{legal_moves_str}]"
             }
 
-    def submit_diagnosis(self, opponent_last_move_delta: str, primary_task: str, error_diagnosis: str, 
+    def submit_diagnosis(self, fen: str, opponent_last_move_delta: str, primary_task: str, error_diagnosis: str, 
                          weakest_reasoning_claim: str, lowest_confidence_score: float, preventative_habit: str) -> dict:
+        """
+        Logs a diagnostic failure to the student's long-term memory dossier.
         
-        # 💥 3A. BIG BUG FIX (Backend): Prevent dossier bloat for the same position
-        current_fen = self.state.board.fen()
-        if any(d.get("fen") == current_fen for d in self.state.diagnostics):
+        Args:
+            fen: The exact FEN string of the historical position where the blunder occurred.
+            opponent_last_move_delta: What the opponent's last move changed.
+            primary_task: The primary objective the student failed to accomplish.
+            error_diagnosis: The reason the student failed.
+            weakest_reasoning_claim: The most uncertain part of your diagnosis.
+            lowest_confidence_score: Confidence score from 0.0 to 1.0.
+            preventative_habit: Actionable advice to avoid this in the future.
+        """
+        
+        # 💥 3A. BIG BUG FIX (Backend): Prevent dossier bloat for the EXACT historical position
+        if any(d.get("fen") == fen for d in self.state.diagnostics):
             return {"success": True, "message": "Diagnosis already logged for this position. Do not call this tool again."}
 
         if float(lowest_confidence_score) < 0.90: error_diagnosis = "none"
             
         diagnosis = {
-            "fen": current_fen, # Save the FEN to track duplicates
-            "opponent_last_move_delta": opponent_last_move_delta[:150], 
+            "fen": fen, # Save the FEN passed by the AI, NOT the global physical board state!
+            "opponent_last_move_delta": opponent_last_move_delta[:150],
             "primary_task": primary_task,
             "error_diagnosis": error_diagnosis,
             "weakest_reasoning_claim": weakest_reasoning_claim[:150], 
