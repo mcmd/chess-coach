@@ -32,9 +32,11 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 * **Deep Positional & Safety Analysis (`app/concepts.py`):** The engine tools automatically extract and provide deep structural heuristics to the AI via a dedicated conceptual pipeline. When evaluating a position, the AI instantly knows about:
     * **Material Imbalances** and Bishop pair status.
     * **Central Control dominance** (how many attackers are fighting for D4, E4, D5, E5).
-    * **Pawn Structure defects** (isolated pawns, explicit island spans, passed pawns, doubled files).
+    * **Pawn Structure defects** (isolated pawns, explicit island spans, passed pawns, doubled files, pawn majorities on the Queenside or Kingside).
     * **Piece Safety** (hanging pieces, pinned pieces).
     * **King Safety Perimeter** (exact pawn shield coordinates, enemy pieces actively attacking the squares around the King).
+    * **Piece Activity and Coordination**: True Knight Outposts, Bad Bishops (structurally blocked by central pawns), connected rooks, and rooks stationed on the 2nd/7th rank.
+    * **Development Phase**: Castling rights status and a strict count of undeveloped minor pieces on the back rank to penalize premature attacks.
 * **Context Enrichment:** User inputs are secretly enriched with the current board's FEN and full algebraic move history (e.g., "1. e4 c5..."), ensuring the LLM always has perfect situational awareness of the ongoing game.
 * **Clock & Time Analysis:** When loading games via PGN, the coach analyzes clock timestamps (`[%clk]`). It can identify "Hope Chess" (playing too fast on blunders) or "Freezing" (overthinking forced moves), providing feedback on the student's psychological state during the game.
 * **Profiles:** Create isolated learning environments using the `--profile` flag. This separates your configuration (Elo, model), chat memory, and CLI history into independent subdirectories, perfect for studying different openings or having multiple users.
@@ -44,52 +46,6 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 * **Singleton UI Console:** Ensures a smooth, flicker-free terminal experience by routing all outputs, spinners, and tool logs through a single shared `rich` console object.
 * **Interactive CLI:** Built with `rich` and `prompt_toolkit`, featuring beautiful markdown rendering, color-coded chess notation, and cross-session up-arrow command history.
 * **Built-in Commands:** Use `/load_pgn <filename>` to instantly import games for analysis, `/move <san>` to play moves on the internal board, or `/undo` to take back a move. Or use `/reset`, `/clear`, `/next`, `/prev`, and `/memorize` to manage your session and timeline.
-
-## The Science of Pedagogical Grounding
-
-Building an AI chess coach requires solving the fundamental tension between probabilistic neural reasoning and deterministic symbolic rules. Standard large language models (LLMs) are plagued by structural hallucinations because they lack an internal representation of the game state, leading to "line-of-sight" errors, temporal confusion, and illegal move suggestions.
-
-The Gemini Chess Coach implements a **Type 6 Neuro-Symbolic Architecture**, where a neural "pedagogical brain" orchestrates external symbolic tools to ensure advice is anchored in absolute truth.
-
-### 1. State Tracking Failure and Pointer Misbinding
-* **The Challenge:** This is the primary driver of hallucinations. LLMs are probabilistic sequence predictors that lack a persistent board representation. As games progress, the model's internal "mental" board diverges from reality, leading it to recommend moves for captured pieces or ignore physical blockers.
-* **Our Solution:** We implement **Symbolic State Grounding and Dual-Token Rendering**. The Python backend (specifically `app/state.py`) maintains the canonical game state using the `python-chess` library, which serves as the sole "source of truth". To prevent spatial hallucination, the LLM is never permitted to update the state autonomously. Furthermore, our `analyze_position` tool captures deterministic ASCII snapshots *before* and *after* hypothetical moves, binds them to secure UUIDs (e.g., `[[BOARD_a1b2c3d4]]`), and forces the LLM to simply output the correct token, stripping it of spatial rendering responsibilities.
-* **Reference:** [Westerdale (2024)][ref1]
-
-### 2. Historical State Integrity (Temporal Hallucinations)
-* **The Challenge:** When reviewing past mistakes, models struggle with "context compression" and "reasoning degradation," often confusing the current board state with a historical one. This "Time Travel" paradox leads the model to hallucinate pieces in past or future positions.
-* **Our Solution:** We implement **Rationale-Guided Retrieval (RAG+)** through our **Eternal FEN Rule**. Our `scanner.py` script performs a 2-pass scan and injects a unique `[%fen "..."]` tag into every move's PGN comment. The model is governed by a Hard Search Constraint: it is physically forbidden from calculating a past position mentally and must instead retrieve the exact FEN key from the move history to re-ground its tools.
-* **Reference:** [Chen et al. (2025a)][ref2]
-
-### 3. Logic Hallucinations and the Need for a "Logic Tutor"
-* **The Challenge:** LLMs often favor "correlation completion"—predicting move strings that look linguistically plausible in PGN—over formal correctness. This results in "line-of-sight hallucinations" where the model attempts illegal moves (like castling through check). Standard agentic systems simply reject these moves, causing the LLM to get stuck in an infinite failure loop.
-* **Our Solution:** We utilize the **Logic Tutor Paradigm**. Our `execute_coach_move` tool acts as a deterministic intervention layer. When the model proposes a move during sparring, the Python layer validates it against a `Board.is_legal()` verifier. If a violation is found, the system provides a "causal diagnostic report" derived from a formal logic trace (e.g., explaining why a piece is pinned), which triggers an iterative, self-correcting pedagogical refinement of the AI's plan.
-* **Reference:** [OpenReview (2024)][ref3]
-
-### 4. The "Good Test-Taker" Bias vs. Epistemic Uncertainty
-* **The Challenge:** Models are typically optimized to act as "good test-takers"—guessing confidently whenever the probability of correctness is non-zero rather than admitting uncertainty. This results from standard reinforcement learning with verifiable rewards (RLVR) using binary correctness signals, which fail to penalize overconfident errors.
-* **Our Solution:** We implement **Behavioral Calibration and Risk Thresholding**. Using the `submit_diagnosis` tool, the model is forced to isolate its "weakest reasoning claim" and score its confidence. If confidence falls below a strict 0.90 threshold, the diagnosis is rejected as "none," transitioning the model from an overconfident "test-taker" to an "honest communicator".
-* **References:** [Wu et al. (2026)][ref4]; [Kalai et al. (2025)][ref5]
-
-### 5. Computational Burdens in Sequential Reasoning
-* **The Challenge:** Strategic reasoning in complex domains introduces unique challenges that are difficult to manage through purely textual, step-by-step reasoning alone. Pure LLM reasoning often plateaus far below expert levels due to a deficit in internal understanding of domain-specific rules and global computational dependencies.
-* **Our Solution:** We implement **Solver-Informed Reinforcement Learning (SIRL)**. Our framework delegates computationally intensive depth calculations to specialized external solvers (Stockfish, Maia, and Syzygy) through generated tool calls. This division of labor ensures the LLM handles problem comprehension and pedagogy, while the symbolic "Action" component guarantees functional correctness and tactical accuracy.
-* **References:** [Hwang et al. (2025)][ref6]; [Chen et al. (2025b)][ref7]
-
-### 6. Semantic Distortion and Concept Extraction
-* **The Challenge:** Purely generative commentary often suffers from "semantic distortion," where the model offers superficial advice that is linguistically fluent but strategically vacuous (e.g., hallucinating that a Knight is a permanent outpost when it can be immediately kicked by an enemy pawn).
-* **Our Solution:** We adopt the **Concept-guided Chess Commentary (CCC)** framework. Our `app/concepts.py` engine extracts high-fidelity strategic data, such as mathematically rigorous "Soviet Standard" Knight Outposts and precise King Safety perimeters. We then enforce a Hard Grounding Constraint in `app/prompts.py`, requiring the AI to explicitly cite this JSON data in its `<think>` block before it is allowed to speak.
-* **Reference:** [Kim et al. (2025)][ref8]
-
-
-[ref1]: https://www.nicowesterdale.com/blog/why-llms-cant-play-chess
-[ref2]: https://arxiv.org/html/2506.11555v4
-[ref3]: https://openreview.net/pdf/e954744b4cf122cfc82e282e4ac8f33668f1ac5e.pdf
-[ref4]: https://arxiv.org/abs/2512.19920
-[ref5]: https://arxiv.org/abs/2509.04664
-[ref6]: https://arxiv.org/abs/2507.00726
-[ref7]: https://arxiv.org/abs/2505.11792
-[ref8]: https://arxiv.org/abs/2410.20811
 
 ## The Agent's Tools
 The orchestrating Gemini LLM has autonomous access to the following tools to ground its knowledge:
@@ -177,3 +133,49 @@ To set up and run this project locally on any standard machine (Linux, macOS, or
 ## Known Limitations / Future Work
 - The Flask template structure (`main.py`) is currently unused and serves as a placeholder for a future web UI or API layer.
 - Ensure Lc0 is configured correctly on your OS if running locally outside the provided Nix environment, as it handles the Maia weights.
+
+## 🔬 The Science of Pedagogical Grounding
+
+Building an AI chess coach requires solving the fundamental tension between probabilistic neural reasoning and deterministic symbolic rules. Standard large language models (LLMs) are plagued by structural hallucinations because they lack an internal representation of the game state, leading to "line-of-sight" errors, temporal confusion, and illegal move suggestions.
+
+The Gemini Chess Coach implements a **Type 6 Neuro-Symbolic Architecture**, where a neural "pedagogical brain" orchestrates external symbolic tools to ensure advice is anchored in absolute truth.
+
+### 1. State Tracking Failure and Pointer Misbinding
+* **The Challenge:** This is the primary driver of hallucinations. LLMs are probabilistic sequence predictors that lack a persistent board representation. As games progress, the model's internal "mental" board diverges from reality, leading it to recommend moves for captured pieces or ignore physical blockers[cite: 4].
+* **Our Solution:** We implement **Symbolic State Grounding and Dual-Token Rendering**. The Python backend (specifically `app/state.py`) maintains the canonical game state using the `python-chess` library, which serves as the sole "source of truth"[cite: 17, 18, 22]. To prevent spatial hallucination, the LLM is never permitted to update the state autonomously. Furthermore, our `analyze_position` tool captures deterministic ASCII snapshots *before* and *after* hypothetical moves, binds them to secure UUIDs (e.g., `[[BOARD_a1b2c3d4]]`), and forces the LLM to simply output the correct token, stripping it of spatial rendering responsibilities.
+* **Reference:** [Westerdale (2024)][ref1]
+
+### 2. Historical State Integrity (Temporal Hallucinations)
+* **The Challenge:** When reviewing past mistakes, models struggle with "context compression" and "reasoning degradation," often confusing the current board state with a historical one[cite: 11, 13]. This "Time Travel" paradox leads the model to hallucinate pieces in past or future positions.
+* **Our Solution:** We implement **Rationale-Guided Retrieval (RAG+)** through our **Eternal FEN Rule**. Our `scanner.py` script performs a 2-pass scan and injects a unique `[%fen "..."]` tag into every move's PGN comment[cite: 35]. The model is governed by a Hard Search Constraint: it is physically forbidden from calculating a past position mentally and must instead retrieve the exact FEN key from the move history to re-ground its tools[cite: 34].
+* **Reference:** [Chen et al. (2025a)][ref2]
+
+### 3. Logic Hallucinations and the Need for a "Logic Tutor"
+* **The Challenge:** LLMs often favor "correlation completion"—predicting move strings that look linguistically plausible in PGN—over formal correctness[cite: 11, 13]. This results in "line-of-sight hallucinations" where the model attempts illegal moves (like castling through check)[cite: 4]. Standard agentic systems simply reject these moves, causing the LLM to get stuck in an infinite failure loop[cite: 24, 25].
+* **Our Solution:** We utilize the **Logic Tutor Paradigm**. Our `execute_coach_move` tool acts as a deterministic intervention layer. When the model proposes a move during sparring, the Python layer validates it against a `Board.is_legal()` verifier[cite: 22]. If a violation is found, the system provides a "causal diagnostic report" derived from a formal logic trace (e.g., explaining why a piece is pinned), which triggers an iterative, self-correcting pedagogical refinement of the AI's plan[cite: 24, 25].
+* **Reference:** [OpenReview (2024)][ref3]
+
+### 4. The "Good Test-Taker" Bias vs. Epistemic Uncertainty
+* **The Challenge:** Models are typically optimized to act as "good test-takers"—guessing confidently whenever the probability of correctness is non-zero rather than admitting uncertainty[cite: 10, 30, 867]. This results from standard reinforcement learning with verifiable rewards (RLVR) using binary correctness signals, which fail to penalize overconfident errors[cite: 10, 27, 59].
+* **Our Solution:** We implement **Behavioral Calibration and Risk Thresholding**. Using the `submit_diagnosis` tool, the model is forced to isolate its "weakest reasoning claim" and score its confidence[cite: 13, 86]. If confidence falls below a strict 0.90 threshold, the diagnosis is rejected as "none," transitioning the model from an overconfident "test-taker" to an "honest communicator"[cite: 11, 13, 16, 33, 955].
+* **References:** [Wu et al. (2026)][ref4]; [Kalai et al. (2025)][ref5]
+
+### 5. Computational Burdens in Sequential Reasoning
+* **The Challenge:** Strategic reasoning in complex domains introduces unique challenges that are difficult to manage through purely textual, step-by-step reasoning alone[cite: 3535]. Pure LLM reasoning often plateaus far below expert levels due to a deficit in internal understanding of domain-specific rules and global computational dependencies[cite: 1769, 1770, 3533].
+* **Our Solution:** We implement **Solver-Informed Reinforcement Learning (SIRL)**. Our framework delegates computationally intensive depth calculations to specialized external solvers (Stockfish, Maia, and Syzygy) through generated tool calls[cite: 1782, 3538]. This division of labor ensures the LLM handles problem comprehension and pedagogy, while the symbolic "Action" component guarantees functional correctness and tactical accuracy[cite: 1, 9, 2697, 2703, 3539].
+* **References:** [Hwang et al. (2025)][ref6]; [Chen et al. (2025b)][ref7]
+
+### 6. Semantic Distortion and Concept Extraction
+* **The Challenge:** Purely generative commentary often suffers from "semantic distortion," where the model offers superficial advice that is linguistically fluent but strategically vacuous (e.g., hallucinating that a Knight is a permanent outpost when it can be immediately kicked by an enemy pawn)[cite: 1, 35, 37].
+* **Our Solution:** We adopt the **Concept-guided Chess Commentary (CCC)** framework. Our `app/concepts.py` engine extracts high-fidelity strategic data, such as mathematically rigorous "Soviet Standard" Knight Outposts and precise King Safety perimeters[cite: 1, 31]. We then enforce a Hard Grounding Constraint in `app/prompts.py`, requiring the AI to explicitly cite this JSON data in its `<think>` block before it is allowed to speak[cite: 1, 21, 43].
+* **Reference:** [Kim et al. (2025)][ref8]
+
+
+[ref1]: https://www.nicowesterdale.com/blog/why-llms-cant-play-chess
+[ref2]: https://arxiv.org/html/2506.11555v4
+[ref3]: https://openreview.net/pdf/e954744b4cf122cfc82e282e4ac8f33668f1ac5e.pdf
+[ref4]: https://arxiv.org/abs/2512.19920
+[ref5]: https://arxiv.org/abs/2509.04664
+[ref6]: https://arxiv.org/abs/2507.00726
+[ref7]: https://arxiv.org/abs/2505.11792
+[ref8]: https://arxiv.org/abs/2410.20811

@@ -148,4 +148,73 @@ def extract_board_features(board: chess.Board) -> dict:
 
     features["piece_activity"] = {"white_knight_outposts": find_true_outposts(chess.WHITE), "black_knight_outposts": find_true_outposts(chess.BLACK)}
     
+
+    # --- 6. POSITIONAL: BAD BISHOPS ---
+    def get_bad_bishops(color):
+        bad_bishops =[]
+        bishops = board.pieces(chess.BISHOP, color)
+        pawns = board.pieces(chess.PAWN, color)
+        
+        forward_dir = 1 if color == chess.WHITE else -1
+        
+        for sq in bishops:
+            is_light = (chess.square_file(sq) + chess.square_rank(sq)) % 2 != 0
+            blocked_central_pawns = 0
+            
+            for p_sq in pawns:
+                f, r = chess.square_file(p_sq), chess.square_rank(p_sq)
+                # Only care about central/semi-central pawns (c, d, e, f files)
+                if 2 <= f <= 5:
+                    p_is_light = (f + r) % 2 != 0
+                    if p_is_light == is_light:
+                        # Is the pawn blocked from moving forward?
+                        block_sq = chess.square(f, r + forward_dir)
+                        if 0 <= r + forward_dir <= 7 and board.piece_at(block_sq):
+                            blocked_central_pawns += 1
+                            
+            # A bishop is structurally bad if 2 or more central pawns are blocked on its color
+            if blocked_central_pawns >= 2:
+                bad_bishops.append(chess.square_name(sq))
+        return bad_bishops
+
+    # --- 7. HEAVY PIECE COORDINATION ---
+    def are_rooks_connected(color):
+        rooks = list(board.pieces(chess.ROOK, color))
+        if len(rooks) == 2:
+            # Rooks are connected if they attack each other
+            return rooks[1] in board.attacks(rooks[0])
+        return False
+
+    features["piece_activity"]["white_rooks_connected"] = are_rooks_connected(chess.WHITE)
+    features["piece_activity"]["black_rooks_connected"] = are_rooks_connected(chess.BLACK)
+    
+    features["piece_activity"]["white_rooks_on_7th"] =[chess.square_name(sq) for sq in board.pieces(chess.ROOK, chess.WHITE) if chess.square_rank(sq) == 6]
+    features["piece_activity"]["black_rooks_on_2nd"] =[chess.square_name(sq) for sq in board.pieces(chess.ROOK, chess.BLACK) if chess.square_rank(sq) == 1]
+
+    features["piece_activity"]["white_bad_bishops"] = get_bad_bishops(chess.WHITE)
+    features["piece_activity"]["black_bad_bishops"] = get_bad_bishops(chess.BLACK)
+
+    # --- 8. PAWN MAJORITIES ---
+    w_q = sum(1 for sq in board.pieces(chess.PAWN, chess.WHITE) if chess.square_file(sq) <= 2)
+    b_q = sum(1 for sq in board.pieces(chess.PAWN, chess.BLACK) if chess.square_file(sq) <= 2)
+    w_k = sum(1 for sq in board.pieces(chess.PAWN, chess.WHITE) if chess.square_file(sq) >= 5)
+    b_k = sum(1 for sq in board.pieces(chess.PAWN, chess.BLACK) if chess.square_file(sq) >= 5)
+    
+    majorities =[]
+    if w_q > b_q: majorities.append(f"White Queenside ({w_q} vs {b_q})")
+    elif b_q > w_q: majorities.append(f"Black Queenside ({b_q} vs {w_q})")
+    
+    if w_k > b_k: majorities.append(f"White Kingside ({w_k} vs {b_k})")
+    elif b_k > w_k: majorities.append(f"Black Kingside ({b_k} vs {w_k})")
+    
+    features["pawn_structure"]["pawn_majorities"] = majorities
+
+    # --- 9. DEVELOPMENT PHASE ---
+    features["development"] = {
+        "white_can_castle": bool(board.castling_rights & chess.WHITE),
+        "black_can_castle": bool(board.castling_rights & chess.BLACK),
+        "white_undeveloped_minors": len([sq for sq in board.pieces(chess.KNIGHT, chess.WHITE) | board.pieces(chess.BISHOP, chess.WHITE) if chess.square_rank(sq) == 0]),
+        "black_undeveloped_minors": len([sq for sq in board.pieces(chess.KNIGHT, chess.BLACK) | board.pieces(chess.BISHOP, chess.BLACK) if chess.square_rank(sq) == 7])
+    }
+
     return features
