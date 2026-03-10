@@ -66,6 +66,17 @@ class CoachTools:
         return {"success": True}
         
     def analyze_position(self, fen: str, moves_to_apply: list[str] = None, depth: int = 20, pov: str = "white") -> dict:
+        """
+        Analyzes a chess position using the Stockfish engine.
+        
+        Args:
+            fen: The starting FEN string.
+            moves_to_apply: An optional list of SAN moves (e.g., ["Rd1", "Rxb2"]) to play from the FEN *BEFORE* analyzing. 
+                            You MUST use this to mathematically verify hypothetical lines, opponent responses, and traps!
+                            NEVER calculate tactics mentally.
+            depth: Engine search depth (default 20).
+            pov: "white" or "black" to orient the visual board.
+        """
         try:
             safe_depth = max(1, min(int(depth), 25)) 
             board = chess.Board(fen)

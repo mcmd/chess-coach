@@ -20,6 +20,8 @@ from app.memory import load_history, save_history, update_dossier
 from app.tools import CoachTools
 from app.prompts import create_chat_session
 
+os.environ["PROMPT_TOOLKIT_NO_CPR"] = "1"
+
 load_dotenv()
 
 def main():
@@ -147,7 +149,31 @@ def main():
                 num_moves = min(5, len(temp_board.move_stack))
                 show_moves = temp_board.move_stack[-num_moves:]
                 for _ in range(num_moves): temp_board.pop()
-                history_str = temp_board.variation_san(show_moves)
+                
+                history_parts = []
+                for m in show_moves:
+                    san = temp_board.san(m)
+                    
+                    # 🚀 ENHANCEMENT: Explicitly state what piece was captured to kill hallucinations
+                    if temp_board.is_capture(m):
+                        if temp_board.is_en_passant(m):
+                            san += " (captures pawn)"
+                        else:
+                            cap_piece = temp_board.piece_at(m.to_square)
+                            if cap_piece:
+                                san += f" (captures {chess.piece_name(cap_piece.piece_type)})"
+                    
+                    # Formatting move numbers with prefixes
+                    if temp_board.turn == chess.WHITE:
+                        history_parts.append(f"{temp_board.fullmove_number}. {san}")
+                    elif not history_parts:
+                        history_parts.append(f"{temp_board.fullmove_number}... {san}")
+                    else:
+                        history_parts.append(san)
+                        
+                    temp_board.push(m)
+                    
+                history_str = " ".join(history_parts)
             else:
                 history_str = "Starting Position"
         except Exception: history_str = "Unknown"

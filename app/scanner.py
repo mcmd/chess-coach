@@ -92,9 +92,19 @@ def scan_game_for_critical_moments(user_text: str, engines) -> tuple[bool, str]:
                 
                 fen_before = board.fen()
                 
+                # 🐛 CAPTURE BLINDNESS FIX: Detect the exact piece BEFORE pushing the move
+                capture_tag = ""
+                if board.is_capture(played_move):
+                    if board.is_en_passant(played_move):
+                        capture_tag = " [Captured: pawn]"
+                    else:
+                        cap_piece = board.piece_at(played_move.to_square)
+                        if cap_piece:
+                            capture_tag = f" [Captured: {chess.piece_name(cap_piece.piece_type)}]"
+                
                 board.push(played_move)
                 
-                tag_string = ""
+                tag_string = capture_tag
                 if is_only_move: tag_string += " [⭐ ONLY MOVE FOUND!]"
                 if dodged_trap: tag_string += f" [🛡️ DODGED HUMAN TRAP! Maia predicted {maia_san}]"
                         
