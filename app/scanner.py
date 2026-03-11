@@ -92,6 +92,9 @@ def scan_game_for_critical_moments(user_text: str, engines) -> tuple[bool, str]:
                 
                 fen_before = board.fen()
                 
+                # 🐛 IDIOT-PROOF FEN FIX: Make the temporal state explicitly readable to the LLM
+                move_label = f"{board.fullmove_number}. {board.san(played_move)}" if board.turn == chess.WHITE else f"{board.fullmove_number}... {board.san(played_move)}"
+                
                 # 🐛 CAPTURE BLINDNESS FIX: Detect the exact piece BEFORE pushing the move
                 capture_tag = ""
                 if board.is_capture(played_move):
@@ -111,10 +114,10 @@ def scan_game_for_critical_moments(user_text: str, engines) -> tuple[bool, str]:
                 if "[%eval" not in comment and engines.stockfish:
                     score_after = engines.get_cached_eval(board.fen(), 0.25).white()
                     eval_str = f"#{score_after.mate()}" if score_after.is_mate() else f"{score_after.score(mate_score=100000) / 100.0:+.2f}"
-                    tag_string += f" [%eval {eval_str}]"
+                    tag_string += f" [Eval AFTER {move_label}: {eval_str}]"
 
-                if "[%fen" not in comment:
-                    tag_string += f' [%fen "{fen_before}"]'
+                if "Board BEFORE" not in comment:
+                    tag_string += f' [Board BEFORE {move_label}: "{fen_before}"]'
 
                 if tag_string: node.comment = (comment + tag_string).strip()
             exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)

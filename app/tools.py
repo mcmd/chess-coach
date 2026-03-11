@@ -98,7 +98,8 @@ class CoachTools:
             pov: "white" or "black" to orient the visual board.
         """
         try:
-            safe_depth = max(1, min(int(depth), 25)) 
+            # 1. Clamp depth to a high-quality sweet spot
+            safe_depth = max(15, min(int(depth), 24))
             board = chess.Board(fen)
             
             # --- HELPER: Generate Unique Visual Tokens ---
@@ -144,7 +145,13 @@ class CoachTools:
                 # 📸 2. Snapshot AFTER moves (The Future)
                 token_after = get_visual_token(board)
                 
-            infos = self.engines.stockfish.analyse(board, chess.engine.Limit(depth=safe_depth), multipv=2)
+            # 2. 🚀 ENGINE UPGRADE: Bump multipv to 3, and add a safety TIME LIMIT for your web server!
+            # If Stockfish takes longer than 4 seconds, it will stop and return its best math.
+            infos = self.engines.stockfish.analyse(
+                board, 
+                chess.engine.Limit(depth=safe_depth, time=4.0), 
+                multipv=3
+            )
             
             top_lines = []
             for i, info in enumerate(infos):
@@ -152,7 +159,10 @@ class CoachTools:
                 eval_str = f"#{score.mate()}" if score.is_mate() else f"{score.score(mate_score=100000) / 100.0:+.2f}"
                 pv_moves = []
                 temp_board = board.copy()
-                for move in info.get("pv", [])[:10]:  
+                
+                # 3. 🚀 PEDAGOGY UPGRADE: Truncate lines to 8 plies (4 full moves). 
+                # This is deep enough to prove a tactic, but prevents the LLM from reciting 20-move GM endgames.
+                for move in info.get("pv", [])[:8]:  
                     pv_moves.append(temp_board.san(move))
                     temp_board.push(move)
                 top_lines.append({"rank": i + 1, "evaluation": eval_str, "expected_engine_line": " ".join(pv_moves)})
