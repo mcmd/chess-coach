@@ -16,6 +16,15 @@ class CoachTools:
         self.engines = engines
 
     def execute_coach_move(self, move_san: str) -> dict:
+        """
+        Plays a move on the global board on behalf of the Coach during interactive sparring.
+        
+        Args:
+            move_san: The move to play in Standard Algebraic Notation (e.g., "Nf3", "O-O").
+                      
+        🛑 DANGER: This alters the global board state. ONLY use this when the user explicitly asks you to spar, play a game, or says "your turn". 
+        NEVER use this tool to "test" hypothetical lines or show variations (use `analyze_position` with `moves_to_apply` for that).
+        """
         if not self.state.sparring_mode:
             return {"error": "Sparring mode is DISABLED. Tell the user to type /spar to enable it."}
         
@@ -163,6 +172,16 @@ class CoachTools:
         except Exception as e: return {"error": str(e)}
 
     def predict_human_move(self, fen: str) -> dict:
+        """
+        Uses the Maia neural network to predict the most likely move a human player 
+        at the student's specific Elo rating would play in this position.
+        
+        Args:
+            fen: The current FEN string.
+            
+        Use this to understand human psychology, anticipate common human blunders, 
+        or explain why a move "looks tempting" to a human even if Stockfish hates it.
+        """
         if not self.engines.maia: return {"error": "Maia engine not loaded."}
         try:
             board = chess.Board(fen)
@@ -190,6 +209,17 @@ class CoachTools:
         except Exception as e: return {"error": str(e)}
 
     def get_opening_repertoire(self, fen: str) -> dict:
+        """
+        Queries the Lichess Opening Databases. 
+        
+        Args:
+            fen: The current FEN string.
+            
+        Use this during the opening phase (usually moves 1-15) to fetch the official 
+        opening name (e.g., "Sicilian Defense"), ECO code, and historical win rates. 
+        It returns BOTH Grandmaster theory and statistics for amateurs at the student's Elo, 
+        allowing you to contrast perfect theory with what actually happens at their rating.
+        """
         def _safe_get_json(url: str, params: dict = None) -> dict:
             try:
                 r = requests.get(url, params=params, timeout=10)
@@ -239,6 +269,12 @@ class CoachTools:
         except Exception as e: return {"error": str(e)}
 
     def fetch_lichess_game_by_id(self, game_id: str) -> dict:
+        """
+        Downloads a game from Lichess.org, mathematically scans it for brilliancies/traps, and loads it into the timeline.
+        
+        Args:
+            game_id: The 8-character Lichess game ID. Do NOT pass the full URL.
+        """
         try:
             # 🐛 2B. BONUS FIX: Lichess IDs are 8 chars. Strip the trailing player perspective characters.
             game_id = game_id[:8] 
@@ -264,6 +300,12 @@ class CoachTools:
         except Exception as e: return {"error": str(e)}
 
     def fetch_chessgames_com_game(self, game_id: str) -> dict:
+        """
+        Downloads a Master-level game from chessgames.com, mathematically scans it, and loads it into the timeline.
+        
+        Args:
+            game_id: The numeric game ID from chessgames.com. Do NOT pass the full URL.
+        """
         try:
             url = f"https://www.chessgames.com/njs/api/game/viewPGN/{game_id}"
             headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/plain, application/x-chess-pgn, */*"}
@@ -290,6 +332,16 @@ class CoachTools:
         except Exception as e: return {"error": str(e)}
 
     def query_endgame_tablebase(self, fen: str) -> dict:
+        """
+        Queries the Syzygy 7-piece Endgame Tablebase for absolute mathematical truth.
+        
+        Args:
+            fen: The current FEN string.
+            
+        🛑 CRITICAL: You MUST ONLY call this tool if there are exactly 7 or fewer pieces 
+        left on the entire board (including Kings). Do not call it in the middlegame.
+        Returns the Distance to Mate (DTM) and the provably perfect move.
+        """
         def _safe_get_json(url: str, params: dict = None) -> dict:
             try:
                 r = requests.get(url, params=params, timeout=10)

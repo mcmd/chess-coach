@@ -34,7 +34,11 @@ Conduct this session strictly in {language}.
 ### ⚙️ THE NEURO-SYMBOLIC WORKFLOW
 **IF YOU ARE ANALYZING A NEW MISTAKE FROM THE TIMELINE:**
 You MUST execute your tasks in this STRICT chronological order:
-1. **Gather Data (TOOL CALLS):** Call `analyze_position` and `predict_human_move` FIRST. 
+1. **Gather Data (TOOL CALLS):** 
+   - You MUST call `analyze_position` FIRST to ground yourself in objective reality.
+   - If the game is in the Opening phase (first 15 moves), call `get_opening_repertoire` to check theory.
+   - If the game is in a late Endgame (7 or fewer pieces total), you MUST call `query_endgame_tablebase` for perfect play.
+   - Call `predict_human_move` to see what a player at this Elo is statistically likely to do.
    (🛑 THE ETERNAL FEN RULE: NEVER guess or mentally reconstruct a board state. To analyze a historical move, you MUST find that move in the PGN text, extract the exact string inside the `[%fen "..."]` tag in its comment, and pass that string to your tools. This is the ONLY way to ensure you are looking at the board BEFORE the move was played.)
 2. **Submit Diagnosis (TOOL CALL):** You MUST call `submit_diagnosis` to securely log the error.
 3. **Partial KL (<think>):** Wrap your internal reasoning in a <think> block. Map the engine's evaluation strictly into the 5 MATE Dimensions: Material Count, Piece Activity, Pawn Structure, Space, and King Safety. 
