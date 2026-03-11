@@ -64,7 +64,7 @@ def extract_board_features(board: chess.Board) -> dict:
         "open_files": open_files, "half_open_for_white": half_open_w, "half_open_for_black": half_open_b
     }
 
-    # --- 2. PIECE SAFETY (Hanging, Pinned & Weakly Defended) ---
+    # --- 2. PIECE SAFETY (Hanging & Weakly Defended) ---
     features["piece_safety"] = {
         "hanging_white": [], "hanging_black": [], 
         "pinned_white": [], "pinned_black": [],
@@ -83,11 +83,9 @@ def extract_board_features(board: chess.Board) -> dict:
             if piece and piece.color == color:
                 sq_name = chess.square_name(sq)
                 
-                # Check Pins
                 if board.is_pinned(color, sq):
                     features["piece_safety"][pinned_key].append(f"{piece.symbol()} on {sq_name}")
                 
-                # Check Hanging & Weakly Defended
                 if piece.piece_type != chess.KING:
                     attackers = list(board.attackers(opp_color, sq))
                     defenders = list(board.attackers(color, sq))
@@ -96,15 +94,27 @@ def extract_board_features(board: chess.Board) -> dict:
                     
                     if num_atk > 0 and num_def == 0:
                         features["piece_safety"][hanging_key].append(f"{piece.symbol()} on {sq_name}")
-                    elif num_atk > num_def:
-                        # Condition A: Outnumbered (Your logic)
-                        features["piece_safety"][weak_key].append(f"{piece.symbol()} on {sq_name} (Attackers: {num_atk}, Defenders: {num_def})")
                     elif num_atk > 0:
-                        # Condition B: Attacked by a lower-value piece (My logic)
+                        is_weak = False
                         p_val = piece_values.get(piece.piece_type, 0)
                         lowest_atk_val = min(piece_values.get(board.piece_at(a).piece_type, 0) for a in attackers)
-                        if lowest_atk_val < p_val:
-                            features["piece_safety"][weak_key].append(f"{piece.symbol()} on {sq_name} (Attacked by lower-value piece)")
+                        lowest_def_val = min(piece_values.get(board.piece_at(d).piece_type, 0) for d in defenders) if defenders else 0
+                        
+                        # Condition A: Outnumbered
+                        if num_atk > num_def:
+                            is_weak = True
+                        # Condition B: Attacked by a lower-value piece (e.g. Pawn attacking Queen)
+                        elif lowest_atk_val < p_val:
+                            is_weak = True
+                        # Condition C: Ghost Defender (Cheapest defender is more valuable than cheapest attacker)
+                        elif lowest_def_val > lowest_atk_val:
+                            is_weak = True
+                        # Condition D: Multi-Piece Trade (2v2 or 3v3 on a piece always nets the target for the attacker!)
+                        elif num_atk == num_def and num_atk >= 2 and lowest_atk_val <= lowest_def_val:
+                            is_weak = True
+
+                        if is_weak:
+                            features["piece_safety"][weak_key].append(f"{piece.symbol()} on {sq_name} (Atk: {num_atk}, Def: {num_def})")
 
     # --- 3. KING SAFETY PERIMETER ---
     def analyze_king_perimeter(color):
