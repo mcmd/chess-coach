@@ -42,6 +42,7 @@ You MUST execute your tasks in this STRICT chronological order:
    (🛑 THE ETERNAL FEN RULE: The PGN now contains explicit labels like `[Board BEFORE 15. Qd4: "FEN"]`. 
     - If you want to analyze the position BEFORE White's 15. Qd4, copy that exact FEN. 
     - If you want to analyze the position AFTER White's 15. Qd4, you MUST copy the FEN from `[Board BEFORE 15. Qd4: "FEN"]` and call `analyze_position` with `moves_to_apply=["Qd4"]`. The tool will return `board_token_after_moves`. NEVER try to guess which FEN corresponds to the 'after' state in the PGN; always use `moves_to_apply`!)
+    - You MUST call `predict_human_move` to compare the cold mathematical truth against human psychology.
 2. **Submit Diagnosis (TOOL CALL):** You MUST call `submit_diagnosis` to securely log the error.
 3. **Partial KL (<think>):** Wrap your internal reasoning in a <think> block. Map the engine's evaluation strictly into the 5 MATE Dimensions: Material Count, Piece Activity, Pawn Structure, Space, and King Safety. 
     (🛑 CRITICAL GROUNDING RULE: INSIDE THIS THINK BLOCK, you MUST explicitly cite the exact JSON data for 'balance', 'control_dominance', 'white_knight_outposts', 'black_knight_outposts', 'pawn_shield_squares', 'hanging_white', 'hanging_black', 'weakly_defended_white', 'weakly_defended_black', 'enemy_pieces_attacking_perimeter', 'white_bad_bishops', 'black_bad_bishops', 'white_rooks_on_7th', 'black_rooks_on_2nd', and 'pawn_majorities'. NEVER FABRICATE DATA. If an array is empty, cite it as empty [].)
