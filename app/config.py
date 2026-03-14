@@ -15,8 +15,20 @@ class AppConfig:
     dossier_file: str
     cli_history_file: str
     profile: str = None
+    dark_terminal: bool = False
+
+
+def _is_dark_terminal() -> bool:
+    colorfgbg = os.environ.get("COLORFGBG")
+    if colorfgbg:
+        try:
+            bg = colorfgbg.split(";")[-1]
+            if int(bg) < 8: return True
+        except: pass
+    return False
 
 def load_config() -> AppConfig:
+
     parser = argparse.ArgumentParser(
         description="Gemini Chess Coach: An AI-powered, tool-augmented chess coach.",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -34,6 +46,8 @@ Examples:
              "This isolates your Elo settings, chat memory, and command history.", 
         default=None
     )
+    parser.add_argument("--dark_terminal", action="store_true", help="Invert chess Unicode pieces for dark backgrounds.")
+
     args = parser.parse_args()
 
     ROOT_CONFIG_FILE = "config.json"
@@ -85,5 +99,6 @@ Examples:
         history_file=HISTORY_FILE,
         dossier_file=DOSSIER_FILE,
         cli_history_file=CLI_HISTORY_FILE,
-        profile=args.profile
+        profile=args.profile,
+        dark_terminal=args.dark_terminal or _is_dark_terminal() or app_config.get("dark_terminal", False)
     )

@@ -10,10 +10,12 @@ from app.scanner import scan_game_for_critical_moments
 from app.concepts import extract_board_features
 
 class CoachTools:
-    def __init__(self, state, timeline, engines):
+    def __init__(self, state, timeline, engines, config):
         self.state = state
         self.timeline = timeline
         self.engines = engines
+        self.config = config
+
 
     def execute_coach_move(self, move_san: str) -> dict:
         """
@@ -104,8 +106,9 @@ class CoachTools:
             
             # --- HELPER: Generate Unique Visual Tokens ---
             def get_visual_token(b):
-                raw = b.unicode(empty_square="·")
+                raw = b.unicode(empty_square="·", invert_color=self.config.dark_terminal)
                 lines = raw.split('\n')
+
                 labeled = []
                 if pov.lower() == "black":
                     # Reverse ranks: Bottom to Top (1 to 8)

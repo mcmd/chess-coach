@@ -35,7 +35,8 @@ def main():
     engines = EngineManager(config)
     engines.start()
     
-    coach_tools = CoachTools(app_state, timeline, engines)
+    coach_tools = CoachTools(app_state, timeline, engines, config)
+
     chat = create_chat_session(client, config, coach_tools, load_history(config.history_file))
 
     def process_user_input(user_input):
