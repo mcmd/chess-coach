@@ -25,3 +25,5 @@ config.json
 # Downloaded games or large files
 *.pgn
 output.txt
+maia2_models/
+

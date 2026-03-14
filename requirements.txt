@@ -10,3 +10,9 @@ rich
 google-genai
 python-dotenv
 prompt_toolkit
+maia2
+# Maia2 dependencies
+einops==0.8.0
+gdown==5.2.0
+pyzstd==0.15.9
+tqdm==4.65.0

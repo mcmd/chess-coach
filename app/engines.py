@@ -4,6 +4,8 @@ import chess.engine
 import subprocess
 from functools import lru_cache
 from app.ui import console
+import maia2
+from maia2 import inference
 
 class EngineManager:
     def __init__(self, config):
@@ -21,19 +23,13 @@ class EngineManager:
             exit(1)
 
         try:
-            rounded_elo = round(self.config.user_elo / 100) * 100
-            maia_target = 1100 if rounded_elo <= 1300 else (1500 if rounded_elo <= 1700 else 1900)
-            weights_file = os.path.join(self.config.maia_weights_dir, f"maia-{maia_target}.pb.gz")
-            
-            if os.path.exists(weights_file):
-                self.maia = chess.engine.SimpleEngine.popen_uci(self.config.lc0_path, stderr=subprocess.DEVNULL)
-                self.maia.configure({"WeightsFile": weights_file})
-            else:
-                self.maia = None
-                console.print(f"[bold yellow]Warning: Maia weights not found at {weights_file}[/bold yellow]")
+            from maia2 import model
+            # Load Maia-2 model (Unified Model)
+            self.maia = model.from_pretrained(type="rapid", device="cpu")
+            self.maia_prepared = inference.prepare()
         except Exception as e:
             self.maia = None
-            console.print(f"[bold red]Error initializing Maia:[/bold red] {e}")
+            console.print(f"[bold red]Error initializing Maia-2:[/bold red] {e}")
 
     @lru_cache(maxsize=2000)
     def get_cached_eval(self, fen: str, time_limit: float):
@@ -49,5 +45,4 @@ class EngineManager:
         
     def quit(self):
         if self.stockfish: self.stockfish.quit()
-        if self.maia: self.maia.quit()
         

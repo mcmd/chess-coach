@@ -57,10 +57,19 @@ def scan_game_for_critical_moments(user_text: str, engines) -> tuple[bool, str]:
                                 candidate_only_move = True
                                 
                         if engines.maia:
-                            maia_res = engines.maia.play(board, chess.engine.Limit(nodes=1))
-                            maia_move = maia_res.move if maia_res else None
-                            if maia_move and maia_move != played_move:
-                                candidate_trap = True
+                            from maia2 import inference
+                            move_probs, _ = inference.inference_each(
+                                engines.maia, 
+                                engines.maia_prepared, 
+                                board.fen(), 
+                                elo_self=engines.config.user_elo, 
+                                elo_oppo=engines.config.user_elo
+                            )
+                            if move_probs:
+                                best_move_str = max(move_probs, key=move_probs.get)
+                                maia_move = chess.Move.from_uci(best_move_str)
+                                if maia_move and maia_move != played_move:
+                                    candidate_trap = True
                         
                         if candidate_only_move or candidate_trap:
                             info_b = engines.stockfish.analyse(board, chess.engine.Limit(depth=18), multipv=3)

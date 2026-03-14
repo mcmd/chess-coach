@@ -195,11 +195,24 @@ class CoachTools:
         if not self.engines.maia: return {"error": "Maia engine not loaded."}
         try:
             board = chess.Board(fen)
-            result = self.engines.maia.play(board, chess.engine.Limit(nodes=1))
-            if not result.move: return {"predicted_human_move": "None"}
-                
-            maia_move_san = board.san(result.move)
-            board.push(result.move)
+            from maia2 import inference
+            move_probs, win_prob = inference.inference_each(
+                self.engines.maia, 
+                self.engines.maia_prepared, 
+                fen, 
+                elo_self=self.engines.config.user_elo, 
+                elo_oppo=self.engines.config.user_elo
+            )
+            if not move_probs: return {"predicted_human_move": "None"}
+            
+            best_move_str = max(move_probs, key=move_probs.get)
+            move = chess.Move.from_uci(best_move_str)
+            
+            if move not in board.legal_moves:
+                 return {"error": f"Maia2 predicted illegal move: {best_move_str}"}
+
+            maia_move_san = board.san(move)
+            board.push(move)
             
             info = self.engines.stockfish.analyse(board, chess.engine.Limit(depth=25))
             score = info["score"].white()

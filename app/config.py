@@ -9,8 +9,6 @@ class AppConfig:
     user_elo: int
     language: str
     stockfish_path: str
-    lc0_path: str
-    maia_weights_dir: str
     gemini_model: str
     api_key: str
     history_file: str
@@ -82,8 +80,6 @@ Examples:
         user_elo=app_config.get("user_elo", 1100),
         language=app_config.get("language", "English"),
         stockfish_path=app_config.get("stockfish_path"),
-        lc0_path=app_config.get("lc0_path"),
-        maia_weights_dir=app_config.get("maia_weights_dir", "./maia_weights"),
         gemini_model=app_config.get("gemini_model", "gemini-3.1-pro-preview"),
         api_key=api_key,
         history_file=HISTORY_FILE,

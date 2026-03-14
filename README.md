@@ -5,7 +5,7 @@ This project is an advanced AI chess coach that combines the reasoning and conve
 
 The core philosophy of this project is its **Agent + Tools Architecture**. While LLMs are excellent at orchestrating complex tasks and translating dense, technical chess concepts into easily understandable, plain-language explanations, they are prone to hallucinations when calculating deep chess lines or evaluating positions. 
 
-To solve this, we give the Gemini agent access to a suite of highly specialized tools. The LLM orchestrates the learning experience, but it grounds its advice in absolute chess truth. By querying Stockfish for objective evaluations, the Maia chess engine for human psychology, Lichess opening explorers for real-world statistics, and Syzygy tablebases for perfect endgame play, the agent provides a personalized, accurate, and deeply insightful coaching experience.
+To solve this, we give the Gemini agent access to a suite of highly specialized tools. The LLM orchestrates the learning experience, but it grounds its advice in absolute chess truth. By querying Stockfish for objective evaluations, the Maia-2 chess library for human psychology, Lichess opening explorers for real-world statistics, and Syzygy tablebases for perfect endgame play, the agent provides a personalized, accurate, and deeply insightful coaching experience.
 
 Currently operating as a rich Command Line Interface (CLI) tool, it allows you to analyze specific positions, load PGNs, play moves interactively, and get human-like feedback tailored to your exact Elo rating.
 
@@ -23,7 +23,7 @@ Currently operating as a rich Command Line Interface (CLI) tool, it allows you t
 * **Interactive Live Sparring:** The coach features full interactive sparring. Use the `/move` command to play on the global board, ask the Coach to play a response, and use the new `/undo` command to take back moves during practice. The Coach uses the `execute_coach_move` tool to physically update the board state in real-time.
 * **Game Stepping (VCR):** Loaded games can be stepped through chronologically. Use `/reset` to jump to the starting position of a loaded PGN, and `/next` or `/prev` to step through the moves one by one, allowing you to ask the Coach questions at specific, exact moments in the game without fast-forwarding to the end. You can even use `/clear` to hard-reset the board and wipe the AI's memory entirely.
 * **Elo-Parametrized Coaching:** The coach adapts its advice, Maia predictions, and Lichess database queries to your exact Elo rating configured in `config.json`.
-* **Global Engine Initialization:** Maia and Stockfish engines are initialized globally via an `EngineManager`, reducing latency when loading weights for move predictions and tactical evaluations. Stockfish is configured to use maximum available threads and Hash memory for superior depth-per-second performance.
+* **Global Engine Initialization:** Maia-2 and Stockfish engines are initialized globally via an `EngineManager`, reducing latency when loading models for move predictions and tactical evaluations. Stockfish is configured to use maximum available threads and Hash memory for superior depth-per-second performance.
 * **Brilliancy & Trap Scanner (2-Pass Algorithm):** The system uses a sophisticated 2-pass engine scan on all loaded games. 
     1. **Fast Scan:** Rapidly filters positions to find candidates. 
     2. **Deep Confirmation:** Re-analyzes candidates with higher depth to rigorously verify `[⭐ ONLY MOVE FOUND!]` and `[🛡️ DODGED HUMAN TRAP!]` moments, ensuring GM-level accuracy before tagging them.
@@ -79,7 +79,7 @@ The Gemini Chess Coach implements a **Type 6 Neuro-Symbolic Architecture**, wher
 
 ### 6. Computational Burdens in Sequential Reasoning
 * **The Challenge:** Strategic reasoning in complex domains introduces unique challenges that are difficult to manage through purely textual, step-by-step reasoning alone. Pure LLM reasoning often plateaus far below expert levels due to a deficit in internal understanding of global computational dependencies.
-* **Our Solution:** We implement **Solver-Informed Reinforcement Learning (SIRL)**. Our framework delegates computationally intensive depth calculations to specialized external solvers (Stockfish, Maia, Syzygy) through generated tool calls, strictly truncating engine lines to 8 plies to prevent Context Poisoning. 
+* **Our Solution:** We implement **Solver-Informed Reinforcement Learning (SIRL)**. Our framework delegates computationally intensive depth calculations to specialized solvers (Stockfish, Maia-2, Syzygy) through generated tool calls, strictly truncating engine lines to 8 plies to prevent Context Poisoning. 
 * **References:** [Hwang et al. (2025)][ref6]; [Chen et al. (2025b)][ref7]
 
 ### 7. The Passive Spoon-Feeding Trap
@@ -104,7 +104,7 @@ The Gemini Chess Coach implements a **Type 6 Neuro-Symbolic Architecture**, wher
 The orchestrating Gemini LLM has autonomous access to the following tools to ground its knowledge:
 
 - **`analyze_position` (Stockfish)**: Interrogates the local Stockfish engine to find the mathematically perfect, objective best moves and position evaluations. It calculates the first 5 moves of the Principal Variation (PV) for the top 2 engine lines. Furthermore, it supports analyzing hypothetical move sequences by passing in `moves_to_apply`, returning dual tokens to visualize the board *before* and *after* those moves are applied, empowering the AI to clearly answer "What if I play..." questions without spoiling the current board state. This tool now returns a comprehensive conceptual breakdown of the board's positional geometry, control dynamics, and safety features.
-- **`predict_human_move` (Maia Chess + Stockfish)**: Uses pre-trained Maia neural network models to predict the most likely human move. Then, it uses Stockfish to analyze the resulting position if that predicted move is played, returning the objective evaluation and a deep refutation line (depth=25).
+- **`predict_human_move` (Maia-2 + Stockfish)**: Uses the pre-trained Maia-2 neural network to predict the most likely human move. Then, it uses Stockfish to analyze the resulting position if that predicted move is played, returning the objective evaluation and a deep refutation line (depth=25).
 - **`get_opening_repertoire`**: Queries BOTH the Lichess Masters database and the Amateur database (filtered specifically to the user's Elo bracket). This allows the coach to compare Grandmaster theory against what amateur opponents actually play.
 - **`query_endgame_tablebase`**: Accesses the Syzygy 7-piece endgame tablebase. When 7 or fewer pieces are left, the agent uses this tool to get mathematically perfect endgame play.
 - **`fetch_lichess_game_by_id`**: Pulls specific games from Lichess using their game ID, fetching PGNs, clock times, and computer evaluations. Smartly handles full IDs with player perspective characters.
@@ -128,19 +128,17 @@ Before running the application, you **must** configure your environment and engi
        "user_elo": 1200,
        "language": "English",
        "stockfish_path": "/path/to/your/stockfish",
-       "lc0_path": "/path/to/your/lc0",
-       "maia_weights_dir": "./maia_weights",
        "gemini_model": "gemini-2.5-pro",
        "profiles_dir": "./profiles"
    }
    ```
-   *Note: Ensure you download and install [Stockfish](https://stockfishchess.org/download/) and [Lc0](https://lczero.org/play/download/) for your specific operating system.*
+   *Note: Ensure you download and install [Stockfish](https://stockfishchess.org/download/) for your specific operating system. Maia-2 is installed automatically via Python dependencies.*
 
 ### Option 1: Project IDX / Firebase Studio (Recommended)
 
 This project is pre-configured to run seamlessly in a Nix-based environment.
 
-1. **Automatic Configuration**: The Nix environment (`.idx/dev.nix`) will automatically provision the workspace, creating a Python 3 virtual environment (`.venv`) and installing all dependencies from `requirements.txt`. It even installs Stockfish and Lc0.
+1. **Automatic Configuration**: The Nix environment (`.idx/dev.nix`) will automatically provision the workspace, creating a Python 3 virtual environment (`.venv`) and installing all dependencies from `requirements.txt`. It even installs Stockfish.
 2. **Terminal Usage**: To run the CLI tool, open the integrated terminal. Before running any `python` scripts or `pip` commands, activate the virtual environment:
    ```bash
    source .venv/bin/activate
@@ -185,4 +183,4 @@ To set up and run this project locally on any standard machine (Linux, macOS, or
 
 ## Known Limitations / Future Work
 - The Flask template structure (`main.py`) is currently unused and serves as a placeholder for a future web UI or API layer.
-- Ensure Lc0 is configured correctly on your OS if running locally outside the provided Nix environment, as it handles the Maia weights.
+- Ensure Stockfish is configured correctly on your OS if running locally outside the provided Nix environment.
