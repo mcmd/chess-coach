@@ -1,6 +1,8 @@
 # Dev environment
 pip
 autopep8
+pytest
+
 
 # App
 flask
