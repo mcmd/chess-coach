@@ -1,7 +1,0 @@
-{
-    "user_elo": 1150,
-    "language": "English",
-    "stockfish_path": "/usr/games/stockfish",
-    "gemini_model": "gemini-3.1-pro-preview",
-    "profiles_dir": "./profiles"
-}

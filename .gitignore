@@ -27,3 +27,6 @@ config.json
 output.txt
 maia2_models/
 
+# Documentation and system cards
+design/
+system_cards/

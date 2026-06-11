@@ -1,56 +1,57 @@
-# Gemini AI Rules for Python with Flask Projects
+# AI Assistant Context: Chess Coach CLI
 
-## 1. Persona & Expertise
+## What this project is
 
-You are an expert back-end developer with a deep specialization in Python and the Flask micro-framework. You are proficient in building robust, scalable, and secure web applications and APIs. Your expertise includes routing, request handling, middleware, and best practices for structuring Flask projects, including the use of Blueprints.
+A terminal-based AI chess coach. A Gemini LLM runs the **dialogue**; a Python
+backend runs the **analysis** and owns all chess truth. There is no web app —
+`coach.py` is the only entry point.
 
-## 2. Project Context
+## Architecture (hybrid: backend-led analysis, LLM-led pedagogy)
 
-This project is a web application or API built with Python and the Flask framework. The focus is on creating a lightweight, modular, and maintainable server-side application. Assume the project uses a virtual environment and manages dependencies via a `requirements.txt` file.
+```
+coach.py             thin wiring: config -> state -> engines -> tools -> chat -> REPL
+app/commands.py      slash-command / chat-input processing (CommandProcessor, testable)
+app/agent_loop.py    Gemini tool-execution loop + response rendering
+app/state.py         SessionState (single source of truth) + TimelineManager (board mutations)
+app/engines.py       EngineManager: Stockfish + Maia-2 processes AND all engine policy
+app/review.py        game review pipeline: per-move classification (win%-space eval swings),
+                     lesson agenda selection, digest_for_llm
+app/concepts.py      pure chess features: SEE-based piece safety, pawn structure, outposts,
+                     king perimeter, phase, forcing moves, endgame features
+app/motifs.py        tactical motif detection (fork/pin/skewer/back-rank/...) on engine PVs
+app/tools.py         CoachTools: the Gemini-callable tools (analyze_position packet,
+                     evaluate_student_answer, play_sparring_reply, submit_diagnosis enum, ...)
+app/prompts.py       system instruction (modes, Socratic protocol) + chat session factory
+app/memory.py        atomic persistence: chat history, player dossier (taxonomy aggregation)
+app/render.py        board ASCII rendering bound to [[BOARD_xxxx]] tokens
+app/config.py        config.json + profiles + CLI args
+```
 
-## 3. Development Environment
+## Key invariants — do not break these
 
-The project is configured to run in a Nix-based environment managed by Firebase Studio. Here are the key details of the setup from the `dev.nix` configuration:
+- **The LLM never mutates or computes chess state.** `SessionState.board` is the
+  only truth; all mutations go through `TimelineManager`. The LLM's only state
+  mutation paths are the `play_sparring_reply` / `execute_coach_move` tools.
+- **Engine policy lives in `EngineManager` only.** Never call
+  `engines.stockfish.analyse` from other modules; add a method instead.
+- **Socratic withholding is backend-enforced**: `evaluate_student_answer` counts
+  attempts per FEN and only includes the engine answer when `reveal_allowed`.
+- **`submit_diagnosis` accepts only the closed taxonomy** in
+  `app/tools.py::ERROR_TAXONOMY` — that is what makes the dossier aggregate.
+- **`TimelineManager.reset()` rewinds but keeps the loaded game**;
+  `clear()` is the full wipe. Don't conflate them.
+- **`app/concepts.py` and `app/motifs.py` stay pure** (board in, data out,
+  no engine/network/UI) — that's why they're exhaustively unit-testable.
 
-- **Python Environment:** The environment uses Python 3. A virtual environment is automatically created at `.venv`.
-- **Dependency Management:** Project dependencies are listed in `requirements.txt`. They are automatically installed into the virtual environment when the workspace is first created.
-- **Activation:** To work with the project's dependencies in the terminal, you must first activate the virtual environment:
-  ```bash
-  source .venv/bin/activate
-  ```
-- **Running the Server:** The Flask development server can be started using the `web` preview task, which executes the `./devserver.sh` script. This script handles running the Flask development server on the correct port for the preview panel.
-- **Tooling:** The workspace is pre-configured with the official Microsoft Python extension for VS Code, providing features like linting, debugging, and IntelliSense. Depending on the template variation, it may also include the Thunder Client extension for testing API endpoints.
+## Development
 
-When providing assistance, assume this environment is set up. Remind the user to activate the virtual environment (`source .venv/bin/activate`) before running any `pip` or `python` commands in the terminal.
-
-## 4. Coding Standards & Best Practices
-
-### General
-- **Language:** Use modern, idiomatic Python 3. Follow the PEP 8 style guide.
-- **Dependencies:** Manage all project dependencies using a `requirements.txt` file and a virtual environment. After suggesting a new package, remind the user to add it to `requirements.txt` and run `pip install -r requirements.txt`.
-- **Testing:** Encourage the use of a testing framework like Pytest for unit and integration tests.
-
-### Python & Flask Specific
-- **Security:**
-    - **Secrets Management:** Never hard-code secrets like `SECRET_KEY` or database credentials. Use environment variables and a library like `python-dotenv` to load them from a `.env` file.
-    - **Input Validation:** Use a library like Flask-WTF or Marshmallow to validate and sanitize all user input.
-    - **Database Security:** If using an ORM like SQLAlchemy, use its features to prevent SQL injection.
-- **Project Structure:**
-    - **Blueprints:** Use Flask Blueprints to organize the application into smaller, reusable components. Keep related routes, templates, and static files grouped within a blueprint.
-    - **Application Factory:** Use the application factory pattern to create instances of the Flask application. This is useful for testing and managing different configurations.
-- **Asynchronous Tasks:**
-    - For long-running or resource-intensive AI tasks, suggest using a task queue like Celery with Redis or RabbitMQ to avoid blocking web requests.
-- **AI Model Integration:**
-    - **Model Loading:** Load AI models once when the application starts, not on each request, to improve performance.
-    - **Decoupling:** For large-scale applications, consider deploying AI models as separate services and having the Flask application interact with them via an API.
-- **Performance:**
-    - **Caching:** Recommend caching strategies for expensive computations or database queries.
-    - **WSGI Server:** For production, advise using a production-ready WSGI server like Gunicorn or uWSGI.
-
-## 5. Interaction Guidelines
-
-- Assume the user is familiar with Python and the basics of web development.
-- Provide clear and actionable code examples for creating routes, using Blueprints, and interacting with AI services.
-- Break down complex tasks, like setting up a task queue or configuring authentication, into smaller, manageable steps.
-- If a request is ambiguous, ask for clarification about the specific blueprint, route, or desired functionality.
-- When discussing security, provide specific libraries and techniques to address common vulnerabilities in Flask applications.
+- Windows-first dev environment; venv at `.venv` (`.venv/Scripts/python.exe`).
+- Run tests: `python -m pytest tests/ -q` — fast, no engines or network needed
+  (fakes live in `tests/conftest.py`).
+- Concept-extractor changes require regenerating the snapshot baseline
+  deliberately: `python -m tests.test_concepts_snapshot --save`.
+- `scripts/smoke_maia2.py` is a manual smoke test that downloads/loads the
+  Maia-2 model — never name it `test_*.py` (pytest would load the model at
+  collection time).
+- Secrets: `GEMINI_API_KEY` comes from `.env` (gitignored). Never commit
+  `config.json` (machine-local paths) — `config.example.json` is the template.

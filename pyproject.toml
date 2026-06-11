@@ -1,0 +1,32 @@
+[project]
+name = "chess-coach"
+version = "1.0.0"
+description = "An engine-grounded, Elo-aware AI chess coach (Gemini + Stockfish + Maia-2)"
+requires-python = ">=3.10"
+dependencies = [
+    "chess>=1.10",
+    "rich>=13",
+    "google-genai>=1.0",
+    "python-dotenv>=1.0",
+    "prompt_toolkit>=3.0",
+    "requests>=2.31",
+    "maia2",
+    # maia2 transitive requirements that need explicit pins on some platforms:
+    "einops==0.8.0",
+    "gdown==5.2.0",
+    "pyzstd>=0.19.1",
+    "tqdm>=4.65.0",
+    "numpy>=2.1.0",
+    "torch>=2.6.0",
+    "PyYAML",
+    "pandas",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "autopep8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

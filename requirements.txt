@@ -1,20 +1,22 @@
-# Dev environment
-pip
-autopep8
-pytest
-
-
-# App
-flask
-chess
-stockfish
-rich
-google-genai
-python-dotenv
-prompt_toolkit
+# App dependencies (see pyproject.toml for the canonical list).
+# Install with: pip install -r requirements.txt
+chess>=1.10
+rich>=13
+google-genai>=1.0
+python-dotenv>=1.0
+prompt_toolkit>=3.0
+requests>=2.31
 maia2
 # Maia2 dependencies
 einops==0.8.0
 gdown==5.2.0
-pyzstd==0.15.9
-tqdm==4.65.0
+pyzstd>=0.19.1
+tqdm>=4.65.0
+numpy>=2.1.0
+torch>=2.6.0
+PyYAML
+pandas
+
+# Dev tools
+pytest>=8
+autopep8

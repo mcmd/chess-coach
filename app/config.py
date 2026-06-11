@@ -16,6 +16,9 @@ class AppConfig:
     cli_history_file: str
     profile: str = None
     dark_terminal: bool = False
+    player_name: str = None  # matched against PGN White/Black headers to find the student's side
+    trace: bool = False      # show tool calls and engine invocations
+    review_eval_time: float = 0.5  # Stockfish seconds per position in the game-review scan
 
 
 def _is_dark_terminal() -> bool:
@@ -47,6 +50,7 @@ Examples:
         default=None
     )
     parser.add_argument("--dark_terminal", action="store_true", help="Invert chess Unicode pieces for dark backgrounds.")
+    parser.add_argument("--trace", action="store_true", help="Show all tool calls and engine (Stockfish/Maia) invocations.")
 
     args = parser.parse_args()
 
@@ -100,5 +104,8 @@ Examples:
         dossier_file=DOSSIER_FILE,
         cli_history_file=CLI_HISTORY_FILE,
         profile=args.profile,
-        dark_terminal=args.dark_terminal or _is_dark_terminal() or app_config.get("dark_terminal", False)
+        dark_terminal=args.dark_terminal or _is_dark_terminal() or app_config.get("dark_terminal", False),
+        player_name=app_config.get("player_name"),
+        trace=args.trace or app_config.get("trace", False),
+        review_eval_time=float(app_config.get("review_eval_time", 0.5))
     )

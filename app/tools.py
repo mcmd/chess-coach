@@ -1,13 +1,55 @@
-import uuid
-import chess
-import requests
 import io
-import chess.pgn
+import random
+
+import chess
 import chess.engine
+import chess.pgn
+import requests
 from rich.panel import Panel
-from app.ui import console
-from app.scanner import scan_game_for_critical_moments
+
 from app.concepts import extract_board_features
+from app.motifs import detect_motifs_in_line
+from app.render import render_board_token
+from app.review import review_game, attach_board_tokens, cp_to_win_pct, MATE_CP
+from app.ui import console
+
+# The closed mistake taxonomy. Diagnoses outside this list are rejected so the
+# long-term dossier can actually aggregate recurring weaknesses.
+ERROR_TAXONOMY = [
+    "hanging_piece",
+    "missed_tactic",
+    "missed_fork",
+    "missed_pin_or_skewer",
+    "missed_mate",
+    "ignored_threat",
+    "failed_recapture",
+    "bad_trade",
+    "king_safety",
+    "premature_attack",
+    "development_neglect",
+    "pawn_structure",
+    "endgame_technique",
+    "opening_theory",
+    "time_management",
+    "calculation_error",
+]
+
+
+def _score_to_str(score: chess.engine.PovScore) -> str:
+    white = score.white()
+    if white.is_mate():
+        return f"#{white.mate()}"
+    return f"{white.score(mate_score=MATE_CP) / 100.0:+.2f}"
+
+
+def _safe_get_json(url: str, params: dict = None) -> dict:
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"error": f"Network request failed: {e}"}
+
 
 class CoachTools:
     def __init__(self, state, timeline, engines, config):
@@ -16,25 +58,311 @@ class CoachTools:
         self.engines = engines
         self.config = config
 
+    # ------------------------------------------------------------------
+    # ANALYSIS
+    # ------------------------------------------------------------------
 
-    def execute_coach_move(self, move_san: str) -> dict:
+    def analyze_position(self, fen: str, moves_to_apply: list[str] = None, depth: int = 18, pov: str = "white") -> dict:
         """
-        Plays a move on the global board on behalf of the Coach during interactive sparring.
-        
+        The PRIMARY analysis tool: returns a complete, backend-verified coaching
+        packet for a position — engine lines, piece-safety (exact exchange
+        evaluation), opponent threats, human-likely moves (Maia), tactical
+        motifs, game phase, and structural features.
+
         Args:
-            move_san: The move to play in Standard Algebraic Notation (e.g., "Nf3", "O-O").
-                      
-        🛑 DANGER: This alters the global board state. ONLY use this when the user explicitly asks you to spar, play a game, or says "your turn". 
-        NEVER use this tool to "test" hypothetical lines or show variations (use `analyze_position` with `moves_to_apply` for that).
+            fen: The starting FEN string. Copy it EXACTLY from backend data; never construct one yourself.
+            moves_to_apply: Optional SAN moves (e.g. ["Rd1", "Rxb2"]) to play from the FEN BEFORE analyzing.
+                            Use this to verify any hypothetical line — NEVER calculate tactics mentally.
+            depth: Engine search depth (default 18, clamped 12-24, always wall-clock capped).
+            pov: "white" or "black" — orient the rendered board to the student's side.
+        """
+        try:
+            safe_depth = max(12, min(int(depth), 24))
+            board = chess.Board(fen)
+        except (ValueError, TypeError) as e:
+            return {"error": f"Invalid FEN: {e}"}
+
+        invert = self.config.dark_terminal
+        token_before = render_board_token(self.state, board, pov, invert)
+        token_after = None
+
+        if moves_to_apply:
+            for move_str in moves_to_apply[:10]:
+                try:
+                    board.push_san(move_str)
+                except ValueError:
+                    legal = ", ".join(board.san(m) for m in board.legal_moves)
+                    return {"error": f"Move '{move_str}' is illegal at that point in the sequence.",
+                            "position_reached": board.fen(),
+                            "legal_moves_there": legal}
+            token_after = render_board_token(self.state, board, pov, invert)
+
+        try:
+            infos = self.engines.top_lines(board, multipv=3, depth=safe_depth)
+        except Exception as e:
+            return {"error": f"Engine analysis failed: {e}"}
+
+        top_lines = []
+        best_pv_san = []
+        for i, info in enumerate(infos):
+            pv = info.get("pv") or []
+            pv_san, temp = [], board.copy(stack=False)
+            for move in pv[:8]:
+                pv_san.append(temp.san(move))
+                temp.push(move)
+            if i == 0:
+                best_pv_san = pv_san
+            top_lines.append({"rank": i + 1, "evaluation": _score_to_str(info["score"]),
+                              "expected_engine_line": " ".join(pv_san)})
+
+        features = extract_board_features(board)
+        threats = self.engines.threat_probe(board)
+        motifs = detect_motifs_in_line(board, best_pv_san) if best_pv_san else []
+
+        maia_summary = None
+        maia = self.engines.maia_predict(board.fen())
+        if maia:
+            maia_summary = {"top_human_moves": maia["top_moves"],
+                            "win_probability_for_side_to_move": maia["win_probability_for_side_to_move"]}
+
+        return {
+            "top_stockfish_lines": top_lines,
+            "tactical_motifs_in_best_line": motifs,
+            "threats_if_side_to_move_passes": threats,
+            "human_tendency_at_student_elo": maia_summary,
+            "board_token_before_moves": token_before,
+            "board_token_after_moves": token_after,
+            "mathematically_legal_moves": ", ".join(board.san(m) for m in board.legal_moves),
+            "positional_and_safety_features": features,
+        }
+
+    def evaluate_student_answer(self, fen: str, student_move_san: str) -> dict:
+        """
+        Grade the student's proposed move. You MUST call this whenever the student
+        answers a "find the move / what's the threat" question with a concrete move.
+        The backend counts attempts: the correct answer (and engine line) is only
+        included once `reveal_allowed` is true — when the student got it right,
+        or after 2 failed attempts.
+
+        Args:
+            fen: The FEN of the position the question was asked about (copy it exactly).
+            student_move_san: The move the student proposed, in SAN (e.g. "Nf3").
+        """
+        try:
+            board = chess.Board(fen)
+        except ValueError as e:
+            return {"error": f"Invalid FEN: {e}"}
+
+        attempts = self.state.socratic_attempts
+        try:
+            move = board.parse_san(student_move_san)
+        except ValueError:
+            attempts[fen] = attempts.get(fen, 0) + 1
+            n = attempts[fen]
+            return {"verdict": "illegal",
+                    "explanation": f"'{student_move_san}' is not a legal move here.",
+                    "attempts_so_far": n, "reveal_allowed": n >= 2,
+                    "legal_moves": ", ".join(board.san(m) for m in board.legal_moves)}
+
+        try:
+            infos = self.engines.top_lines(board, multipv=5, depth=16, time_cap=3.0)
+        except Exception as e:
+            return {"error": f"Engine analysis failed: {e}"}
+
+        pov = board.turn
+        ranked = []
+        for info in infos:
+            pv = info.get("pv") or []
+            if not pv:
+                continue
+            ranked.append((pv[0], info["score"].pov(pov).score(mate_score=MATE_CP), pv))
+        if not ranked:
+            return {"error": "Engine returned no lines for this position."}
+
+        best_move, best_cp, best_pv = ranked[0]
+        student_cp = None
+        student_rank = None
+        for idx, (mv, cp, _) in enumerate(ranked):
+            if mv == move:
+                student_cp, student_rank = cp, idx + 1
+                break
+        if student_cp is None:
+            after = board.copy(stack=False)
+            after.push(move)
+            try:
+                score, _ = self.engines.quick_eval(after.fen(), 1.0)
+                student_cp = score.pov(pov).score(mate_score=MATE_CP)
+            except Exception as e:
+                return {"error": f"Engine analysis failed: {e}"}
+
+        drop = max(0.0, cp_to_win_pct(best_cp) - cp_to_win_pct(student_cp))
+        if move == best_move or drop <= 0.5:
+            verdict = "best"
+        elif drop <= 2:
+            verdict = "excellent_alternative"
+        elif drop <= 5:
+            verdict = "reasonable_but_imprecise"
+        elif drop <= 12:
+            verdict = "inaccurate"
+        else:
+            verdict = "wrong"
+
+        correct = verdict in ("best", "excellent_alternative")
+        attempts[fen] = attempts.get(fen, 0) + 1
+        n = attempts[fen]
+        reveal = correct or n >= 2
+
+        result = {
+            "verdict": verdict,
+            "student_move": board.san(move),
+            "student_move_evaluation": f"{(student_cp if pov == chess.WHITE else -student_cp) / 100.0:+.2f}",
+            "win_pct_lost_vs_best": round(drop, 1),
+            "rank_among_engine_top5": student_rank,
+            "attempts_so_far": n,
+            "reveal_allowed": reveal,
+        }
+        maia = self.engines.maia_predict(fen)
+        if maia:
+            prob = maia["raw_probs"].get(move.uci())
+            if prob is not None and prob >= 0.15:
+                result["human_popularity"] = f"~{prob:.0%} of similar-rated players choose this move"
+
+        if reveal:
+            pv_san, temp = [], board.copy(stack=False)
+            for m in best_pv[:8]:
+                pv_san.append(temp.san(m))
+                temp.push(m)
+            result["best_move"] = board.san(best_move)
+            result["best_line"] = " ".join(pv_san)
+        else:
+            result["note"] = "Answer withheld by backend. Give ONE hint and ask the student to try once more."
+            result["hint_facts"] = self._hint_facts(board, best_move)
+        return result
+
+    def _hint_facts(self, board: chess.Board, best_move: chess.Move) -> dict:
+        """Verified facts about the withheld best move, so hints are never invented."""
+        piece = board.piece_at(best_move.from_square)
+        mover = board.turn
+        after = board.copy(stack=False)
+        after.push(best_move)
+        attacked = []
+        for sq in after.attacks(best_move.to_square):
+            target = after.piece_at(sq)
+            if target and target.color != mover and target.piece_type != chess.PAWN:
+                attacked.append(f"{chess.piece_name(target.piece_type)} on {chess.square_name(sq)}")
+        return {
+            "moving_piece": chess.piece_name(piece.piece_type) if piece else None,
+            "is_a_capture": board.is_capture(best_move),
+            "gives_check": board.gives_check(best_move),
+            "enemy_pieces_it_attacks_after_moving": attacked[:4],
+            "usage": "These are VERIFIED facts about the withheld move. Build your hint from "
+                     "AT MOST ONE of them — never assert properties of a move that are not listed here.",
+        }
+
+    def predict_human_move(self, fen: str) -> dict:
+        """
+        Predicts what a human at the student's Elo would most likely play here
+        (Maia-2 neural network), with the engine's verdict on that move.
+        Use it to explain why a bad move "looks tempting" or to normalize an error.
+
+        Args:
+            fen: The current FEN string.
+        """
+        if not self.engines.maia:
+            return {"error": "Maia engine not loaded."}
+        try:
+            board = chess.Board(fen)
+        except ValueError as e:
+            return {"error": f"Invalid FEN: {e}"}
+
+        maia = self.engines.maia_predict(fen)
+        if not maia or not maia["top_moves"]:
+            return {"error": "Maia returned no prediction for this position."}
+
+        top_san = maia["top_moves"][0]["move"]
+        move = board.parse_san(top_san)
+        board.push(move)
+        try:
+            infos = self.engines.top_lines(board, multipv=1, depth=20, time_cap=4.0)
+        except Exception as e:
+            return {"error": f"Engine analysis failed: {e}"}
+        info = infos[0]
+        refutation, temp = [], board.copy(stack=False)
+        for m in (info.get("pv") or [])[:8]:
+            refutation.append(temp.san(m))
+            temp.push(m)
+
+        return {
+            "most_likely_human_moves": maia["top_moves"],
+            "win_probability_for_side_to_move": maia["win_probability_for_side_to_move"],
+            "evaluation_if_top_human_move_played": _score_to_str(info["score"]),
+            "engine_reply_line": " ".join(refutation),
+        }
+
+    # ------------------------------------------------------------------
+    # SPARRING
+    # ------------------------------------------------------------------
+
+    def play_sparring_reply(self) -> dict:
+        """
+        Plays the coach's reply move during sparring. The BACKEND chooses a
+        human-realistic move (Maia at the student's level) — you do not pick the
+        move yourself. Call this whenever it is your turn in a sparring game.
         """
         if not self.state.sparring_mode:
             return {"error": "Sparring mode is DISABLED. Tell the user to type /spar to enable it."}
-        
+        board = self.state.board
+        if board.is_game_over():
+            return {"game_over": True, "result": board.result(),
+                    "message": "The game is over — no reply to play."}
+
+        san = None
+        maia = self.engines.maia_predict(board.fen())
+        if maia and maia["top_moves"]:
+            moves = maia["top_moves"]
+            weights = [m["probability"] for m in moves]
+            san = random.choices([m["move"] for m in moves], weights=weights, k=1)[0]
+        else:
+            try:
+                infos = self.engines.top_lines(board, multipv=3, depth=8, time_cap=1.0)
+                candidates = [i["pv"][0] for i in infos if i.get("pv")]
+                if candidates:
+                    san = board.san(random.choice(candidates))
+            except Exception:
+                pass
+        if san is None:
+            return {"error": "No engine available to select a sparring move."}
+
+        played = self.timeline.play_san(san)
+        result = {"coach_played": played, "new_fen": self.state.board.fen(),
+                  "selected_by": "Maia (human-realistic at student Elo)" if maia else "Stockfish (shallow)"}
+        try:
+            score, _ = self.engines.quick_eval(self.state.board.fen())
+            result["evaluation_after"] = _score_to_str(score)
+        except Exception:
+            pass
+        if self.state.board.is_game_over():
+            result["game_over"] = True
+            result["result"] = self.state.board.result()
+        return result
+
+    def execute_coach_move(self, move_san: str) -> dict:
+        """
+        Plays ONE specific move on the global board during sparring. Use ONLY when
+        the user explicitly dictates a move for you to play. For your own sparring
+        replies, call `play_sparring_reply` instead (the backend picks the move).
+
+        Args:
+            move_san: The move in Standard Algebraic Notation (e.g., "Nf3", "O-O").
+        """
+        if not self.state.sparring_mode:
+            return {"error": "Sparring mode is DISABLED. Tell the user to type /spar to enable it."}
+
         try:
             self.timeline.play_san(move_san)
             return {"success": True, "new_fen": self.state.board.fen(), "message": f"Successfully played {move_san}."}
         except ValueError as e:
-            legal_moves_str = ", ".join([self.state.board.san(m) for m in self.state.board.legal_moves])
+            legal_moves_str = ", ".join(self.state.board.san(m) for m in self.state.board.legal_moves)
             return {
                 "error": f"Logic Tutor Intervention: Move '{move_san}' is ILLEGAL in this position.",
                 "causal_trace": str(e),
@@ -42,225 +370,105 @@ class CoachTools:
                 "required_action": f"To repair your plan, you MUST choose from these mathematically verified valid moves: [{legal_moves_str}]"
             }
 
-    def submit_diagnosis(self, fen: str, opponent_last_move_delta: str, primary_task: str, error_diagnosis: str, 
-                         weakest_reasoning_claim: str, lowest_confidence_score: float, preventative_habit: str) -> dict:
+    # ------------------------------------------------------------------
+    # DIAGNOSIS & MEMORY
+    # ------------------------------------------------------------------
+
+    def submit_diagnosis(self, fen: str, error_category: str, error_explanation: str,
+                         preventative_habit: str, confidence: float = 1.0) -> dict:
         """
-        Logs a diagnostic failure to the student's long-term memory dossier.
-        
+        Logs a diagnosed mistake to the student's long-term dossier. Call this ONCE
+        per distinct mistake, after the student has worked through it.
+
+        Pick the category that names the DECISION ERROR (why the wrong move was
+        chosen), not the topic you happened to discuss. If the review digest
+        suggests a category for this moment, use it unless the conversation
+        revealed a different root cause.
+
         Args:
-            fen: The exact FEN string of the historical position where the blunder occurred.
-            opponent_last_move_delta: What the opponent's last move changed.
-            primary_task: The primary objective the student failed to accomplish.
-            error_diagnosis: The reason the student failed.
-            weakest_reasoning_claim: The most uncertain part of your diagnosis.
-            lowest_confidence_score: Confidence score from 0.0 to 1.0.
-            preventative_habit: Actionable advice to avoid this in the future.
+            fen: The exact FEN of the position BEFORE the mistaken move.
+            error_category: One of:
+                hanging_piece (left material to a simple capture),
+                missed_tactic (an available tactic went unplayed),
+                missed_fork / missed_pin_or_skewer / missed_mate (specific missed tactic),
+                ignored_threat (didn't ask what the opponent's move threatened),
+                failed_recapture (left a capture sequence unfinished),
+                bad_trade (won material or traded at a strategic cost, e.g. gave up an active piece),
+                king_safety (exposed own king / ignored an attack on it),
+                premature_attack (attacked before development/safety was ready),
+                development_neglect (left pieces undeveloped),
+                pawn_structure (created a lasting structural weakness),
+                endgame_technique (known endgame method misplayed),
+                opening_theory (left known theory for a worse plan),
+                time_management (the clock, not the board, caused the error),
+                calculation_error (right idea, miscalculated sequence).
+            error_explanation: One sentence explaining what went wrong in THIS position.
+            preventative_habit: One actionable habit to avoid this mistake in the future.
+            confidence: Your confidence in the diagnosis, 0.0-1.0.
         """
-        
-        # 💥 3A. BIG BUG FIX (Backend): Prevent dossier bloat for the EXACT historical position
+        category = (error_category or "").strip().lower()
+        if category not in ERROR_TAXONOMY:
+            return {"error": f"'{error_category}' is not in the taxonomy.",
+                    "allowed_categories": ERROR_TAXONOMY}
+
         if any(d.get("fen") == fen for d in self.state.diagnostics):
             return {"success": True, "message": "Diagnosis already logged for this position. Do not call this tool again."}
 
-        if float(lowest_confidence_score) < 0.90: error_diagnosis = "none"
-            
         diagnosis = {
-            "fen": fen, # Save the FEN passed by the AI, NOT the global physical board state!
-            "opponent_last_move_delta": opponent_last_move_delta[:150],
-            "primary_task": primary_task,
-            "error_diagnosis": error_diagnosis,
-            "weakest_reasoning_claim": weakest_reasoning_claim[:150], 
-            "lowest_confidence_score": float(lowest_confidence_score), 
-            "preventative_habit": preventative_habit[:200] 
+            "fen": fen,
+            "error_category": category,
+            "error_explanation": (error_explanation or "")[:200],
+            "preventative_habit": (preventative_habit or "")[:200],
+            "confidence": float(confidence),
         }
         self.state.diagnostics.append(diagnosis)
-        
+
         console.print()
         console.print(Panel(
-            f"[dim white]1. ∆ Opponent Move:[/dim white] [dim yellow]{diagnosis['opponent_last_move_delta']}[/dim yellow]\n"
-            f"[dim white]2. Primary Task:[/dim white]    [dim cyan]{diagnosis['primary_task']}[/dim cyan]\n"
-            f"[dim white]3. Error Diagnosis:[/dim white] [dim red]{diagnosis['error_diagnosis']}[/dim red]\n"
-            f"[dim white]4. Weakest Claim:[/dim white]   [dim magenta]\"{diagnosis['weakest_reasoning_claim']}\" (Conf: {diagnosis['lowest_confidence_score']:.2f})[/dim magenta]\n"
-            f"[dim white]5. Required Habit:[/dim white]  [dim green]{diagnosis['preventative_habit']}[/dim green]",
-            title="[dim italic]Coach's Diagnostic Taxonomy[/dim italic]",
+            f"[dim white]Category:[/dim white] [dim red]{diagnosis['error_category']}[/dim red]\n"
+            f"[dim white]What happened:[/dim white] [dim yellow]{diagnosis['error_explanation']}[/dim yellow]\n"
+            f"[dim white]Habit:[/dim white] [dim green]{diagnosis['preventative_habit']}[/dim green]",
+            title="[dim italic]Diagnosis logged[/dim italic]",
             border_style="dim blue", expand=False
         ))
-        
         return {"success": True}
-        
-    def analyze_position(self, fen: str, moves_to_apply: list[str] = None, depth: int = 20, pov: str = "white") -> dict:
+
+    def get_game_review_summary(self) -> dict:
         """
-        Analyzes a chess position using the Stockfish engine.
-        
-        Args:
-            fen: The starting FEN string.
-            moves_to_apply: An optional list of SAN moves (e.g., ["Rd1", "Rxb2"]) to play from the FEN *BEFORE* analyzing. 
-                            You MUST use this to mathematically verify hypothetical lines, opponent responses, and traps!
-                            NEVER calculate tactics mentally.
-            depth: Engine search depth (default 20).
-            pov: "white" or "black" to orient the visual board.
+        Re-fetches the backend's review digest for the currently loaded game
+        (move-quality annotations and the critical-moment agenda). Use this if
+        you no longer have the digest in context.
         """
-        try:
-            # 1. Clamp depth to a high-quality sweet spot
-            safe_depth = max(15, min(int(depth), 24))
-            board = chess.Board(fen)
-            
-            # --- HELPER: Generate Unique Visual Tokens ---
-            def get_visual_token(b):
-                raw = b.unicode(empty_square="·", invert_color=self.config.dark_terminal)
-                lines = raw.split('\n')
+        if not self.state.review:
+            return {"error": "No game review available. Ask the user to load a game first (/load_pgn or paste a PGN)."}
+        return {"review_digest": self.state.review.digest()}
 
-                labeled = []
-                if pov.lower() == "black":
-                    # Reverse ranks: Bottom to Top (1 to 8)
-                    lines.reverse() 
-                    for i, line in enumerate(lines):
-                        # Reverse files: Right to Left (h to a)
-                        # Split characters, reverse them, and rejoin
-                        chars = line.split(" ")
-                        reversed_chars = " ".join(chars[::-1])
-                        labeled.append(f"{i+1} │ {reversed_chars} │")
-                    labeled.append("  └" + "─" * 17 + "┘")
-                    labeled.append("    h g f e d c b a")
-                else:
-                    # Standard White POV
-                    for i, line in enumerate(lines):
-                        labeled.append(f"{8-i} │ {line} │")
-                    labeled.append("  └" + "─" * 17 + "┘")
-                    labeled.append("    a b c d e f g h")
-                
-                visual = "```text\n" + "\n".join(labeled) + "\n```"
-                if len(self.state.board_visuals) > 50:
-                    self.state.board_visuals.pop(next(iter(self.state.board_visuals)))
-                
-                # Your brilliant UUID addition!
-                render_id = str(uuid.uuid4())[:8] 
-                tkn = f"[[BOARD_{render_id}]]"
-                self.state.board_visuals[tkn] = visual
-                return tkn
-
-            # 📸 1. Snapshot BEFORE moves (The Past)
-            token_before = get_visual_token(board)
-            
-            token_after = None
-            if moves_to_apply:
-                for move_str in moves_to_apply[:10]: 
-                    board.push_san(move_str)
-                # 📸 2. Snapshot AFTER moves (The Future)
-                token_after = get_visual_token(board)
-                
-            # 2. 🚀 ENGINE UPGRADE: Bump multipv to 3, and add a safety TIME LIMIT for your web server!
-            # If Stockfish takes longer than 4 seconds, it will stop and return its best math.
-            infos = self.engines.stockfish.analyse(
-                board, 
-                chess.engine.Limit(depth=safe_depth, time=4.0), 
-                multipv=3
-            )
-            
-            top_lines = []
-            for i, info in enumerate(infos):
-                score = info["score"].white()
-                eval_str = f"#{score.mate()}" if score.is_mate() else f"{score.score(mate_score=100000) / 100.0:+.2f}"
-                pv_moves = []
-                temp_board = board.copy()
-                
-                # 3. 🚀 PEDAGOGY UPGRADE: Truncate lines to 8 plies (4 full moves). 
-                # This is deep enough to prove a tactic, but prevents the LLM from reciting 20-move GM endgames.
-                for move in info.get("pv", [])[:8]:  
-                    pv_moves.append(temp_board.san(move))
-                    temp_board.push(move)
-                top_lines.append({"rank": i + 1, "evaluation": eval_str, "expected_engine_line": " ".join(pv_moves)})
-
-            legal_moves_str = ", ".join([board.san(m) for m in board.legal_moves])
-            
-            # --- 3. EXTRACT FEATURES ---
-            features = extract_board_features(board)
-
-            return {
-                "top_stockfish_lines": top_lines, 
-                "board_token_before_moves": token_before, # <-- Hand the AI BOTH tokens!
-                "board_token_after_moves": token_after,
-                "mathematically_legal_moves": legal_moves_str,
-                "positional_and_safety_features": features
-            }
-        except Exception as e: return {"error": str(e)}
-
-    def predict_human_move(self, fen: str) -> dict:
-        """
-        Uses the Maia neural network to predict the most likely move a human player 
-        at the student's specific Elo rating would play in this position.
-        
-        Args:
-            fen: The current FEN string.
-            
-        Use this to understand human psychology, anticipate common human blunders, 
-        or explain why a move "looks tempting" to a human even if Stockfish hates it.
-        """
-        if not self.engines.maia: return {"error": "Maia engine not loaded."}
-        try:
-            board = chess.Board(fen)
-            from maia2 import inference
-            move_probs, win_prob = inference.inference_each(
-                self.engines.maia, 
-                self.engines.maia_prepared, 
-                fen, 
-                elo_self=self.engines.config.user_elo, 
-                elo_oppo=self.engines.config.user_elo
-            )
-            if not move_probs: return {"predicted_human_move": "None"}
-            
-            best_move_str = max(move_probs, key=move_probs.get)
-            move = chess.Move.from_uci(best_move_str)
-            
-            if move not in board.legal_moves:
-                 return {"error": f"Maia2 predicted illegal move: {best_move_str}"}
-
-            maia_move_san = board.san(move)
-            board.push(move)
-            
-            info = self.engines.stockfish.analyse(board, chess.engine.Limit(depth=25))
-            score = info["score"].white()
-            eval_str = f"#{score.mate()}" if score.is_mate() else f"{score.score(mate_score=100000) / 100.0:+.2f}"
-            
-            refutation_moves = []
-            temp_board = board.copy()
-            for move in info.get("pv", [])[:10]: 
-                refutation_moves.append(temp_board.san(move))
-                temp_board.push(move)
-                
-            return {
-                "predicted_human_move": maia_move_san,
-                "resulting_evaluation_if_played": eval_str,
-                "stockfish_refutation_line": " ".join(refutation_moves)
-            }
-        except Exception as e: return {"error": str(e)}
+    # ------------------------------------------------------------------
+    # EXTERNAL DATA
+    # ------------------------------------------------------------------
 
     def get_opening_repertoire(self, fen: str) -> dict:
         """
-        Queries the Lichess Opening Databases. 
-        
+        Queries the Lichess Opening Databases for this position.
+
+        Returns the opening name/ECO, what MASTERS play, and what amateurs at the
+        student's Elo actually play. Use it during the opening phase to ground
+        opening advice in real data instead of generic principles.
+
         Args:
             fen: The current FEN string.
-            
-        Use this during the opening phase (usually moves 1-15) to fetch the official 
-        opening name (e.g., "Sicilian Defense"), ECO code, and historical win rates. 
-        It returns BOTH Grandmaster theory and statistics for amateurs at the student's Elo, 
-        allowing you to contrast perfect theory with what actually happens at their rating.
         """
-        def _safe_get_json(url: str, params: dict = None) -> dict:
-            try:
-                r = requests.get(url, params=params, timeout=10)
-                r.raise_for_status()
-                return r.json()
-            except Exception as e:
-                return {"error": f"Network request failed: {e}"}
-
+        try:
+            chess.Board(fen)
+        except ValueError as e:
+            return {"error": f"Invalid FEN: {e}"}
         try:
             master_res = _safe_get_json("https://explorer.lichess.ovh/masters", {"fen": fen})
             if "error" in master_res: return master_res
-            
+
             opening_name = master_res.get("opening", {}).get("name")
             eco_code = master_res.get("opening", {}).get("eco")
-            
+
             master_moves = []
             for move in master_res.get("moves", [])[:4]:
                 total = move["white"] + move["draws"] + move["black"]
@@ -271,14 +479,14 @@ class CoachTools:
                     })
 
             brackets = [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500]
-            valid_brackets = [str(b) for b in brackets if abs(b - self.engines.config.user_elo) <= 250]
+            valid_brackets = [str(b) for b in brackets if abs(b - self.config.user_elo) <= 250]
             ratings_param = ",".join(valid_brackets) if valid_brackets else "1000,1200"
-            
+
             amateur_res = _safe_get_json("https://explorer.lichess.ovh/lichess", {
                 "variant": "standard", "speeds": "blitz,rapid", "ratings": ratings_param, "fen": fen
             })
             if "error" in amateur_res: return amateur_res
-            
+
             amateur_moves = []
             for move in amateur_res.get("moves", [])[:4]:
                 total = move["white"] + move["draws"] + move["black"]
@@ -287,104 +495,109 @@ class CoachTools:
                         "move": move["san"], "total_games": total, "white_win_pct": round((move["white"] / total) * 100, 1),
                         "black_win_pct": round((move["black"] / total) * 100, 1)
                     })
-                
+
             return {
                 "theoretical_opening_name": opening_name, "eco_code": eco_code,
                 "top_master_moves": master_moves, "typical_amateur_moves": amateur_moves, "amateur_brackets_queried": ratings_param
             }
         except Exception as e: return {"error": str(e)}
 
+    def query_endgame_tablebase(self, fen: str) -> dict:
+        """
+        Queries the Syzygy 7-piece Endgame Tablebase for provably perfect play.
+        Only valid with 7 or fewer total pieces on the board (the backend enforces this).
+
+        Args:
+            fen: The current FEN string.
+        """
+        try:
+            board = chess.Board(fen)
+        except ValueError as e:
+            return {"error": f"Invalid FEN: {e}"}
+        piece_count = len(board.piece_map())
+        if piece_count > 7:
+            return {"error": f"Tablebase requires <= 7 pieces; this position has {piece_count}. "
+                             "Use analyze_position instead."}
+        res = _safe_get_json("https://tablebase.lichess.ovh/standard", {"fen": fen})
+        if "error" in res:
+            return res
+        moves = res.get("moves") or [{}]
+        return {
+            "status": res.get("category"),
+            "dtz": res.get("dtz"),
+            "dtm": res.get("dtm"),
+            "best_move": moves[0].get("san", "None"),
+            "note": "category is from the side to move's perspective ('win' = side to move wins with perfect play)."
+        }
+
     def fetch_lichess_game_by_id(self, game_id: str) -> dict:
         """
-        Downloads a game from Lichess.org, mathematically scans it for brilliancies/traps, and loads it into the timeline.
-        
+        Downloads a game from Lichess.org, runs the full backend review
+        (move classification + critical-moment agenda), loads it into the
+        timeline at move 0, and returns the review digest.
+
         Args:
             game_id: The 8-character Lichess game ID. Do NOT pass the full URL.
         """
+        game_id = (game_id or "").strip()[:8]
+        if not game_id.isalnum():
+            return {"error": "Invalid Lichess game ID (must be 8 alphanumeric characters)."}
         try:
-            # 🐛 2B. BONUS FIX: Lichess IDs are 8 chars. Strip the trailing player perspective characters.
-            game_id = game_id[:8] 
             url = f"https://lichess.org/game/export/{game_id}"
-            params = {"evals": "true", "clocks": "true", "accuracy": "true", "opening": "true", "literate": "true", "tags": "true"}
-            
+            params = {"evals": "false", "clocks": "true", "opening": "true", "tags": "true"}
             r = requests.get(url, params=params, headers={"Accept": "application/x-chess-pgn"}, timeout=15)
-            if r.status_code == 200:
-                console.print("[dim yellow]↳ Running Brilliancy Scanner on downloaded Lichess game...[/dim yellow]")
-                was_scanned, scanned_pgn = scan_game_for_critical_moments(r.text, self.engines)
-                
-                try:
-                    parsed_game = chess.pgn.read_game(io.StringIO(scanned_pgn))
-                    self.timeline.load_game(parsed_game)
-                except Exception: pass
-                
-                if was_scanned:
-                    sys_msg = "\n\n[System Info: I have mathematically scanned the PGN above and added Brilliancy tags. Please use them for your analysis.]"
-                    return {"pgn": scanned_pgn + sys_msg}
-                return {"pgn": scanned_pgn}
-            elif r.status_code == 404: return {"error": f"Game with ID '{game_id}' not found."}
-            else: return {"error": f"Lichess API returned status {r.status_code}."}
-        except Exception as e: return {"error": str(e)}
+            if r.status_code == 404:
+                return {"error": f"Game with ID '{game_id}' not found."}
+            if r.status_code != 200:
+                return {"error": f"Lichess API returned status {r.status_code}."}
+            return self._review_and_load(r.text)
+        except Exception as e:
+            return {"error": str(e)}
 
     def fetch_chessgames_com_game(self, game_id: str) -> dict:
         """
-        Downloads a Master-level game from chessgames.com, mathematically scans it, and loads it into the timeline.
-        
+        Downloads a Master-level game from chessgames.com, runs the full backend
+        review, loads it into the timeline at move 0, and returns the review digest.
+
         Args:
             game_id: The numeric game ID from chessgames.com. Do NOT pass the full URL.
         """
+        game_id = (game_id or "").strip()
+        if not game_id.isdigit():
+            return {"error": "Invalid chessgames.com game ID (must be numeric)."}
         try:
             url = f"https://www.chessgames.com/njs/api/game/viewPGN/{game_id}"
             headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/plain, application/x-chess-pgn, */*"}
-            
             r = requests.get(url, params={"raw": "true"}, headers=headers, timeout=15)
-            if r.status_code == 200:
-                pgn_text = r.text.strip()
-                if not pgn_text or not pgn_text.startswith("[Event"): return {"error": "Received malformed data."}
-                
-                console.print("[dim yellow]↳ Running Brilliancy Scanner on downloaded Master game...[/dim yellow]")
-                was_scanned, scanned_pgn = scan_game_for_critical_moments(pgn_text, self.engines)
-                
-                try:
-                    parsed_game = chess.pgn.read_game(io.StringIO(scanned_pgn))
-                    self.timeline.load_game(parsed_game)
-                except Exception: pass
-                
-                if was_scanned:
-                    sys_msg = "\n\n[System Info: I have mathematically scanned the PGN above and added Brilliancy tags. Please use them for your analysis.]"
-                    return {"pgn": scanned_pgn + sys_msg}
-                return {"pgn": scanned_pgn}
-            elif r.status_code == 404: return {"error": f"Game with ID '{game_id}' not found."}
-            else: return {"error": f"Chessgames API returned status {r.status_code}."}
-        except Exception as e: return {"error": str(e)}
+            if r.status_code == 404:
+                return {"error": f"Game with ID '{game_id}' not found."}
+            if r.status_code != 200:
+                return {"error": f"Chessgames API returned status {r.status_code}."}
+            pgn_text = r.text.strip()
+            if not pgn_text or not pgn_text.startswith("[Event"):
+                return {"error": "Received malformed data."}
+            return self._review_and_load(pgn_text)
+        except Exception as e:
+            return {"error": str(e)}
 
-    def query_endgame_tablebase(self, fen: str) -> dict:
-        """
-        Queries the Syzygy 7-piece Endgame Tablebase for absolute mathematical truth.
-        
-        Args:
-            fen: The current FEN string.
-            
-        🛑 CRITICAL: You MUST ONLY call this tool if there are exactly 7 or fewer pieces 
-        left on the entire board (including Kings). Do not call it in the middlegame.
-        Returns the Distance to Mate (DTM) and the provably perfect move.
-        """
-        def _safe_get_json(url: str, params: dict = None) -> dict:
-            try:
-                r = requests.get(url, params=params, timeout=10)
-                r.raise_for_status()
-                return r.json()
-            except Exception as e:
-                return {"error": f"Network request failed: {e}"}
-        try:
-            res = _safe_get_json("https://tablebase.lichess.ovh/standard", {"fen": fen})
-            if "error" in res: return res
-            return {"status": res.get("category"), "dtm": res.get("dtm"), "best_move": res.get("moves", [{}])[0].get("san", "None")}
-        except Exception as e: return {"error": str(e)}
+    def _review_and_load(self, pgn_text: str) -> dict:
+        console.print("[dim yellow]↳ Running full engine review on the downloaded game (may take a minute)...[/dim yellow]")
+        review = review_game(pgn_text, self.engines, self.config)
+        if review is None:
+            return {"error": "Could not parse a game with moves from the downloaded PGN."}
+        self.timeline.load_game(review.game)
+        self.state.review = review
+        self.state.socratic_attempts.clear()
+        attach_board_tokens(review, self.state, invert=getattr(self.config, "dark_terminal", False))
+        return {"review_digest": review.digest(),
+                "board_state": "Loaded at the STARTING position. The user steps through with /next."}
 
     def get_tool_list(self):
         """Returns the bound methods to be passed to the Gemini API."""
         return [
-            self.fetch_lichess_game_by_id, self.fetch_chessgames_com_game, self.query_endgame_tablebase, 
-            self.analyze_position, self.predict_human_move, self.get_opening_repertoire, 
-            self.execute_coach_move, self.submit_diagnosis
+            self.analyze_position, self.evaluate_student_answer, self.predict_human_move,
+            self.play_sparring_reply, self.execute_coach_move, self.submit_diagnosis,
+            self.get_game_review_summary, self.get_opening_repertoire,
+            self.query_endgame_tablebase, self.fetch_lichess_game_by_id,
+            self.fetch_chessgames_com_game,
         ]

@@ -1,0 +1,717 @@
+{
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1": {
+        "game_phase": "opening",
+        "side_to_move": "white",
+        "pawn_structure": {
+            "white_passed_pawns": [],
+            "black_passed_pawns": [],
+            "white_isolated_pawns": [],
+            "black_isolated_pawns": [],
+            "white_doubled_files": [],
+            "black_doubled_files": [],
+            "open_files": [],
+            "half_open_for_white": [],
+            "half_open_for_black": [],
+            "pawn_majorities": []
+        },
+        "piece_safety": {
+            "hanging_white": [],
+            "hanging_black": [],
+            "pinned_white": [],
+            "pinned_black": [],
+            "weakly_defended_white": [],
+            "weakly_defended_black": [],
+            "loose_undefended_white": [
+                "R on a1",
+                "R on h1"
+            ],
+            "loose_undefended_black": [
+                "r on a8",
+                "r on h8"
+            ]
+        },
+        "king_safety": {
+            "white": {
+                "king_square": "e1",
+                "pawn_shield_squares": [
+                    "d2",
+                    "e2",
+                    "f2"
+                ],
+                "enemy_pieces_attacking_perimeter": []
+            },
+            "black": {
+                "king_square": "e8",
+                "pawn_shield_squares": [
+                    "d7",
+                    "e7",
+                    "f7"
+                ],
+                "enemy_pieces_attacking_perimeter": []
+            }
+        },
+        "material": {
+            "balance": "Even",
+            "white_has_bishop_pair": true,
+            "black_has_bishop_pair": true
+        },
+        "central_control": {
+            "control_dominance": "Contested/Equal"
+        },
+        "piece_activity": {
+            "white_knight_outposts": [],
+            "black_knight_outposts": [],
+            "white_rooks_connected": false,
+            "black_rooks_connected": false,
+            "white_rooks_on_7th": [],
+            "black_rooks_on_2nd": [],
+            "white_bad_bishops": [],
+            "black_bad_bishops": [],
+            "mobility": {
+                "white_total_legal_moves": 20,
+                "white_least_mobile_piece": "R on a1 (0 moves)",
+                "black_total_legal_moves": 20,
+                "black_least_mobile_piece": "r on a8 (0 moves)"
+            }
+        },
+        "development": {
+            "white_king_status": "can still castle",
+            "black_king_status": "can still castle",
+            "white_can_castle": true,
+            "black_can_castle": true,
+            "white_undeveloped_minors": 4,
+            "black_undeveloped_minors": 4
+        },
+        "forcing_moves_for_side_to_move": {
+            "checks": [],
+            "captures": []
+        }
+    },
+    "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2": {
+        "game_phase": "opening",
+        "side_to_move": "white",
+        "pawn_structure": {
+            "white_passed_pawns": [],
+            "black_passed_pawns": [],
+            "white_isolated_pawns": [],
+            "black_isolated_pawns": [],
+            "white_doubled_files": [],
+            "black_doubled_files": [],
+            "open_files": [],
+            "half_open_for_white": [],
+            "half_open_for_black": [],
+            "white_available_pawn_breaks": [
+                "b2-b4",
+                "d2-d4"
+            ],
+            "black_available_pawn_breaks": [
+                "d7-d5",
+                "f7-f5"
+            ],
+            "pawn_majorities": []
+        },
+        "piece_safety": {
+            "hanging_white": [],
+            "hanging_black": [],
+            "pinned_white": [],
+            "pinned_black": [],
+            "weakly_defended_white": [],
+            "weakly_defended_black": [],
+            "loose_undefended_white": [
+                "R on a1",
+                "R on h1"
+            ],
+            "loose_undefended_black": [
+                "r on a8",
+                "r on h8"
+            ]
+        },
+        "king_safety": {
+            "white": {
+                "king_square": "e1",
+                "pawn_shield_squares": [
+                    "d2",
+                    "f2"
+                ],
+                "enemy_pieces_attacking_perimeter": []
+            },
+            "black": {
+                "king_square": "e8",
+                "pawn_shield_squares": [
+                    "d7",
+                    "e7",
+                    "f7"
+                ],
+                "enemy_pieces_attacking_perimeter": []
+            }
+        },
+        "material": {
+            "balance": "Even",
+            "white_has_bishop_pair": true,
+            "black_has_bishop_pair": true
+        },
+        "central_control": {
+            "control_dominance": "Contested/Equal"
+        },
+        "piece_activity": {
+            "white_knight_outposts": [],
+            "black_knight_outposts": [],
+            "white_rooks_connected": false,
+            "black_rooks_connected": false,
+            "white_rooks_on_7th": [],
+            "black_rooks_on_2nd": [],
+            "white_bad_bishops": [],
+            "black_bad_bishops": [],
+            "mobility": {
+                "white_total_legal_moves": 30,
+                "white_least_mobile_piece": "R on a1 (0 moves)",
+                "black_total_legal_moves": 22,
+                "black_least_mobile_piece": "r on a8 (0 moves)"
+            }
+        },
+        "development": {
+            "white_king_status": "can still castle",
+            "black_king_status": "can still castle",
+            "white_can_castle": true,
+            "black_can_castle": true,
+            "white_undeveloped_minors": 4,
+            "black_undeveloped_minors": 4
+        },
+        "forcing_moves_for_side_to_move": {
+            "checks": [],
+            "captures": []
+        }
+    },
+    "r1bqk2r/pppp1ppp/2n2n2/4p3/1bB1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 6 5": {
+        "game_phase": "opening",
+        "side_to_move": "white",
+        "pawn_structure": {
+            "white_passed_pawns": [],
+            "black_passed_pawns": [],
+            "white_isolated_pawns": [],
+            "black_isolated_pawns": [],
+            "white_doubled_files": [],
+            "black_doubled_files": [],
+            "open_files": [],
+            "half_open_for_white": [],
+            "half_open_for_black": [],
+            "white_available_pawn_breaks": [
+                "d2-d4"
+            ],
+            "black_available_pawn_breaks": [
+                "d7-d5"
+            ],
+            "pawn_majorities": []
+        },
+        "piece_safety": {
+            "hanging_white": [],
+            "hanging_black": [],
+            "pinned_white": [],
+            "pinned_black": [],
+            "weakly_defended_white": [],
+            "weakly_defended_black": [],
+            "loose_undefended_white": [
+                "R on a1",
+                "R on h1",
+                "B on c4"
+            ],
+            "loose_undefended_black": [
+                "r on a8",
+                "r on h8"
+            ]
+        },
+        "king_safety": {
+            "white": {
+                "king_square": "e1",
+                "pawn_shield_squares": [
+                    "d2",
+                    "f2"
+                ],
+                "enemy_pieces_attacking_perimeter": []
+            },
+            "black": {
+                "king_square": "e8",
+                "pawn_shield_squares": [
+                    "d7",
+                    "f7"
+                ],
+                "enemy_pieces_attacking_perimeter": [
+                    "B on c4"
+                ]
+            }
+        },
+        "material": {
+            "balance": "Even",
+            "white_has_bishop_pair": true,
+            "black_has_bishop_pair": true
+        },
+        "central_control": {
+            "control_dominance": "White"
+        },
+        "piece_activity": {
+            "white_knight_outposts": [],
+            "black_knight_outposts": [],
+            "white_rooks_connected": false,
+            "black_rooks_connected": false,
+            "white_rooks_on_7th": [],
+            "black_rooks_on_2nd": [],
+            "white_bad_bishops": [
+                "c4"
+            ],
+            "black_bad_bishops": [
+                "b4"
+            ],
+            "mobility": {
+                "white_total_legal_moves": 35,
+                "white_least_mobile_piece": "B on c1 (0 moves)",
+                "black_total_legal_moves": 33,
+                "black_least_mobile_piece": "b on c8 (0 moves)"
+            }
+        },
+        "development": {
+            "white_king_status": "can still castle",
+            "black_king_status": "can still castle",
+            "white_can_castle": true,
+            "black_can_castle": true,
+            "white_undeveloped_minors": 1,
+            "black_undeveloped_minors": 1
+        },
+        "forcing_moves_for_side_to_move": {
+            "checks": [
+                "Bxf7+"
+            ],
+            "captures": [
+                "Nxe5"
+            ]
+        }
+    },
+    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1": {
+        "game_phase": "opening",
+        "side_to_move": "white",
+        "pawn_structure": {
+            "white_passed_pawns": [],
+            "black_passed_pawns": [],
+            "white_isolated_pawns": [],
+            "black_isolated_pawns": [],
+            "white_doubled_files": [],
+            "black_doubled_files": [],
+            "open_files": [],
+            "half_open_for_white": [],
+            "half_open_for_black": [],
+            "white_available_pawn_breaks": [
+                "a2-a3",
+                "d5-d6"
+            ],
+            "black_available_pawn_breaks": [
+                "b4-b3",
+                "c7-c6"
+            ],
+            "pawn_tension_points": [
+                "g2<->h3",
+                "d5<->e6"
+            ],
+            "pawn_majorities": []
+        },
+        "piece_safety": {
+            "hanging_white": [],
+            "hanging_black": [
+                "p on h3",
+                "b on a6"
+            ],
+            "pinned_white": [],
+            "pinned_black": [],
+            "weakly_defended_white": [
+                "N on c3 (capture sequence wins +2 for opponent)"
+            ],
+            "weakly_defended_black": [],
+            "loose_undefended_white": [
+                "R on a1",
+                "R on h1",
+                "N on e5"
+            ],
+            "loose_undefended_black": [
+                "b on a6",
+                "b on g7"
+            ]
+        },
+        "king_safety": {
+            "white": {
+                "king_square": "e1",
+                "pawn_shield_squares": [
+                    "f2"
+                ],
+                "enemy_pieces_attacking_perimeter": [
+                    "b on a6"
+                ]
+            },
+            "black": {
+                "king_square": "e8",
+                "pawn_shield_squares": [
+                    "d7",
+                    "e6",
+                    "f7"
+                ],
+                "enemy_pieces_attacking_perimeter": [
+                    "N on e5"
+                ]
+            }
+        },
+        "material": {
+            "balance": "Even",
+            "white_has_bishop_pair": true,
+            "black_has_bishop_pair": true
+        },
+        "central_control": {
+            "control_dominance": "Contested/Equal"
+        },
+        "piece_activity": {
+            "white_knight_outposts": [],
+            "black_knight_outposts": [],
+            "white_rooks_connected": false,
+            "black_rooks_connected": false,
+            "white_rooks_on_7th": [],
+            "black_rooks_on_2nd": [],
+            "white_bad_bishops": [
+                "e2"
+            ],
+            "black_bad_bishops": [
+                "a6"
+            ],
+            "mobility": {
+                "white_total_legal_moves": 48,
+                "white_least_mobile_piece": "R on h1 (2 moves)",
+                "black_total_legal_moves": 43,
+                "black_least_mobile_piece": "b on g7 (2 moves)"
+            }
+        },
+        "development": {
+            "white_king_status": "can still castle",
+            "black_king_status": "can still castle",
+            "white_can_castle": true,
+            "black_can_castle": true,
+            "white_undeveloped_minors": 0,
+            "black_undeveloped_minors": 0
+        },
+        "forcing_moves_for_side_to_move": {
+            "checks": [],
+            "captures": [
+                "Nxf7",
+                "Nxd7",
+                "Nxg6",
+                "Qxf6",
+                "Qxh3",
+                "Bxa6",
+                "dxe6",
+                "gxh3"
+            ]
+        }
+    },
+    "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1": {
+        "game_phase": "endgame",
+        "side_to_move": "white",
+        "pawn_structure": {
+            "white_passed_pawns": [
+                "e2"
+            ],
+            "black_passed_pawns": [],
+            "white_isolated_pawns": [
+                "e2"
+            ],
+            "black_isolated_pawns": [],
+            "white_doubled_files": [],
+            "black_doubled_files": [],
+            "open_files": [
+                "a",
+                "b",
+                "c",
+                "d",
+                "f",
+                "g",
+                "h"
+            ],
+            "half_open_for_white": [],
+            "half_open_for_black": [
+                "e"
+            ],
+            "pawn_majorities": []
+        },
+        "piece_safety": {
+            "hanging_white": [],
+            "hanging_black": [],
+            "pinned_white": [],
+            "pinned_black": [],
+            "weakly_defended_white": [],
+            "weakly_defended_black": []
+        },
+        "king_safety": {
+            "white": {
+                "king_square": "e1",
+                "pawn_shield_squares": [
+                    "e2"
+                ],
+                "enemy_pieces_attacking_perimeter": []
+            },
+            "black": {
+                "king_square": "e8",
+                "pawn_shield_squares": [],
+                "enemy_pieces_attacking_perimeter": []
+            }
+        },
+        "material": {
+            "balance": "White +1",
+            "white_has_bishop_pair": false,
+            "black_has_bishop_pair": false
+        },
+        "central_control": {
+            "control_dominance": "Contested/Equal"
+        },
+        "piece_activity": {
+            "white_knight_outposts": [],
+            "black_knight_outposts": [],
+            "white_rooks_connected": false,
+            "black_rooks_connected": false,
+            "white_rooks_on_7th": [],
+            "black_rooks_on_2nd": [],
+            "white_bad_bishops": [],
+            "black_bad_bishops": [],
+            "mobility": {
+                "white_total_legal_moves": 6,
+                "black_total_legal_moves": 5
+            }
+        },
+        "development": {
+            "white_king_status": "cannot castle (rights lost, king not on a castled square)",
+            "black_king_status": "cannot castle (rights lost, king not on a castled square)",
+            "white_can_castle": false,
+            "black_can_castle": false,
+            "white_undeveloped_minors": 0,
+            "black_undeveloped_minors": 0
+        },
+        "forcing_moves_for_side_to_move": {
+            "checks": [],
+            "captures": []
+        },
+        "endgame": {
+            "kings_in_direct_opposition": false,
+            "white_passed_pawn_details": [
+                {
+                    "pawn": "e2",
+                    "enemy_king_distance": 6,
+                    "is_outside_passer": false,
+                    "enemy_king_inside_the_square": true,
+                    "own_king_distance": 1
+                }
+            ]
+        }
+    },
+    "2r3k1/1p3p1p/p2p2p1/3P4/P1P1R3/1P6/5PPP/6K1 b - - 0 24": {
+        "game_phase": "endgame",
+        "side_to_move": "black",
+        "pawn_structure": {
+            "white_passed_pawns": [],
+            "black_passed_pawns": [],
+            "white_isolated_pawns": [],
+            "black_isolated_pawns": [
+                "d6"
+            ],
+            "white_doubled_files": [],
+            "black_doubled_files": [],
+            "open_files": [
+                "e"
+            ],
+            "half_open_for_white": [],
+            "half_open_for_black": [
+                "c"
+            ],
+            "white_available_pawn_breaks": [
+                "c4-c5"
+            ],
+            "black_available_pawn_breaks": [
+                "b7-b5"
+            ],
+            "pawn_majorities": [
+                "White Queenside (3 vs 2)"
+            ]
+        },
+        "piece_safety": {
+            "hanging_white": [],
+            "hanging_black": [],
+            "pinned_white": [],
+            "pinned_black": [],
+            "weakly_defended_white": [],
+            "weakly_defended_black": [],
+            "loose_undefended_white": [
+                "R on e4"
+            ],
+            "loose_undefended_black": [
+                "r on c8"
+            ]
+        },
+        "king_safety": {
+            "white": {
+                "king_square": "g1",
+                "pawn_shield_squares": [
+                    "f2",
+                    "g2",
+                    "h2"
+                ],
+                "enemy_pieces_attacking_perimeter": [],
+                "back_rank_vulnerable_no_luft": true
+            },
+            "black": {
+                "king_square": "g8",
+                "pawn_shield_squares": [
+                    "f7",
+                    "g6",
+                    "h7"
+                ],
+                "enemy_pieces_attacking_perimeter": []
+            }
+        },
+        "material": {
+            "balance": "White +1",
+            "white_has_bishop_pair": false,
+            "black_has_bishop_pair": false
+        },
+        "central_control": {
+            "control_dominance": "White"
+        },
+        "piece_activity": {
+            "white_knight_outposts": [],
+            "black_knight_outposts": [],
+            "white_rooks_connected": false,
+            "black_rooks_connected": false,
+            "white_rooks_on_7th": [],
+            "black_rooks_on_2nd": [],
+            "white_bad_bishops": [],
+            "black_bad_bishops": [],
+            "white_rooks_on_open_files": [
+                "e4 (e-file)"
+            ],
+            "black_rooks_on_half_open_files": [
+                "c8 (c-file)"
+            ],
+            "mobility": {
+                "white_total_legal_moves": 22,
+                "white_least_mobile_piece": "R on e4 (11 moves)",
+                "black_total_legal_moves": 20,
+                "black_least_mobile_piece": "r on c8 (9 moves)"
+            }
+        },
+        "development": {
+            "white_king_status": "castled (king safely tucked away)",
+            "black_king_status": "castled (king safely tucked away)",
+            "white_can_castle": false,
+            "black_can_castle": false,
+            "white_undeveloped_minors": 0,
+            "black_undeveloped_minors": 0
+        },
+        "forcing_moves_for_side_to_move": {
+            "checks": [],
+            "captures": [
+                "Rxc4"
+            ]
+        },
+        "endgame": {
+            "kings_in_direct_opposition": false
+        }
+    },
+    "r1bqkb1r/pppp1ppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4": {
+        "game_phase": "opening",
+        "side_to_move": "white",
+        "pawn_structure": {
+            "white_passed_pawns": [],
+            "black_passed_pawns": [],
+            "white_isolated_pawns": [],
+            "black_isolated_pawns": [],
+            "white_doubled_files": [],
+            "black_doubled_files": [],
+            "open_files": [],
+            "half_open_for_white": [],
+            "half_open_for_black": [],
+            "white_available_pawn_breaks": [
+                "d2-d4"
+            ],
+            "black_available_pawn_breaks": [
+                "d7-d5"
+            ],
+            "pawn_majorities": []
+        },
+        "piece_safety": {
+            "hanging_white": [],
+            "hanging_black": [],
+            "pinned_white": [],
+            "pinned_black": [],
+            "weakly_defended_white": [],
+            "weakly_defended_black": [],
+            "loose_undefended_white": [
+                "R on a1",
+                "R on h1"
+            ],
+            "loose_undefended_black": [
+                "r on a8",
+                "r on h8"
+            ]
+        },
+        "king_safety": {
+            "white": {
+                "king_square": "e1",
+                "pawn_shield_squares": [
+                    "d2",
+                    "f2"
+                ],
+                "enemy_pieces_attacking_perimeter": []
+            },
+            "black": {
+                "king_square": "e8",
+                "pawn_shield_squares": [
+                    "d7",
+                    "f7"
+                ],
+                "enemy_pieces_attacking_perimeter": []
+            }
+        },
+        "material": {
+            "balance": "Even",
+            "white_has_bishop_pair": true,
+            "black_has_bishop_pair": true
+        },
+        "central_control": {
+            "control_dominance": "Contested/Equal"
+        },
+        "piece_activity": {
+            "white_knight_outposts": [],
+            "black_knight_outposts": [],
+            "white_rooks_connected": false,
+            "black_rooks_connected": false,
+            "white_rooks_on_7th": [],
+            "black_rooks_on_2nd": [],
+            "white_bad_bishops": [
+                "f1"
+            ],
+            "black_bad_bishops": [
+                "f8"
+            ],
+            "mobility": {
+                "white_total_legal_moves": 29,
+                "white_least_mobile_piece": "B on c1 (0 moves)",
+                "black_total_legal_moves": 29,
+                "black_least_mobile_piece": "b on c8 (0 moves)"
+            }
+        },
+        "development": {
+            "white_king_status": "can still castle",
+            "black_king_status": "can still castle",
+            "white_can_castle": true,
+            "black_can_castle": true,
+            "white_undeveloped_minors": 2,
+            "black_undeveloped_minors": 2
+        },
+        "forcing_moves_for_side_to_move": {
+            "checks": [],
+            "captures": [
+                "Nxe5"
+            ]
+        }
+    }
+}

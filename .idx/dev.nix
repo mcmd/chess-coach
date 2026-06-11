@@ -8,7 +8,6 @@
     pkgs.python3
     pkgs.sudo
     pkgs.stockfish
-    pkgs.lc0
   ];
   idx = {
     # Search for the extensions you want on https://open-vsx.org/ and use "publisher.id"
@@ -19,19 +18,8 @@
         install =
           "python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt";
         # Open editors for the following files by default, if they exist:
-        default.openFiles = [ "README.md" "src/index.html" "main.py" ];
+        default.openFiles = [ "README.md" "coach.py" ];
       }; # To run something each time the workspace is (re)started, use the `onStart` hook
-    };
-    # Enable previews and customize configuration
-    previews = {
-      enable = true;
-      previews = {
-        web = {
-          command = [ "./devserver.sh" ];
-          env = { PORT = "$PORT"; };
-          manager = "web";
-        };
-      };
     };
   };
 }

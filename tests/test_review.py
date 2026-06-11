@@ -1,0 +1,350 @@
+import io
+
+import chess
+import chess.pgn
+
+from app.review import (
+    cp_to_win_pct, classify_move, time_flag_for, review_game,
+)
+from tests.conftest import FakeEngines
+
+
+# --- UNIT: win% model and classification thresholds ---
+
+def test_cp_to_win_pct_anchors():
+    assert abs(cp_to_win_pct(0) - 50.0) < 0.01
+    assert cp_to_win_pct(300) > 70
+    assert cp_to_win_pct(-300) < 30
+    # Saturation: -2 -> -5 in a lost position is NOT a 30-point swing.
+    assert cp_to_win_pct(-200) - cp_to_win_pct(-500) < 25
+
+
+def test_classify_thresholds():
+    assert classify_move(35, False, False, False) == "blunder"
+    assert classify_move(22, False, False, False) == "mistake"
+    assert classify_move(12, False, False, False) == "inaccuracy"
+    assert classify_move(1, False, False, False) == "good"
+    assert classify_move(0, True, False, False) == "best"
+    assert classify_move(0, True, True, False) == "only_move"
+    assert classify_move(50, False, False, True) == "forced"
+
+
+def test_time_flags():
+    assert time_flag_for("blunder", 4, 300, False) == "hope_chess"
+    assert time_flag_for("blunder", 4, 15, False) == "time_scramble"
+    assert time_flag_for("forced", 90, 300, True) == "freezing"
+    assert time_flag_for("good", 4, 300, False) is None
+    assert time_flag_for("blunder", None, None, False) is None
+
+
+# --- INTEGRATION: full pipeline with scripted evals ---
+
+PGN = """[Event "Test"]
+[White "mcmd"]
+[Black "Opponent"]
+[WhiteElo "1150"]
+[BlackElo "1200"]
+[Result "0-1"]
+
+1. e4 e5 2. Qh5 Nc6 3. Qxf7+ Kxf7 0-1
+"""
+
+
+def _scripted_engines():
+    """Evals scripted so 3. Qxf7+ is a clean White blunder (0 -> -700)."""
+    game = chess.pgn.read_game(io.StringIO(PGN))
+    board = game.board()
+    fens = [board.fen()]
+    for mv in game.mainline_moves():
+        board.push(mv)
+        fens.append(board.fen())
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700   # after Qxf7+
+    evals[fens[6]] = -700   # after Kxf7
+    maia = {fens[4]: {"h5f7": 0.45, "g1f3": 0.25, "f1c4": 0.10}}  # position before Qxf7+
+    return FakeEngines(evals=evals, maia=maia)
+
+
+class _Cfg:
+    user_elo = 1150
+    player_name = "mcmd"
+
+
+def test_review_finds_the_blunder_and_builds_agenda():
+    review = review_game(PGN, _scripted_engines(), _Cfg())
+    assert review is not None
+    assert review.student_color == "white"
+    assert len(review.records) == 6
+
+    blunder = review.records[4]  # 3. Qxf7+
+    assert blunder.san == "Qxf7+"
+    assert blunder.quality == "blunder"
+    assert blunder.drop_pct > 30
+
+    assert review.agenda_plies == [4]
+    assert blunder.is_agenda
+    assert blunder.maia_played_prob == 0.45  # the played move was Maia's top pick
+
+
+def test_digest_contains_agenda_and_withholds_answer():
+    review = review_game(PGN, _scripted_engines(), _Cfg())
+    digest = review.digest()
+    assert "STUDENT played WHITE" in digest
+    assert "[Moment 1]" in digest
+    assert "Qxf7+" in digest
+    assert "WITHHELD ANSWER" in digest
+    assert "evaluate_student_answer" in digest
+
+
+def test_forced_recapture_classified_forced():
+    review = review_game(PGN, _scripted_engines(), _Cfg())
+    assert review.records[5].san == "Kxf7"
+    assert review.records[5].quality == "forced"
+
+
+def test_unparseable_input_returns_none():
+    assert review_game("this is not a pgn at all", FakeEngines(), _Cfg()) is None
+
+
+def test_suggested_categories_from_motif_evidence():
+    from app.review import suggest_error_categories, MoveRecord
+
+    def rec(**kw):
+        base = dict(ply=0, number=1, color="white", san="x", uci="0000",
+                    fen_before="", fen_after="", eval_before_cp=0, eval_after_cp=0,
+                    drop_pct=30, quality="blunder")
+        base.update(kw)
+        return MoveRecord(**base)
+
+    r = rec(best_line_motifs=[{"motif": "knight_fork", "move": "Nc7+", "detail": ""}])
+    assert "missed_fork" in suggest_error_categories(r)
+
+    r = rec(motifs=[{"motif": "back_rank_mate", "move": "Ra8#", "detail": ""}])
+    assert "king_safety" in suggest_error_categories(r)
+
+    r = rec(motifs=[{"motif": "pin", "move": "Bb5", "detail": ""}], time_flag="hope_chess")
+    cats = suggest_error_categories(r)
+    assert "ignored_threat" in cats and "time_management" in cats
+
+    assert suggest_error_categories(rec()) == []
+
+
+def test_position_facts_grounds_file_claims():
+    from app.review import position_facts
+    import chess as _chess
+
+    # Starting position: nothing is open, and the facts say so explicitly.
+    assert "open files: NONE" in position_facts(_chess.Board())
+
+    # The exact Moment-2 position from the live session where the coach
+    # hallucinated "the g-file is completely open" (White pawn on g4, Black
+    # pawns on g2/g7): c and e are the open files, g must not be listed.
+    board = _chess.Board("r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24")
+    facts = position_facts(board)
+    open_segment = [p for p in facts.split(" | ") if p.startswith("open files:")][0]
+    assert open_segment == "open files: c, e"
+
+
+def test_digest_includes_verified_position_facts():
+    review = review_game(PGN, _scripted_engines(), _Cfg())
+    assert "Verified position facts" in review.digest()
+
+
+def test_new_motif_suggestion_hooks():
+    from app.review import suggest_error_categories, MoveRecord
+
+    def rec(**kw):
+        base = dict(ply=0, number=1, color="white", san="x", uci="0000",
+                    fen_before="", fen_after="", eval_before_cp=0, eval_after_cp=0,
+                    drop_pct=30, quality="blunder")
+        base.update(kw)
+        return MoveRecord(**base)
+
+    # A discovered attack the student MISSED -> missed_tactic.
+    r = rec(best_line_motifs=[{"motif": "discovered_attack", "move": "Nc3", "detail": ""}])
+    assert "missed_tactic" in suggest_error_categories(r)
+
+    # A zwischenzug in the PUNISHMENT -> the student miscalculated a "forced" exchange.
+    r = rec(motifs=[{"motif": "zwischenzug", "move": "Re8+", "detail": ""}])
+    assert "calculation_error" in suggest_error_categories(r)
+
+    # Smothered mate in the punishment counts as a king-safety failure.
+    r = rec(motifs=[{"motif": "smothered_mate", "move": "Nf7#", "detail": ""}])
+    assert "king_safety" in suggest_error_categories(r)
+
+
+def test_maia_runs_on_every_move_and_flags_alignment():
+    review = review_game(PGN, _scripted_engines(), _Cfg())
+    blunder = review.records[4]  # Qxf7+ — scripted as Maia's top human move
+    assert blunder.maia_played_prob == 0.45
+    assert blunder.was_maia_top is True
+    assert "Human-alignment" in review.digest()
+
+
+def test_avoided_natural_mistake_is_praised():
+    import chess as _chess
+    import chess.pgn as _pgn
+    import io as _io
+
+    pgn = """[Event "Test"]
+[White "mcmd"]
+[Black "Opponent"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 *
+"""
+    game = _pgn.read_game(_io.StringIO(pgn))
+    board = game.board()
+    fens = [board.fen()]
+    for mv in game.mainline_moves():
+        board.push(mv)
+        fens.append(board.fen())
+
+    # Maia says half of the student's peers play 2. f3?? here; the student
+    # played 2. Nf3 instead. Scripted eval makes f3 lose ~25 win%.
+    natural_board = _chess.Board(fens[2])
+    natural_board.push_uci("f2f3")
+    engines = FakeEngines(
+        evals={natural_board.fen(): -300},
+        maia={fens[2]: {"f2f3": 0.50, "g1f3": 0.20}},
+    )
+    review = review_game(pgn, engines, _Cfg())
+    nf3 = review.records[2]
+    assert nf3.was_maia_top is False
+    assert nf3.avoided_natural_mistake is not None
+    assert "f3" in nf3.avoided_natural_mistake
+    digest = review.digest()
+    assert "PRAISE-WORTHY" in digest
+
+
+def test_review_eval_time_is_passed_to_engine():
+    calls = []
+
+    class TimingFakeEngines(FakeEngines):
+        def quick_eval(self, fen, time_limit=0.3):
+            calls.append(time_limit)
+            return super().quick_eval(fen, time_limit)
+
+    class Cfg(_Cfg):
+        review_eval_time = 0.8
+
+    review_game(PGN, TimingFakeEngines(), Cfg())
+    assert calls and all(t == 0.8 for t in calls)
+
+
+def _fens_of(pgn):
+    import io as _io, chess.pgn as _pgn
+    game = _pgn.read_game(_io.StringIO(pgn))
+    board = game.board()
+    fens = [board.fen()]
+    for mv in game.mainline_moves():
+        board.push(mv)
+        fens.append(board.fen())
+    return fens
+
+
+def test_brilliancy_only_move_that_peers_miss():
+    fens = _fens_of(PGN)
+    # Make 2. Qh5 (ply 2) the engine-best ONLY move (gap >= 200cp) that
+    # only 5% of peers find.
+    engines = FakeEngines(
+        evals={fen: 0 for fen in fens},
+        bests={fens[2]: "d1h5"},
+        multipv={fens[2]: [("d1h5", 300), ("g1f3", 0)]},
+        maia={fens[2]: {"d1h5": 0.05, "g1f3": 0.60}},
+    )
+    review = review_game(PGN, engines, _Cfg())
+    record = review.records[2]
+    assert record.quality == "only_move"
+    assert record.brilliancy_note is not None
+    assert "ONLY good move" in record.brilliancy_note
+    digest = review.digest()
+    assert "Qh5!!" in digest          # brilliancy glyph in the movetext
+    assert "PRAISE-WORTHY" in digest
+
+
+def test_typical_blunder_flagged_for_normalization():
+    review = review_game(PGN, _scripted_engines(), _Cfg())
+    blunder = review.records[4]  # Qxf7+ played by 45% of peers
+    assert blunder.error_typicality == "typical_for_level"
+    assert "COMMON at this level" in review.digest()
+
+
+def test_atypical_blunder_flagged_as_process_slip():
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(
+        evals=evals,
+        bests={fens[4]: "g1f3"},
+        maia={fens[4]: {"h5f7": 0.02, "g1f3": 0.55}},  # peers do NOT play Qxf7+
+    )
+    review = review_game(PGN, engines, _Cfg())
+    blunder = review.records[4]
+    assert blunder.error_typicality == "atypical_for_level"
+    assert blunder.best_move_human_prob == 0.55  # findability of the right move
+    digest = review.digest()
+    assert "RARELY play this" in digest
+    assert "Findability" in digest
+
+
+def test_practical_difficulty_divergence_noted():
+    fens = _fens_of(PGN)
+    evals = {fen: 300 for fen in fens}  # engine: clearly better for White (~75 win%)
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(
+        evals=evals,
+        maia={fens[4]: {"h5f7": 0.45}},
+        maia_win={fens[4]: 0.30},  # ...but peers only score 30% from here
+    )
+    review = review_game(PGN, engines, _Cfg())
+    assert review.records[4].human_win_prob == 0.30
+    assert "Practical difficulty" in review.digest()
+    assert "HARDER to play" in review.digest()
+
+
+def test_likely_wrong_answer_anticipated_with_refutation():
+    import chess as _chess
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    # The guess peers would offer at the blunder position: Nf3 — scripted to lose ~25 win%.
+    guess_board = _chess.Board(fens[4])
+    guess_board.push_san("Nf3")
+    evals[guess_board.fen()] = -300
+    engines = FakeEngines(
+        evals=evals,
+        maia={fens[4]: {"h5f7": 0.45, "g1f3": 0.25}},
+    )
+    review = review_game(PGN, engines, _Cfg())
+    record = review.records[4]
+    assert record.likely_wrong_answer is not None
+    assert "Nf3" in record.likely_wrong_answer
+    assert "refute with" in record.likely_wrong_answer
+    assert "most likely student guess" in review.digest()
+
+
+def test_aspirational_instinct_from_stronger_maia():
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(
+        evals=evals,
+        maia={fens[4]: {"h5f7": 0.45}},
+        maia_by_elo={(fens[4], 1500): {"g1f3": 0.70}},  # WhiteElo 1150 + 350
+    )
+    review = review_game(PGN, engines, _Cfg())
+    record = review.records[4]
+    assert record.aspirational == {"elo": 1500, "move": "Nf3", "probability": 0.70}
+    assert "aspirational instinct" in review.digest()
+    assert "growing toward" in review.digest()
+
+
+def test_phase_alignment_breakdown_in_digest():
+    review = review_game(PGN, _scripted_engines(), _Cfg())
+    assert review.records[0].phase == "opening"
+    assert "opening" in review.digest().split("Human-alignment")[1].split("\n")[0]

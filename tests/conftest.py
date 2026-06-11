@@ -1,0 +1,90 @@
+import chess
+import chess.engine
+import pytest
+
+from app.config import AppConfig
+
+
+class FakeEngines:
+    """EngineManager double with scriptable evaluations. No processes, no network.
+
+    evals:   {fen: cp}            quick_eval score, white POV
+    bests:   {fen: uci}           quick_eval best move
+    multipv: {fen: [(uci, cp)]}   top_lines entries, cp from the MOVER's POV
+    maia:    {fen: {uci: prob}}   maia_predict distributions
+    """
+
+    def __init__(self, evals=None, bests=None, multipv=None, maia=None,
+                 maia_win=None, maia_by_elo=None):
+        self.evals = evals or {}
+        self.bests = bests or {}
+        self.multipv = multipv or {}
+        self.maia_data = maia or {}
+        self.maia_win = maia_win or {}        # fen -> win probability
+        self.maia_by_elo = maia_by_elo or {}  # (fen, elo_self) -> probs
+        self.stockfish = object()  # truthy: "engine available"
+        self.maia = bool(self.maia_data) or bool(self.maia_by_elo)
+        self.maia_error = None
+        self.config = None
+
+    def quick_eval(self, fen, time_limit=0.3):
+        cp = self.evals.get(fen, 0)
+        return chess.engine.PovScore(chess.engine.Cp(cp), chess.WHITE), self.bests.get(fen)
+
+    def top_lines(self, board, multipv=3, depth=18, time_cap=None):
+        entries = self.multipv.get(board.fen())
+        infos = []
+        if entries:
+            for uci, cp in entries[:multipv]:
+                infos.append({"score": chess.engine.PovScore(chess.engine.Cp(cp), board.turn),
+                              "pv": [chess.Move.from_uci(uci)]})
+        else:
+            for i, m in enumerate(list(board.legal_moves)[:multipv]):
+                infos.append({"score": chess.engine.PovScore(chess.engine.Cp(20 - 10 * i), board.turn),
+                              "pv": [m]})
+        return infos
+
+    def threat_probe(self, board, multipv=2):
+        return []
+
+    def maia_predict(self, fen, elo_self=None, elo_oppo=None):
+        probs = None
+        if elo_self is not None and (fen, elo_self) in self.maia_by_elo:
+            probs = self.maia_by_elo[(fen, elo_self)]
+        else:
+            probs = self.maia_data.get(fen)
+        if not probs:
+            return None
+        board = chess.Board(fen)
+        top = sorted(probs.items(), key=lambda kv: -kv[1])[:3]
+        return {
+            "top_moves": [{"move": board.san(chess.Move.from_uci(u)), "probability": p} for u, p in top],
+            "win_probability_for_side_to_move": self.maia_win.get(fen, 0.5),
+            "raw_probs": dict(probs),
+        }
+
+    def clear_cache(self):
+        pass
+
+    def quit(self):
+        pass
+
+
+@pytest.fixture
+def fake_engines():
+    return FakeEngines()
+
+
+@pytest.fixture
+def stub_config(tmp_path):
+    return AppConfig(
+        user_elo=1150,
+        language="English",
+        stockfish_path="stockfish",
+        gemini_model="test-model",
+        api_key="test-key",
+        history_file=str(tmp_path / "history.json"),
+        dossier_file=str(tmp_path / "dossier.json"),
+        cli_history_file=str(tmp_path / "cli_history.txt"),
+        player_name="mcmd",
+    )

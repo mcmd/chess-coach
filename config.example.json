@@ -1,0 +1,11 @@
+{
+    "user_elo": 1200,
+    "language": "English",
+    "stockfish_path": "/path/to/your/stockfish",
+    "gemini_model": "gemini-3.1-pro-preview",
+    "profiles_dir": "./profiles",
+    "player_name": "your-lichess-username",
+    "dark_terminal": false,
+    "trace": false,
+    "review_eval_time": 0.5
+}
