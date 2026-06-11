@@ -42,15 +42,6 @@ def _score_to_str(score: chess.engine.PovScore) -> str:
     return f"{white.score(mate_score=MATE_CP) / 100.0:+.2f}"
 
 
-def _safe_get_json(url: str, params: dict = None) -> dict:
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        return {"error": f"Network request failed: {e}"}
-
-
 class CoachTools:
     def __init__(self, state, timeline, engines, config):
         self.state = state
@@ -207,6 +198,26 @@ class CoachTools:
         else:
             verdict = "wrong"
 
+        # In tablebase range, category truth beats centipawns: a "slow" move
+        # that keeps the proven result is correct; one that downgrades it is wrong.
+        tablebase_verdict = None
+        if len(board.piece_map()) <= 7 and getattr(self.config, "use_online_databases", True):
+            from app import external
+            tb = external.tablebase_probe(fen)
+            if tb:
+                pos_cat = external.normalize_category(tb.get("category"))
+                entry = next((m for m in (tb.get("moves") or [])
+                              if m.get("uci") == move.uci() or m.get("san") == board.san(move)), None)
+                if pos_cat and entry:
+                    move_cat = external.invert_category(external.normalize_category(entry.get("category")))
+                    if move_cat == pos_cat:
+                        verdict = "best"
+                        tablebase_verdict = f"tablebase-verified: this move KEEPS the proven {pos_cat}"
+                    else:
+                        verdict = "wrong"
+                        tablebase_verdict = (f"tablebase-verified: this move turns a proven {pos_cat} "
+                                             f"into a proven {move_cat}")
+
         correct = verdict in ("best", "excellent_alternative")
         attempts[fen] = attempts.get(fen, 0) + 1
         n = attempts[fen]
@@ -221,6 +232,8 @@ class CoachTools:
             "attempts_so_far": n,
             "reveal_allowed": reveal,
         }
+        if tablebase_verdict:
+            result["tablebase_verdict"] = tablebase_verdict
         maia = self.engines.maia_predict(fen)
         if maia:
             prob = maia["raw_probs"].get(move.uci())
@@ -462,9 +475,11 @@ class CoachTools:
             chess.Board(fen)
         except ValueError as e:
             return {"error": f"Invalid FEN: {e}"}
+        from app import external
         try:
-            master_res = _safe_get_json("https://explorer.lichess.ovh/masters", {"fen": fen})
-            if "error" in master_res: return master_res
+            master_res = external.masters_moves(fen)
+            if master_res is None:
+                return {"error": "Opening explorer unavailable (network failure)."}
 
             opening_name = master_res.get("opening", {}).get("name")
             eco_code = master_res.get("opening", {}).get("eco")
@@ -482,10 +497,9 @@ class CoachTools:
             valid_brackets = [str(b) for b in brackets if abs(b - self.config.user_elo) <= 250]
             ratings_param = ",".join(valid_brackets) if valid_brackets else "1000,1200"
 
-            amateur_res = _safe_get_json("https://explorer.lichess.ovh/lichess", {
-                "variant": "standard", "speeds": "blitz,rapid", "ratings": ratings_param, "fen": fen
-            })
-            if "error" in amateur_res: return amateur_res
+            amateur_res = external.lichess_moves(fen, ratings_param)
+            if amateur_res is None:
+                return {"error": "Opening explorer (amateur DB) unavailable (network failure)."}
 
             amateur_moves = []
             for move in amateur_res.get("moves", [])[:4]:
@@ -506,6 +520,8 @@ class CoachTools:
         """
         Queries the Syzygy 7-piece Endgame Tablebase for provably perfect play.
         Only valid with 7 or fewer total pieces on the board (the backend enforces this).
+        Returns the proven result, the best move, AND the margin for error
+        (how many of the legal moves preserve the result).
 
         Args:
             fen: The current FEN string.
@@ -518,16 +534,31 @@ class CoachTools:
         if piece_count > 7:
             return {"error": f"Tablebase requires <= 7 pieces; this position has {piece_count}. "
                              "Use analyze_position instead."}
-        res = _safe_get_json("https://tablebase.lichess.ovh/standard", {"fen": fen})
-        if "error" in res:
-            return res
-        moves = res.get("moves") or [{}]
+        from app import external
+        res = external.tablebase_probe(fen)
+        if res is None:
+            return {"error": "Tablebase unavailable (network failure). Fall back to analyze_position."}
+        moves = res.get("moves") or []
+        pos_cat = external.normalize_category(res.get("category"))
+        outcomes = {"winning": 0, "drawing": 0, "losing": 0}
+        for m in moves:
+            mc = external.invert_category(external.normalize_category(m.get("category")))
+            if mc == "win":
+                outcomes["winning"] += 1
+            elif mc == "draw":
+                outcomes["drawing"] += 1
+            elif mc == "loss":
+                outcomes["losing"] += 1
+        preserving = outcomes.get({"win": "winning", "draw": "drawing", "loss": "losing"}.get(pos_cat, ""), 0)
         return {
             "status": res.get("category"),
             "dtz": res.get("dtz"),
             "dtm": res.get("dtm"),
-            "best_move": moves[0].get("san", "None"),
-            "note": "category is from the side to move's perspective ('win' = side to move wins with perfect play)."
+            "best_move": moves[0].get("san", "None") if moves else "None",
+            "move_outcomes_for_side_to_move": outcomes,
+            "margin_for_error": (f"{preserving} of {len(moves)} legal moves preserve the proven "
+                                 f"{pos_cat}" if pos_cat and moves else "unknown"),
+            "note": "status is from the side to move's perspective ('win' = side to move wins with perfect play)."
         }
 
     def fetch_lichess_game_by_id(self, game_id: str) -> dict:

@@ -70,6 +70,15 @@ class FakeEngines:
         pass
 
 
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Tests must never hit the real Lichess APIs. get_json is the single
+    chokepoint; individual tests monkeypatch the higher-level helpers
+    (masters_moves / lichess_moves / tablebase_probe) to inject data."""
+    from app import external
+    monkeypatch.setattr(external, "get_json", lambda url, params=None: None)
+
+
 @pytest.fixture
 def fake_engines():
     return FakeEngines()

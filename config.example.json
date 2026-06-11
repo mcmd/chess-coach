@@ -7,5 +7,6 @@
     "player_name": "your-lichess-username",
     "dark_terminal": false,
     "trace": false,
-    "review_eval_time": 0.5
+    "review_eval_time": 0.5,
+    "use_online_databases": true
 }

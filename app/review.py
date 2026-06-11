@@ -97,6 +97,8 @@ class MoveRecord:
     human_win_prob: float = None            # Maia: how often peers actually score from here (mover POV)
     likely_wrong_answer: str = None         # the guess the student will most likely offer, pre-refuted
     aspirational: dict = None               # what stronger players choose here ({elo, move, probability})
+    book_share: float = None                # share of master games playing this move (it IS theory)
+    tablebase_note: str = None              # provable endgame truth about this move
     board_token: str = None  # pre-minted diagram token for the position before the move
     best_line_motifs: list = field(default_factory=list)  # tactics the student MISSED
     suggested_categories: list = field(default_factory=list)
@@ -118,6 +120,9 @@ class GameReview:
     extra_games_ignored: bool = False
     white_elo: int = None
     black_elo: int = None
+    opening_name: str = None
+    opening_eco: str = None
+    opening_deviation: dict = None  # where the game left established theory
 
     def record_at(self, ply: int):
         return self.records[ply] if 0 <= ply < len(self.records) else None
@@ -144,7 +149,25 @@ class GameReview:
             f"Black: {h.get('Black', '?')} ({h.get('BlackElo', '?')}) | "
             f"Result: {h.get('Result', '?')}"
         )
-        if h.get("Opening"):
+        if self.opening_deviation:
+            d = self.opening_deviation
+            line = (f"Opening report: {self.opening_name or 'known theory'}"
+                    + (f" ({self.opening_eco})" if self.opening_eco else "")
+                    + f". The game left established theory at {d['label']}"
+                    + (f" (a move seen in only {d['played_share']:.1%} of master games)"
+                       if d['played_games'] else " (a move essentially absent from master games)")
+                    + f". Master moves there: {d['theory']}.")
+            if d.get("amateur"):
+                line += f" Peers at the student's rating play: {d['amateur']}."
+            if self.student_color and d["color"] == self.student_color:
+                line += " The deviation was the STUDENT'S — if it caused problems, recommend this line as a study item."
+            elif self.student_color:
+                line += " The deviation was the OPPONENT'S — the student was out of book through no fault of their own."
+            lines.append(line)
+        elif self.opening_name:
+            lines.append(f"Opening report: {self.opening_name} ({self.opening_eco or ''}) — "
+                         "the scanned opening moves stayed within established theory.")
+        elif h.get("Opening"):
             lines.append(f"Opening: {h.get('Opening')} ({h.get('ECO', '')})")
         if self.student_color:
             lines.append(f"The STUDENT played {self.student_color.upper()}. Coach that side.")
@@ -210,6 +233,12 @@ class GameReview:
             if r.maia_played_prob is not None:
                 lines.append(f"  Maia: ~{r.maia_played_prob:.0%} of similar-rated players choose {r.san}. "
                              f"Top human moves: " + ", ".join(f"{m['move']} ({m['probability']:.0%})" for m in r.maia_top))
+            if r.book_share:
+                lines.append(f"  Theory note: {r.san} is established master theory (~{r.book_share:.0%} of "
+                             "master games) — do NOT scold it; if the engine dislikes it slightly, explain "
+                             "the idea behind the theory instead.")
+            if r.tablebase_note:
+                lines.append(f"  {r.tablebase_note}")
             if r.error_typicality == "typical_for_level":
                 lines.append("  Typicality: this mistake is COMMON at this level — normalize it first, "
                              "then teach the underlying pattern thoroughly (it is a real knowledge gap).")
@@ -413,7 +442,13 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
                         agenda_plies=[], game=game, extra_games_ignored=extra,
                         white_elo=white_elo, black_elo=black_elo)
     review.agenda_plies = _select_agenda(records, student_color, agenda_size)
-    _enrich_agenda(review, engines)
+    online = bool(getattr(config, "use_online_databases", True))
+    if online:
+        try:
+            _analyze_opening(review, config)
+        except Exception:
+            pass  # network enrichment must never break a review
+    _enrich_agenda(review, engines, online)
     return review
 
 
@@ -494,7 +529,91 @@ def _select_agenda(records, student_color, agenda_size):
     return chosen
 
 
-def _enrich_agenda(review: GameReview, engines):
+OPENING_SCAN_PLIES = 24
+OPENING_BOOK_MIN_GAMES = 50
+
+
+def _analyze_opening(review: GameReview, config) -> None:
+    """Walk the opening through the Lichess masters explorer: name the opening,
+    tag book moves (so theory is never scolded), and find the exact move where
+    the game left established theory."""
+    from app import external
+
+    name = eco = None
+    deviation = None
+    for r in review.records[:OPENING_SCAN_PLIES]:
+        data = external.masters_moves(r.fen_before)
+        if data is None:
+            return  # offline / rate-limited: skip the opening report entirely
+        opening = data.get("opening")
+        if opening:
+            name, eco = opening.get("name"), opening.get("eco")
+        moves = data.get("moves") or []
+        totals = {m["san"]: m["white"] + m["draws"] + m["black"] for m in moves}
+        position_total = sum(totals.values())
+        if position_total < OPENING_BOOK_MIN_GAMES:
+            break  # book ran out without a clear deviation
+
+        played_games = totals.get(r.san, 0)
+        share = (played_games / position_total) if position_total else 0.0
+        if played_games >= 5 and share >= 0.005:
+            r.book_share = round(share, 3)
+            continue
+
+        theory = ", ".join(
+            f"{m['san']} ({(m['white'] + m['draws'] + m['black']) / position_total:.0%})"
+            for m in moves[:3])
+        deviation = {"ply": r.ply, "label": r.move_label, "color": r.color,
+                     "played_share": share, "played_games": played_games, "theory": theory}
+        brackets = [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500]
+        user_elo = getattr(config, "user_elo", 1200)
+        valid = [str(b) for b in brackets if abs(b - user_elo) <= 250]
+        amateur = external.lichess_moves(r.fen_before, ",".join(valid) if valid else "1000,1200")
+        if amateur and amateur.get("moves"):
+            am_total = sum(m["white"] + m["draws"] + m["black"] for m in amateur["moves"]) or 1
+            deviation["amateur"] = ", ".join(
+                f"{m['san']} ({(m['white'] + m['draws'] + m['black']) / am_total:.0%})"
+                for m in amateur["moves"][:3])
+        tracing.trace(f"review: opening deviation found at {r.move_label}")
+        break
+
+    review.opening_name, review.opening_eco, review.opening_deviation = name, eco, deviation
+
+
+def _tablebase_verify(r: MoveRecord) -> None:
+    """In <=7-piece positions, replace 'the engine thinks' with provable truth:
+    did this move change the game-theoretic result, and how many moves didn't?"""
+    from app import external
+
+    board_before = chess.Board(r.fen_before)
+    if len(board_before.piece_map()) > 7:
+        return
+    tb_before = external.tablebase_probe(r.fen_before)
+    if not tb_before:
+        return
+    before_cat = external.normalize_category(tb_before.get("category"))  # mover POV
+    moves = tb_before.get("moves") or []
+    preserving = sum(1 for m in moves
+                     if external.invert_category(external.normalize_category(m.get("category"))) == before_cat)
+
+    after_cat = None
+    board_after = chess.Board(r.fen_after)
+    if len(board_after.piece_map()) <= 7:
+        tb_after = external.tablebase_probe(r.fen_after)
+        if tb_after:
+            after_cat = external.invert_category(
+                external.normalize_category(tb_after.get("category")))  # back to mover POV
+
+    if before_cat and after_cat and before_cat != after_cat:
+        r.tablebase_note = (f"TABLEBASE TRUTH (provable, not engine opinion): before {r.san} the position "
+                            f"was a proven {before_cat.upper()} for the player; after {r.san} it is a proven "
+                            f"{after_cat.upper()}. {preserving} of {len(moves)} legal moves preserved the {before_cat}.")
+    elif before_cat:
+        r.tablebase_note = (f"Tablebase: the position before {r.san} is a proven {before_cat}; "
+                            f"{preserving} of {len(moves)} legal moves preserve that result.")
+
+
+def _enrich_agenda(review: GameReview, engines, online: bool = True):
     for ply in review.agenda_plies:
         r = review.records[ply]
         r.is_agenda = True
@@ -502,6 +621,11 @@ def _enrich_agenda(review: GameReview, engines):
                       f"({r.quality}, -{r.drop_pct} win%)")
         board_before = chess.Board(r.fen_before)
         board_after = chess.Board(r.fen_after)
+        if online:
+            try:
+                _tablebase_verify(r)
+            except Exception:
+                pass
 
         try:
             infos = engines.top_lines(board_before, multipv=3, depth=18, time_cap=3.0)

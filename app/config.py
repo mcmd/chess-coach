@@ -19,6 +19,7 @@ class AppConfig:
     player_name: str = None  # matched against PGN White/Black headers to find the student's side
     trace: bool = False      # show tool calls and engine invocations
     review_eval_time: float = 0.5  # Stockfish seconds per position in the game-review scan
+    use_online_databases: bool = True  # opening explorer + tablebase enrichment of reviews
 
 
 def _is_dark_terminal() -> bool:
@@ -107,5 +108,6 @@ Examples:
         dark_terminal=args.dark_terminal or _is_dark_terminal() or app_config.get("dark_terminal", False),
         player_name=app_config.get("player_name"),
         trace=args.trace or app_config.get("trace", False),
-        review_eval_time=float(app_config.get("review_eval_time", 0.5))
+        review_eval_time=float(app_config.get("review_eval_time", 0.5)),
+        use_online_databases=bool(app_config.get("use_online_databases", True))
     )
