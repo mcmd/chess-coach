@@ -67,9 +67,10 @@ def main():
         console.print(f"[yellow]Warning: Maia-2 unavailable ({engines.maia_error}). "
                       "Human-move prediction disabled.[/yellow]")
 
-    coach_tools = CoachTools(app_state, timeline, engines, config)
+    review_progress = _ReviewProgress()
+    coach_tools = CoachTools(app_state, timeline, engines, config, on_progress=review_progress)
     chat = create_chat_session(client, config, coach_tools, load_history(config.history_file))
-    commands = CommandProcessor(app_state, timeline, engines, config, on_progress=_ReviewProgress())
+    commands = CommandProcessor(app_state, timeline, engines, config, on_progress=review_progress)
 
     profile_text = f" (Profile: {config.profile})" if config.profile else ""
     trace_text = "  [dim cyan](trace ON)[/dim cyan]" if config.trace else ""
@@ -98,11 +99,13 @@ def main():
             if not result.prompt:
                 continue
 
-            with console.status("[bold yellow]Coach is thinking...[/bold yellow]", spinner="dots"):
-                try:
-                    run_agent_turn(chat, coach_tools, result.prompt)
-                except Exception as e:
-                    console.print(f"\n[bold red]An API error occurred:[/bold red] {e}")
+            try:
+                # The spinner lives inside the agent loop now: it covers model
+                # calls only, so tools (e.g. a full game review) can render
+                # their own progress bars without fighting Rich's single-live rule.
+                run_agent_turn(chat, coach_tools, result.prompt)
+            except Exception as e:
+                console.print(f"\n[bold red]An API error occurred:[/bold red] {e}")
 
     except KeyboardInterrupt:
         pass

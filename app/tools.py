@@ -69,11 +69,12 @@ def _valid_diagnosis_override(reason: str, recommended: str, chosen: str) -> boo
 
 
 class CoachTools:
-    def __init__(self, state, timeline, engines, config):
+    def __init__(self, state, timeline, engines, config, on_progress=None):
         self.state = state
         self.timeline = timeline
         self.engines = engines
         self.config = config
+        self.on_progress = on_progress  # optional callable(done, total) for review progress
         self.state.lesson_metadata = load_lesson_metadata(getattr(config, "lesson_file", None))
 
     # ------------------------------------------------------------------
@@ -322,45 +323,86 @@ class CoachTools:
                      "AT MOST ONE of them — never assert properties of a move that are not listed here.",
         }
 
-    def predict_human_move(self, fen: str) -> dict:
+    def evaluate_threat_answer(self, fen: str, threat_move_san: str) -> dict:
         """
-        Predicts what a human at the student's Elo would most likely play here
-        (Maia-2 neural network), with the engine's verdict on that move.
-        Use it to explain why a bad move "looks tempting" or to normalize an error.
+        Grade the student's answer to "what is the opponent threatening?".
+        Use this when the student names a THREAT (a move the OPPONENT would play
+        next), as opposed to a move of their own (use evaluate_student_answer
+        for those). Attempts are counted; the real threat is only included once
+        `reveal_allowed` is true.
 
         Args:
-            fen: The current FEN string.
+            fen: The FEN of the position the question was asked about (copy it exactly).
+            threat_move_san: The opponent move the student believes is the threat (e.g. "Qh4").
         """
-        if not self.engines.maia:
-            return {"error": "Maia engine not loaded."}
         try:
             board = chess.Board(fen)
         except ValueError as e:
             return {"error": f"Invalid FEN: {e}"}
+        if board.is_check():
+            return {"note": "The side to move is in check — the question here is how to MEET the check, "
+                            "not what is threatened next."}
 
-        maia = self.engines.maia_predict(fen)
-        if not maia or not maia["top_moves"]:
-            return {"error": "Maia returned no prediction for this position."}
+        probe = board.copy(stack=False)
+        probe.push(chess.Move.null())
+        attempts = self.state.socratic_attempts
+        key = f"threat:{fen}"
 
-        top_san = maia["top_moves"][0]["move"]
-        move = board.parse_san(top_san)
-        board.push(move)
         try:
-            infos = self.engines.top_lines(board, multipv=1, depth=20, time_cap=4.0)
-        except Exception as e:
-            return {"error": f"Engine analysis failed: {e}"}
-        info = infos[0]
-        refutation, temp = [], board.copy(stack=False)
-        for m in (info.get("pv") or [])[:8]:
-            refutation.append(temp.san(m))
-            temp.push(m)
+            move = probe.parse_san(threat_move_san)
+        except ValueError:
+            attempts[key] = attempts.get(key, 0) + 1
+            n = attempts[key]
+            return {"verdict": "not_a_legal_opponent_move",
+                    "explanation": f"'{threat_move_san}' is not a legal reply for the opponent here.",
+                    "attempts_so_far": n, "reveal_allowed": n >= 2}
 
-        return {
-            "most_likely_human_moves": maia["top_moves"],
-            "win_probability_for_side_to_move": maia["win_probability_for_side_to_move"],
-            "evaluation_if_top_human_move_played": _score_to_str(info["score"]),
-            "engine_reply_line": " ".join(refutation),
-        }
+        student_threat = probe.san(move)
+        try:
+            threats = self.engines.threat_probe(board)
+        except Exception:
+            threats = []
+        main_moves = [t["threat_line"].split()[0] for t in threats if t.get("threat_line")]
+
+        if student_threat in main_moves:
+            attempts[key] = attempts.get(key, 0) + 1
+            matched = next(t for t in threats if t["threat_line"].split()[0] == student_threat)
+            return {"verdict": "correct_threat", "student_threat": student_threat,
+                    "threat_severity": matched.get("threat"),
+                    "threat_line": matched.get("threat_line"),
+                    "attempts_so_far": attempts[key], "reveal_allowed": True}
+
+        # Not the engine's main threat — is it a real threat at all?
+        is_real = False
+        try:
+            current, _ = self.engines.quick_eval(fen)
+            current_cp = current.pov(probe.turn).score(mate_score=MATE_CP)
+            after = probe.copy(stack=False)
+            after.push(move)
+            score, _ = self.engines.quick_eval(after.fen())
+            is_real = (score.pov(probe.turn).score(mate_score=MATE_CP) - current_cp) >= 120
+        except Exception:
+            pass
+
+        attempts[key] = attempts.get(key, 0) + 1
+        n = attempts[key]
+        result = {"student_threat": student_threat, "attempts_so_far": n,
+                  "verdict": "real_but_secondary_threat" if is_real else "not_a_real_threat",
+                  "reveal_allowed": n >= 2}
+        if not threats:
+            if not is_real:
+                result["verdict"] = "no_significant_threat_exists"
+            result["reveal_allowed"] = True
+            result["note"] = "The engine finds no significant threat if the side to move passes."
+        if result["reveal_allowed"] and threats:
+            result["actual_threats"] = threats
+        elif not result["reveal_allowed"]:
+            result["note"] = "Withheld. Tell the student this is not the main threat and let them look again."
+        return result
+
+    # NOTE: the old predict_human_move tool was retired: analyze_position already
+    # includes Maia's tendencies automatically, the review consults Maia on every
+    # move, and the digest pre-computes the anticipated wrong answer.
 
     # ------------------------------------------------------------------
     # SPARRING
@@ -765,7 +807,7 @@ class CoachTools:
 
     def _review_and_load(self, pgn_text: str, source_game_id: str = None, resume: bool = False) -> dict:
         console.print("[dim yellow]↳ Running full engine review on the downloaded game (may take a minute)...[/dim yellow]")
-        review = review_game(pgn_text, self.engines, self.config)
+        review = review_game(pgn_text, self.engines, self.config, on_progress=self.on_progress)
         if review is None:
             return {"error": "Could not parse a game with moves from the downloaded PGN."}
         self.timeline.load_game(review.game)
@@ -810,7 +852,7 @@ class CoachTools:
     def get_tool_list(self):
         """Returns the bound methods to be passed to the Gemini API."""
         return [
-            self.analyze_position, self.evaluate_student_answer, self.predict_human_move,
+            self.analyze_position, self.evaluate_student_answer, self.evaluate_threat_answer,
             self.play_sparring_reply, self.execute_coach_move, self.submit_diagnosis,
             self.get_game_review_summary, self.explain_pawn_structure_evolution,
             self.get_opening_repertoire,

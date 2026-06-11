@@ -15,13 +15,14 @@ class FakeEngines:
     """
 
     def __init__(self, evals=None, bests=None, multipv=None, maia=None,
-                 maia_win=None, maia_by_elo=None):
+                 maia_win=None, maia_by_elo=None, threats=None):
         self.evals = evals or {}
         self.bests = bests or {}
         self.multipv = multipv or {}
         self.maia_data = maia or {}
         self.maia_win = maia_win or {}        # fen -> win probability
         self.maia_by_elo = maia_by_elo or {}  # (fen, elo_self) -> probs
+        self.threats_data = threats or {}     # fen -> threat_probe result list
         self.stockfish = object()  # truthy: "engine available"
         self.maia = bool(self.maia_data) or bool(self.maia_by_elo)
         self.maia_error = None
@@ -45,7 +46,7 @@ class FakeEngines:
         return infos
 
     def threat_probe(self, board, multipv=2):
-        return []
+        return self.threats_data.get(board.fen(), [])
 
     def maia_predict(self, fen, elo_self=None, elo_oppo=None):
         probs = None

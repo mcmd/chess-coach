@@ -18,7 +18,8 @@ TOOL_MESSAGES = {
     "query_endgame_tablebase": "[dim cyan]↳ Querying Syzygy Endgame Tablebase...[/dim cyan]",
     "analyze_position": "[dim cyan]↳ Interfacing with local Stockfish...[/dim cyan]",
     "evaluate_student_answer": "[dim magenta]↳ Grading your answer against the engine...[/dim magenta]",
-    "predict_human_move": "[dim magenta]↳ Asking Maia what a human would do here...[/dim magenta]",
+    "evaluate_threat_answer": "[dim magenta]↳ Grading your threat-read against the engine...[/dim magenta]",
+    "explain_pawn_structure_evolution": "[dim cyan]↳ Building the pawn-structure story...[/dim cyan]",
     "get_opening_repertoire": "[dim yellow]↳ Checking Lichess Opening Databases...[/dim yellow]",
     "play_sparring_reply": "[dim green]↳ The coach is choosing a human-realistic reply...[/dim green]",
     "execute_coach_move": "[dim green]↳ The Logic Tutor is evaluating the move...[/dim green]",
@@ -40,10 +41,18 @@ def _extract_function_calls(response):
     return calls
 
 
+def _send_with_spinner(chat, payload):
+    """The spinner only covers MODEL calls. Tools run outside any live display
+    so long-running ones (game reviews) can show their own progress bars —
+    Rich allows a single live display at a time."""
+    with console.status("[bold yellow]Coach is thinking...[/bold yellow]", spinner="dots"):
+        return chat.send_message(payload)
+
+
 def run_agent_turn(chat, coach_tools, message) -> None:
     """Send `message`, execute any tool calls until the model stops asking,
     then render the final response."""
-    response = chat.send_message(message)
+    response = _send_with_spinner(chat, message)
     full_text = ""
 
     while True:
@@ -78,7 +87,7 @@ def run_agent_turn(chat, coach_tools, message) -> None:
 
             tool_parts.append(types.Part.from_function_response(name=fn_call.name, response={"result": result}))
 
-        response = chat.send_message(tool_parts)
+        response = _send_with_spinner(chat, tool_parts)
 
     _render(full_text, coach_tools.state)
 
@@ -104,6 +113,29 @@ def strip_think_blocks(text: str) -> str:
 # optionally wrapped in backticks.
 _UNRESOLVED_TOKEN_RE = re.compile(r"`?\[\[BOARD_[A-Za-z0-9]+\]\]`?")
 
+# Chess-move styling normalization: the prompt asks for moves in backticks
+# (rendered as blue inline code), but the model drifts — `16... e5` in one
+# sentence, **17. d5?!** in the next. Normalize deterministically at render time.
+_MOVE_CORE = r"(?:O-O-O|O-O|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?)[!?]{0,2}"
+_NUMBERED_MOVE = rf"\d{{1,3}}\.(?:\.\.)?\s?{_MOVE_CORE}"
+_BOLD_MOVE_RE = re.compile(rf"\*\*((?:{_NUMBERED_MOVE})|{_MOVE_CORE})\*\*")
+_ITALIC_MOVE_RE = re.compile(rf"(?<!\*)\*((?:{_NUMBERED_MOVE})|{_MOVE_CORE})\*(?!\*)")
+_BARE_NUMBERED_MOVE_RE = re.compile(rf"(?<![`\w*])({_NUMBERED_MOVE})(?![`\w])")
+_CODE_SEGMENT_RE = re.compile(r"(```[\s\S]*?```|`[^`\n]*`)")
+
+
+def normalize_move_styling(text: str) -> str:
+    """Render every chess move the same way (inline code) regardless of how the
+    model styled it: **17. d5?!**, *Nf3*, and bare '17. d5?!' all become
+    `17. d5?!`-style code spans. Existing code spans and fences are untouched."""
+    parts = _CODE_SEGMENT_RE.split(text)
+    for i in range(0, len(parts), 2):  # even indexes are outside code spans/fences
+        segment = _BOLD_MOVE_RE.sub(r"`\1`", parts[i])
+        segment = _ITALIC_MOVE_RE.sub(r"`\1`", segment)
+        segment = _BARE_NUMBERED_MOVE_RE.sub(r"`\1`", segment)
+        parts[i] = segment
+    return "".join(parts)
+
 
 def substitute_board_tokens(text: str, visuals: dict) -> tuple[str, int]:
     """Replace known board tokens with their diagrams; scrub any leftover
@@ -121,6 +153,7 @@ def _render(full_text: str, state) -> None:
     output_text = strip_think_blocks(full_text.strip())
     output_text = re.sub(r"^(?:(?:Output|Done|End|Yes|I will output now)\.\s*)+", "", output_text, flags=re.IGNORECASE).strip()
 
+    output_text = normalize_move_styling(output_text)
     output_text, scrubbed = substitute_board_tokens(output_text, state.board_visuals)
     if scrubbed:
         console.print(f"[dim red]({scrubbed} invented board token(s) scrubbed from the response)[/dim red]")

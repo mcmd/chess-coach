@@ -393,3 +393,58 @@ def test_drop_rounding_consistent_between_classify_and_agenda():
     assert record.drop_pct == 10.0
     assert record.quality == "inaccuracy"
     assert record.ply in review.agenda_plies
+
+
+# --- PRACTICAL vs CONCRETE mistakes (the "why is ...c5 dangerous?" session) ---
+
+def test_practical_mistake_flagged_with_narrow_saving_resource():
+    """Mirrors the live d5 case: shallow scan says the move lost win%, but deep
+    analysis shows it holds — via one narrow, rarely-found resource."""
+    import chess as _chess
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700   # shallow scan: Qxf7+ looks losing -> agenda
+    evals[fens[6]] = -700
+
+    # Deep punishment analysis at the position AFTER the played move: actually fine
+    # for White (-20 from Black's POV), with forced reply Kxf7.
+    reply_board = _chess.Board(fens[6])
+    saving_uci = next(iter(reply_board.legal_moves)).uci()
+    engines = FakeEngines(
+        evals=evals,
+        multipv={
+            fens[5]: [("e8f7", -20)],                      # deep: White is NOT lost
+            fens[6]: [(saving_uci, 300), ("d2d4", 0)],     # one saving move, gap 300
+        },
+        maia={fens[4]: {"h5f7": 0.45},
+              fens[6]: {saving_uci: 0.07}},                # peers rarely find it
+    )
+    review = review_game(PGN, engines, _Cfg())
+    record = review.records[4]
+    assert record.practical_note is not None
+    assert "PRACTICAL, not forced" in record.practical_note
+    assert "NARROW" in record.practical_note
+    assert record.saving_resource is not None
+    assert "only good move" in record.saving_resource
+    assert "7%" in record.saving_resource
+    digest = review.digest()
+    assert "Nature of the mistake: PRACTICAL" in digest
+    assert "saving resource" in digest
+
+
+def test_concrete_mistake_flagged_when_deep_analysis_confirms_loss():
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(
+        evals=evals,
+        multipv={fens[5]: [("e8f7", 700)]},  # deep analysis agrees: White is lost
+        maia={fens[4]: {"h5f7": 0.45}},
+    )
+    review = review_game(PGN, engines, _Cfg())
+    record = review.records[4]
+    assert record.practical_note is not None
+    assert "CONCRETE" in record.practical_note
+    assert record.saving_resource is None
+    assert "Nature of the mistake: CONCRETE" in review.digest()

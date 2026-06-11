@@ -99,6 +99,10 @@ class MoveRecord:
     aspirational: dict = None               # what stronger players choose here ({elo, move, probability})
     book_share: float = None                # share of master games playing this move (it IS theory)
     tablebase_note: str = None              # provable endgame truth about this move
+    is_opening_deviation: bool = False      # the move where the student left established theory
+    opening_theory_brief: str = None        # withheld theory answer (master + peer moves with scores)
+    practical_note: str = None              # PRACTICAL (sharp but holdable) vs CONCRETE (refuted by force)
+    saving_resource: str = None             # withheld: the narrow defense after the mistake, with findability
     board_token: str = None  # pre-minted diagram token for the position before the move
     best_line_motifs: list = field(default_factory=list)  # tactics the student MISSED
     suggested_categories: list = field(default_factory=list)
@@ -126,7 +130,8 @@ class GameReview:
     black_elo: int = None
     opening_name: str = None
     opening_eco: str = None
-    opening_deviation: dict = None  # where the game left established theory
+    opening_deviation: dict = None   # where the game left established theory
+    tablebase_entry: dict = None     # where the game entered provable endgame territory
 
     def record_at(self, ply: int):
         return self.records[ply] if 0 <= ply < len(self.records) else None
@@ -173,6 +178,11 @@ class GameReview:
                          "the scanned opening moves stayed within established theory.")
         elif h.get("Opening"):
             lines.append(f"Opening: {h.get('Opening')} ({h.get('ECO', '')})")
+        if self.tablebase_entry:
+            e = self.tablebase_entry
+            lines.append(f"Tablebase entry: from {e['move_label']} the position was a PROVEN "
+                         f"{e['category'].upper()} for {e['side_to_move']} with perfect play — "
+                         "from that point the game is pure technique, and mistakes after it are provable.")
         if self.student_color:
             lines.append(f"The STUDENT played {self.student_color.upper()}. Coach that side.")
         else:
@@ -241,8 +251,14 @@ class GameReview:
                 lines.append(f"  Theory note: {r.san} is established master theory (~{r.book_share:.0%} of "
                              "master games) — do NOT scold it; if the engine dislikes it slightly, explain "
                              "the idea behind the theory instead.")
+            if r.is_opening_deviation:
+                lines.append("  OPENING DEVIATION moment: this is where the student left established "
+                             "theory. Teach the theory move and its idea, and recommend this line as a "
+                             "study item — the student will reach this position again.")
             if r.tablebase_note:
                 lines.append(f"  {r.tablebase_note}")
+            if r.practical_note:
+                lines.append(f"  Nature of the mistake: {r.practical_note}")
             if r.error_typicality == "typical_for_level":
                 lines.append("  Typicality: this mistake is COMMON at this level — normalize it first, "
                              "then teach the underlying pattern thoroughly (it is a real knowledge gap).")
@@ -284,6 +300,10 @@ class GameReview:
                 secret.append(f"the punishment of {r.san} is: {' '.join(r.punishment_line)}")
             if r.motifs:
                 secret.append("motifs in the punishment: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in r.motifs))
+            if r.opening_theory_brief:
+                secret.append(r.opening_theory_brief)
+            if r.saving_resource:
+                secret.append(r.saving_resource)
             if r.likely_wrong_answer:
                 secret.append(f"most likely student guess: {r.likely_wrong_answer}")
             if r.aspirational:
@@ -461,14 +481,21 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     review = GameReview(headers=headers, records=records, student_color=student_color,
                         agenda_plies=[], game=game, extra_games_ignored=extra,
                         white_elo=white_elo, black_elo=black_elo)
-    review.agenda_plies = _select_agenda(records, student_color, agenda_size)
     online = bool(getattr(config, "use_online_databases", True))
+    forced_plies = []
     if online:
         try:
             _analyze_opening(review, config)
         except Exception:
             pass  # network enrichment must never break a review
+        try:
+            forced_plies += _tablebase_category_scan(review)
+        except Exception:
+            pass
+    forced_plies += _opening_deviation_ply(review)
+    review.agenda_plies = _select_agenda(records, student_color, agenda_size, forced_plies)
     _enrich_agenda(review, engines, online)
+    _apply_opening_moment(review)
     return review
 
 
@@ -538,15 +565,86 @@ def _uci_to_san(fen: str, uci: str):
         return None
 
 
-def _select_agenda(records, student_color, agenda_size):
+def _select_agenda(records, student_color, agenda_size, forced_plies=()):
+    """Top win%-drop moments, plus moments FORCED by provable evidence the eval
+    swing can miss (tablebase category flips, costly opening deviations)."""
     def candidates(color_filter):
         return [r for r in records
                 if r.drop_pct >= 10 and (color_filter is None or r.color == color_filter)]
 
     pool = candidates(student_color) or candidates(None)
     pool.sort(key=lambda r: r.drop_pct, reverse=True)
-    chosen = sorted(r.ply for r in pool[:agenda_size])
-    return chosen
+    chosen = {r.ply for r in pool[:agenda_size]}
+    chosen |= {p for p in forced_plies if 0 <= p < len(records)}
+    return sorted(chosen)
+
+
+def _tablebase_category_scan(review: GameReview) -> list:
+    """In tablebase range, game-theoretic truth can flip (WIN -> DRAW) while the
+    engine's eval swing stays small and never reaches the agenda. Probe every
+    <=7-piece ply (cached): force the student's category-change moments onto the
+    agenda and mark where the game entered tablebase territory."""
+    from app import external
+
+    forced = []
+    for r in review.records:
+        board_before = chess.Board(r.fen_before)
+        if len(board_before.piece_map()) > 7:
+            continue
+        tb_before = external.tablebase_probe(r.fen_before)
+        if not tb_before:
+            continue
+        before_cat = external.normalize_category(tb_before.get("category"))  # mover POV
+        if review.tablebase_entry is None and before_cat:
+            review.tablebase_entry = {"move_label": r.move_label,
+                                      "side_to_move": r.color, "category": before_cat}
+        after_cat = None
+        board_after = chess.Board(r.fen_after)
+        if len(board_after.piece_map()) <= 7:
+            tb_after = external.tablebase_probe(r.fen_after)
+            if tb_after:
+                after_cat = external.invert_category(
+                    external.normalize_category(tb_after.get("category")))  # back to mover POV
+        if (before_cat and after_cat and before_cat != after_cat
+                and (review.student_color is None or r.color == review.student_color)):
+            tracing.trace(f"review: tablebase category flip at {r.move_label} "
+                          f"({before_cat} -> {after_cat}) — forced onto agenda")
+            forced.append(r.ply)
+    return forced[:3]
+
+
+def _opening_deviation_ply(review: GameReview) -> list:
+    """A costly opening deviation by the student becomes a structured agenda
+    moment (it is the most repeatable lesson in the game)."""
+    d = review.opening_deviation
+    if not d:
+        return []
+    if review.student_color and d["color"] != review.student_color:
+        return []
+    record = review.records[d["ply"]]
+    if record.drop_pct < 5:
+        return []  # harmless novelty: report it in the header, don't teach it
+    return [d["ply"]]
+
+
+def _apply_opening_moment(review: GameReview) -> None:
+    """Re-frame the deviation record as an opening-theory lesson (runs after
+    enrichment so it can override the generic primitives)."""
+    d = review.opening_deviation
+    if not d or d["ply"] not in review.agenda_plies:
+        return
+    r = review.records[d["ply"]]
+    r.is_opening_deviation = True
+    r.lesson_objective = "opening_theory_knowledge"
+    r.recommended_diagnosis = "opening_theory"
+    if "opening_theory" not in r.suggested_categories:
+        r.suggested_categories = ["opening_theory"] + r.suggested_categories
+    r.question_ladder[1] = ("This position is still established theory. What do strong players "
+                            "play here, and what does the game move give up?")
+    brief = f"theory here: {d['theory']}"
+    if d.get("amateur"):
+        brief += f"; at the student's rating: {d['amateur']}"
+    r.opening_theory_brief = brief
 
 
 OPENING_SCAN_PLIES = 24
@@ -580,9 +678,15 @@ def _analyze_opening(review: GameReview, config) -> None:
             r.book_share = round(share, 3)
             continue
 
-        theory = ", ".join(
-            f"{m['san']} ({(m['white'] + m['draws'] + m['black']) / position_total:.0%})"
-            for m in moves[:3])
+        mover_white = r.color == "white"
+
+        def scored(m, total):
+            games = m["white"] + m["draws"] + m["black"]
+            wins = m["white"] if mover_white else m["black"]
+            score = (wins + m["draws"] / 2) / games if games else 0
+            return f"{m['san']} ({games / total:.0%} of games, scores {score:.0%})"
+
+        theory = ", ".join(scored(m, position_total) for m in moves[:3])
         deviation = {"ply": r.ply, "label": r.move_label, "color": r.color,
                      "played_share": share, "played_games": played_games, "theory": theory}
         brackets = [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500]
@@ -591,9 +695,7 @@ def _analyze_opening(review: GameReview, config) -> None:
         amateur = external.lichess_moves(r.fen_before, ",".join(valid) if valid else "1000,1200")
         if amateur and amateur.get("moves"):
             am_total = sum(m["white"] + m["draws"] + m["black"] for m in amateur["moves"]) or 1
-            deviation["amateur"] = ", ".join(
-                f"{m['san']} ({(m['white'] + m['draws'] + m['black']) / am_total:.0%})"
-                for m in amateur["moves"][:3])
+            deviation["amateur"] = ", ".join(scored(m, am_total) for m in amateur["moves"][:3])
         tracing.trace(f"review: opening deviation found at {r.move_label}")
         break
 
@@ -655,19 +757,88 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
         except Exception:
             pass
 
+        deep_after_white_cp = None
         try:
             infos = engines.top_lines(board_after, multipv=1, depth=16, time_cap=2.0)
             pv = infos[0].get("pv") or []
             r.punishment_line = _pv_to_san(board_after, pv[:8])
             r.motifs = detect_motifs_in_line(board_after, r.punishment_line)
+            deep_after_white_cp = infos[0]["score"].white().score(mate_score=MATE_CP)
         except Exception:
             pass
         r.suggested_categories = suggest_error_categories(r)
         r.position_facts = position_facts(board_before)
         _attach_lesson_primitives(r, board_before, board_after)
+        _assess_practicality(r, engines, review, deep_after_white_cp)
         # Per-move Maia data was already collected during the main scan.
         _anticipate_wrong_answer(r, engines, board_before)
         _aspirational_instinct(r, engines, review)
+
+
+def _assess_practicality(r: MoveRecord, engines, review: GameReview, deep_after_white_cp) -> None:
+    """Was the mistake REFUTED BY FORCE, or did it 'merely' enter sharpness
+    where the saving moves are precise and human-unlikely? The coach must lead
+    with this honestly and proactively — '17. d5 does not lose by force, but
+    only one narrow path holds and few humans find it' — instead of implying a
+    forced loss and walking it back when the student pushes.
+
+    Observed live: the student challenged 'why is ...c5 dangerous?' and only
+    then learned the played move was actually the engine's top choice to hold.
+    """
+    if deep_after_white_cp is None:
+        return
+    mover_white = r.color == "white"
+    before_m = r.eval_before_cp if mover_white else -r.eval_before_cp
+    deep_after_m = deep_after_white_cp if mover_white else -deep_after_white_cp
+    deep_drop = cp_to_win_pct(before_m) - cp_to_win_pct(deep_after_m)
+
+    if deep_drop >= 15:
+        r.practical_note = (f"CONCRETE — even with best play after {r.san}, the damage stands "
+                            "(verified at depth). The punishment line is real; teach it as such.")
+        return
+    if deep_drop > 5:
+        return  # partly recoverable: no strong claim either way
+
+    # Deep analysis says the move did NOT lose by force. How narrow is the path?
+    saving = None
+    try:
+        if r.punishment_line:
+            reply_board = chess.Board(r.fen_after)
+            reply_board.push_san(r.punishment_line[0])
+            if not reply_board.is_game_over():
+                infos = engines.top_lines(reply_board, multipv=2, depth=12, time_cap=1.5)
+                pov = reply_board.turn
+                pv = infos[0].get("pv") or []
+                if pv:
+                    gap = None
+                    if len(infos) > 1:
+                        gap = (infos[0]["score"].pov(pov).score(mate_score=MATE_CP)
+                               - infos[1]["score"].pov(pov).score(mate_score=MATE_CP))
+                    prob = None
+                    mover_elo = (review.white_elo if mover_white else review.black_elo)
+                    maia = engines.maia_predict(reply_board.fen(), elo_self=mover_elo, elo_oppo=mover_elo)
+                    if maia:
+                        prob = maia["raw_probs"].get(pv[0].uci())
+                    saving = {"san": reply_board.san(pv[0]), "gap": gap, "prob": prob}
+    except Exception:
+        pass
+
+    narrow = bool(saving and (((saving["gap"] or 0) >= 150)
+                              or (saving["prob"] is not None and saving["prob"] <= 0.15)))
+    r.practical_note = (
+        f"PRACTICAL, not forced — deep analysis shows {r.san} does NOT lose by force; the position "
+        "stays defensible with precise play. "
+        + ("The defense is NARROW: essentially one good path, which players at this level rarely find. "
+           if narrow else "The defense is demanding. ")
+        + "Say this up front, BEFORE questioning: the real value of the better move is avoiding the "
+          "need for that precision — never imply the game move was refuted outright.")
+    if saving:
+        detail = f"the saving resource after {r.san} {r.punishment_line[0]} is {saving['san']}"
+        if saving.get("gap") is not None and saving["gap"] >= 150:
+            detail += " (essentially the only good move)"
+        if saving.get("prob") is not None:
+            detail += f"; only ~{saving['prob']:.0%} of players at this level find it"
+        r.saving_resource = detail
 
 
 def _attach_lesson_primitives(r: MoveRecord, board_before: chess.Board, board_after: chess.Board) -> None:

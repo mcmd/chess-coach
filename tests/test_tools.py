@@ -290,3 +290,58 @@ def test_drill_grading_does_not_touch_lesson_state(stub_config):
     tools.evaluate_student_answer(START, "e4")
     assert state.lesson_metadata["lesson_status"] == "awaiting_diagnosis"
     assert state.lesson_metadata["last_agenda_index"] == 2
+
+
+# --- THREAT-ANSWER GRADING ---
+
+THREAT_FEN = "rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR w KQkq - 0 3"
+
+
+def _threat_engines():
+    return FakeEngines(threats={THREAT_FEN: [
+        {"threat": "mate in 1 if you do nothing", "threat_line": "Qh4#"},
+    ]})
+
+
+def test_correct_threat_identified(stub_config):
+    tools, _ = make_tools(stub_config, _threat_engines())
+    result = tools.evaluate_threat_answer(THREAT_FEN, "Qh4")
+    assert result["verdict"] == "correct_threat"
+    assert result["threat_line"] == "Qh4#"
+    assert result["reveal_allowed"] is True
+
+
+def test_wrong_threat_withheld_then_revealed(stub_config):
+    tools, _ = make_tools(stub_config, _threat_engines())
+    first = tools.evaluate_threat_answer(THREAT_FEN, "a5")
+    assert first["verdict"] == "not_a_real_threat"
+    assert first["reveal_allowed"] is False
+    assert "actual_threats" not in first
+    second = tools.evaluate_threat_answer(THREAT_FEN, "Nc6")
+    assert second["attempts_so_far"] == 2
+    assert second["reveal_allowed"] is True
+    assert second["actual_threats"][0]["threat_line"] == "Qh4#"
+
+
+def test_illegal_threat_counts_attempt(stub_config):
+    tools, _ = make_tools(stub_config, _threat_engines())
+    result = tools.evaluate_threat_answer(THREAT_FEN, "Qh5")  # illegal for Black here
+    assert result["verdict"] == "not_a_legal_opponent_move"
+    assert result["attempts_so_far"] == 1
+
+
+def test_no_threat_position_says_so(stub_config):
+    tools, _ = make_tools(stub_config, FakeEngines())
+    result = tools.evaluate_threat_answer(START, "e5")
+    assert result["verdict"] == "no_significant_threat_exists"
+    assert result["reveal_allowed"] is True
+
+
+# --- predict_human_move retired ---
+
+def test_predict_human_move_is_retired(stub_config):
+    tools, _ = make_tools(stub_config)
+    assert not hasattr(tools, "predict_human_move")
+    names = [t.__name__ for t in tools.get_tool_list()]
+    assert "predict_human_move" not in names
+    assert "evaluate_threat_answer" in names

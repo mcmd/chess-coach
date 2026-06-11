@@ -201,3 +201,92 @@ def test_category_normalization_and_inversion():
     assert external.normalize_category(None) is None
     assert external.invert_category("win") == "loss"
     assert external.invert_category("draw") == "draw"
+
+
+# --- TABLEBASE CATEGORY-FLIP AGENDA FORCING + ENTRY MARKER ---
+
+def test_category_flip_forced_onto_agenda_despite_small_eval_drop(monkeypatch):
+    fens = _fens_of(ENDGAME_PGN)
+    # Evals all equal: NO move qualifies for the agenda by win% swing.
+    engines = FakeEngines(evals={fen: 0 for fen in fens})
+    tb = {
+        fens[0]: {"category": "draw", "moves": [
+            {"san": "e3", "uci": "e2e3", "category": "draw"},
+            {"san": "Kd1", "uci": "e1d1", "category": "draw"},
+            {"san": "e4", "uci": "e2e4", "category": "win"},
+        ]},
+        fens[1]: {"category": "win"},   # after 1. e4: proven win for Black = loss for the student
+        fens[2]: {"category": "loss"},  # after Kxe4 (White to move, lost)
+    }
+    monkeypatch.setattr(external, "tablebase_probe", lambda fen: tb.get(fen))
+
+    review = review_game(ENDGAME_PGN, engines, _Cfg())
+    assert review.records[0].drop_pct < 10          # the eval lens saw nothing
+    assert 0 in review.agenda_plies                 # the tablebase lens forced it
+    assert "TABLEBASE TRUTH" in review.records[0].tablebase_note
+    assert review.tablebase_entry is not None
+    assert review.tablebase_entry["category"] == "draw"
+    assert "Tablebase entry" in review.digest()
+    assert "pure technique" in review.digest()
+
+
+def test_opponent_category_flip_not_forced(monkeypatch):
+    fens = _fens_of(ENDGAME_PGN)
+    engines = FakeEngines(evals={fen: 0 for fen in fens})
+    tb = {
+        fens[0]: {"category": "draw", "moves": []},
+        fens[1]: {"category": "draw"},   # 1. e4 keeps the draw (no student flip)
+        fens[2]: {"category": "win"},    # Black's Kxe4 flips it — but Black isn't the student
+    }
+    monkeypatch.setattr(external, "tablebase_probe", lambda fen: tb.get(fen))
+    review = review_game(ENDGAME_PGN, engines, _Cfg())
+    assert review.agenda_plies == []                # student (White) flipped nothing
+
+
+# --- OPENING DEVIATION AS A STRUCTURED AGENDA MOMENT ---
+
+def _deviation_masters(fens):
+    return {
+        fens[0]: {"opening": None,
+                  "moves": [_mk("e4", 600, 300, 100), _mk("d4", 500, 200, 100)]},
+        fens[1]: {"opening": {"name": "King's Pawn Game", "eco": "B00"},
+                  "moves": [_mk("e5", 400, 150, 50), _mk("c5", 500, 200, 100)]},
+        fens[2]: {"opening": {"name": "King's Pawn Game", "eco": "B00"},
+                  "moves": [_mk("Nf3", 500, 200, 100), _mk("Bc4", 150, 30, 20)]},  # no Qh5
+    }
+
+
+def test_costly_deviation_becomes_structured_agenda_moment(monkeypatch):
+    fens = _fens_of(PGN)
+    monkeypatch.setattr(external, "masters_moves", lambda fen: _deviation_masters(fens).get(fen))
+    monkeypatch.setattr(external, "lichess_moves",
+                        lambda fen, ratings, speeds="blitz,rapid":
+                        {"moves": [_mk("Qh5", 30, 5, 25), _mk("Nf3", 50, 20, 20)]})
+    # 2. Qh5 costs ~6 win% — too small for the swing agenda, enough to teach theory.
+    evals = {fen: 0 for fen in fens}
+    evals[fens[3]] = -70
+    review = review_game(PGN, FakeEngines(evals=evals), _Cfg())
+
+    record = review.records[2]
+    assert 5 <= record.drop_pct < 10
+    assert 2 in review.agenda_plies                       # forced despite small drop
+    assert record.is_opening_deviation
+    assert record.recommended_diagnosis == "opening_theory"
+    assert record.lesson_objective == "opening_theory_knowledge"
+    assert "theory" in record.question_ladder[1].lower()
+    assert "scores" in record.opening_theory_brief         # W/D/L data, not just popularity
+    digest = review.digest()
+    assert "OPENING DEVIATION moment" in digest
+    assert "study item" in digest
+    assert "theory here: Nf3" in digest                    # withheld theory answer
+
+
+def test_harmless_deviation_stays_out_of_agenda(monkeypatch):
+    fens = _fens_of(PGN)
+    monkeypatch.setattr(external, "masters_moves", lambda fen: _deviation_masters(fens).get(fen))
+    monkeypatch.setattr(external, "lichess_moves",
+                        lambda fen, ratings, speeds="blitz,rapid": None)
+    review = review_game(PGN, _scripted_engines(), _Cfg())  # Qh5 drop = 0 here
+    assert review.opening_deviation is not None
+    assert 2 not in review.agenda_plies
+    assert not review.records[2].is_opening_deviation
