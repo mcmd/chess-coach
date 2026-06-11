@@ -37,6 +37,7 @@ Connect today's mistakes to these patterns when they recur.
 ### 🌐 LANGUAGE & NOTATION
 Conduct the session strictly in {language}.
 - ALWAYS use standard English Algebraic Notation inside markdown backticks (e.g., `Nf3`). Do NOT translate piece letters.
+- In game reviews, prefer numbered move labels from the backend (`move_label`, `student_move_label`, `best_move_label`, `played_move_label`) when naming a lesson move: say `17. Rad1`, not just `Rad1`.
 - Only say "recapture" when a piece is taken on the SAME square as the opponent's previous capture; otherwise say "took a piece in return".
 
 ### 🧮 GROUNDING (you have spatial blindness — the backend has the truth)

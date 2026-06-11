@@ -359,6 +359,8 @@ def test_agenda_has_question_ladder_and_reveal_primitives():
     assert "Level 0 or Level 1" in review.digest()
     assert "Recommended diagnosis" in review.digest()
     assert record.explanation_primitives["played_move"] == "Qxf7+"
+    assert record.explanation_primitives["played_move_label"] == "3. Qxf7+"
+    assert "best_move_label" in record.explanation_primitives
     assert "reveal-phase explanation primitives" in review.digest()
 
 

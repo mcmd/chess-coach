@@ -68,6 +68,11 @@ def _valid_diagnosis_override(reason: str, recommended: str, chosen: str) -> boo
     return True
 
 
+def _move_label(board: chess.Board, san: str) -> str:
+    dots = "." if board.turn == chess.WHITE else "..."
+    return f"{board.fullmove_number}{dots} {san}"
+
+
 class CoachTools:
     def __init__(self, state, timeline, engines, config, on_progress=None):
         self.state = state
@@ -259,9 +264,11 @@ class CoachTools:
         n = attempts[fen]
         reveal = correct or n >= 2
 
+        student_san = board.san(move)
         result = {
             "verdict": verdict,
-            "student_move": board.san(move),
+            "student_move": student_san,
+            "student_move_label": _move_label(board, student_san),
             "student_move_evaluation": f"{(student_cp if pov == chess.WHITE else -student_cp) / 100.0:+.2f}",
             "win_pct_lost_vs_best": round(drop, 1),
             "rank_among_engine_top5": student_rank,
@@ -281,10 +288,15 @@ class CoachTools:
             for m in best_pv[:8]:
                 pv_san.append(temp.san(m))
                 temp.push(m)
-            result["best_move"] = board.san(best_move)
+            best_san = board.san(best_move)
+            result["best_move"] = best_san
+            result["best_move_label"] = _move_label(board, best_san)
             result["best_line"] = " ".join(pv_san)
             record = self._agenda_record_for_fen(fen)
             if record and getattr(record, "explanation_primitives", None):
+                result["moment_move_label"] = record.move_label
+                if record.best_move_label:
+                    result["best_move_label"] = record.best_move_label
                 result["explanation_primitives"] = record.explanation_primitives
                 result["recommended_diagnosis"] = getattr(record, "recommended_diagnosis", None)
                 result["lesson_objective"] = getattr(record, "lesson_objective", None)

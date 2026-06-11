@@ -117,6 +117,13 @@ class MoveRecord:
         dots = "." if self.color == "white" else "..."
         return f"{self.number}{dots} {self.san}"
 
+    @property
+    def best_move_label(self) -> str:
+        if not self.best_move_san:
+            return None
+        dots = "." if self.color == "white" else "..."
+        return f"{self.number}{dots} {self.best_move_san}"
+
 
 @dataclass
 class GameReview:
@@ -923,7 +930,9 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
     data = {
         "lesson_objective": r.lesson_objective,
         "played_move": r.san,
+        "played_move_label": r.move_label,
         "best_move": r.best_move_san,
+        "best_move_label": r.best_move_label,
     }
     if r.is_capture:
         try:

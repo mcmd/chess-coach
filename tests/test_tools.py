@@ -48,6 +48,27 @@ def test_correct_answer_reveals_immediately(stub_config):
     assert result["verdict"] == "best"
     assert result["reveal_allowed"] is True
     assert result["best_move"] == "e4"
+    assert result["student_move_label"] == "1. e4"
+    assert result["best_move_label"] == "1. e4"
+
+
+def test_agenda_answer_returns_numbered_best_move_label(stub_config):
+    fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
+    engines = FakeEngines(multipv={fen: [("c3e4", 300), ("e2e4", 0)]})
+    tools, state = make_tools(stub_config, engines)
+    from app.review import GameReview, MoveRecord
+    state.review = GameReview(headers={}, records=[
+        MoveRecord(
+            ply=38, number=20, color="white", san="Nxb5", uci="c3b5",
+            fen_before=fen, fen_after=fen, eval_before_cp=300, eval_after_cp=0,
+            drop_pct=17.0, quality="inaccuracy", best_move_san="Ne4",
+            explanation_primitives={"best_move": "Ne4", "best_move_label": "20. Ne4"},
+        )
+    ], student_color="white", agenda_plies=[0])
+    result = tools.evaluate_student_answer(fen, "Ne4")
+    assert result["best_move"] == "Ne4"
+    assert result["best_move_label"] == "20. Ne4"
+    assert result["moment_move_label"] == "20. Nxb5"
 
 
 def test_near_miss_gets_graded_feedback(stub_config):
