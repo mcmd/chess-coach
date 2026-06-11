@@ -218,3 +218,68 @@ def test_completed_lesson_loads_fresh(stub_config):
     assert "STARTING position" in result.prompt
     import chess as _chess
     assert state2.board.fen() == _chess.STARTING_FEN
+
+
+# --- PENDING-DIAGNOSIS NUDGE (the "ok, let's go" stall observed live) ---
+
+def test_pending_diagnosis_nudge_injected_until_logged(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    record = state.review.agenda[0]
+    # The reveal happened; the model owes a diagnosis for this moment.
+    state.lesson_metadata = {"last_game_id": state.current_game_id,
+                             "last_agenda_index": 0,
+                             "lesson_status": "awaiting_diagnosis"}
+    result = proc.process("because it defends the pawn and activates the rook")
+    assert "has NOT been logged yet" in result.prompt
+    assert record.move_label in result.prompt
+
+    # Once logged, the nudge disappears.
+    state.diagnostics.append({"fen": record.fen_before, "error_category": "bad_trade"})
+    result = proc.process("ok, let's go")
+    assert "has NOT been logged yet" not in result.prompt
+
+
+def test_no_diagnosis_nudge_outside_awaiting_state(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    state.lesson_metadata = {"last_game_id": state.current_game_id,
+                             "last_agenda_index": 0,
+                             "lesson_status": "awaiting_answer"}
+    result = proc.process("what should I consider here?")
+    assert "has NOT been logged yet" not in result.prompt
+
+
+# --- GIVE-UP HANDLING (model was inventing guesses to farm the reveal) ---
+
+def test_give_up_spends_attempt_and_hints_first(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    record = state.review.agenda[0]
+    state.lesson_metadata = {"last_game_id": state.current_game_id,
+                             "last_agenda_index": 0, "lesson_status": "awaiting_answer"}
+    result = proc.process("I don't know")
+    assert "GAVE UP" in result.prompt
+    assert "1 of 2 before reveal" in result.prompt
+    assert "NEVER invent a guess" in result.prompt
+    assert state.socratic_attempts[record.fen_before] == 1
+
+
+def test_second_give_up_allows_reveal(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    state.lesson_metadata = {"last_game_id": state.current_game_id,
+                             "last_agenda_index": 0, "lesson_status": "awaiting_answer"}
+    proc.process("no idea")
+    result = proc.process("i give up")
+    assert "Reveal is allowed" in result.prompt
+
+
+def test_give_up_outside_lesson_is_plain_chat(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    result = proc.process("I don't know much about the London system")
+    assert "GAVE UP" not in result.prompt

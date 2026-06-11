@@ -345,3 +345,12 @@ def test_predict_human_move_is_retired(stub_config):
     names = [t.__name__ for t in tools.get_tool_list()]
     assert "predict_human_move" not in names
     assert "evaluate_threat_answer" in names
+
+
+def test_wrong_threat_includes_verified_comparison(stub_config):
+    tools, _ = make_tools(stub_config, _threat_engines())
+    result = tools.evaluate_threat_answer(THREAT_FEN, "a5")
+    comparison = result["comparison"]
+    assert comparison["engine_main_threat"] == "mate in 1 if you do nothing"
+    assert comparison["your_named_threat_gain_for_opponent"] == "+0.00"
+    assert "NEVER invent a geometric reason" in comparison["note"]

@@ -101,7 +101,8 @@ class CommandProcessor:
         if looks_like_pgn(text):
             return self._load_pasted_pgn(text)
 
-        return CommandResult(prompt=self._enrich(text) + self._candidate_list_note(text))
+        return CommandResult(prompt=self._enrich(text) + self._candidate_list_note(text)
+                             + self._give_up_note(text) + self._pending_diagnosis_note())
 
     # ------------------------------------------------------------------
     # GAME LOADING & REVIEW
@@ -385,6 +386,61 @@ class CommandProcessor:
                 "(e.g. 'X is better'); if they did not commit to one, do NOT grade — ask which ONE "
                 "they choose. NEVER pick the best candidate for them. If you did not ask a "
                 "find-the-move question, ignore this note.]")
+
+    _GIVE_UP_RE = re.compile(
+        r"\b(?:i\s*(?:don'?t|do\s*not)\s*know|no\s+idea|i\s*give\s*up|idk|not\s+a\s+clue)\b",
+        re.IGNORECASE)
+
+    def _give_up_note(self, text: str) -> str:
+        """'I don't know' had no legitimate path through the attempt counters, so
+        the model was observed INVENTING a guess on the student's behalf to call
+        the grading tools. Surrender is now a first-class input: the backend
+        spends the attempt and tells the model the honest next step."""
+        if not self._GIVE_UP_RE.search(text):
+            return ""
+        meta = self.state.lesson_metadata or {}
+        if not self.state.review or meta.get("lesson_status") in ("lesson_complete", "awaiting_diagnosis"):
+            return ""
+        agenda = self.state.review.agenda
+        idx = int(meta.get("last_agenda_index") or 0)
+        if not 0 <= idx < len(agenda):
+            return ""
+        record = agenda[idx]
+        if any(d.get("fen") == record.fen_before for d in self.state.diagnostics):
+            return ""
+        attempts = self.state.socratic_attempts
+        for key in (record.fen_before, f"threat:{record.fen_before}"):
+            attempts[key] = attempts.get(key, 0) + 1
+        spent = max(attempts[record.fen_before], attempts[f"threat:{record.fen_before}"])
+        if spent >= 2:
+            return ("\n[Backend: the student GAVE UP on the current question; a surrendered attempt was "
+                    f"recorded (now {spent}). Reveal is allowed: kindly reveal this moment's withheld "
+                    "answer from the digest, walk through WHY it works step by step, then log the "
+                    "diagnosis and continue — all in this turn. NEVER invent a guess on the student's "
+                    "behalf to call the grading tools.]")
+        return ("\n[Backend: the student GAVE UP on the current question; a surrendered attempt was "
+                f"recorded ({spent} of 2 before reveal). Give the NEXT ladder hint only and ask them to "
+                "try once more. NEVER invent a guess on the student's behalf to call the grading tools.]")
+
+    def _pending_diagnosis_note(self) -> str:
+        """Observed live (3x in one session): the model ends its turn ANNOUNCING
+        it will log the diagnosis and move on, forcing the student to say 'ok'
+        to advance. The lesson state machine knows a diagnosis is pending, so
+        every student message carries the reminder until it's logged."""
+        meta = self.state.lesson_metadata or {}
+        if meta.get("lesson_status") != "awaiting_diagnosis" or not self.state.review:
+            return ""
+        agenda = self.state.review.agenda
+        idx = int(meta.get("last_agenda_index") or 0)
+        if not 0 <= idx < len(agenda):
+            return ""
+        record = agenda[idx]
+        if any(d.get("fen") == record.fen_before for d in self.state.diagnostics):
+            return ""
+        return (f"\n[Backend: the diagnosis for the current moment ({record.move_label}) has NOT been "
+                "logged yet. In THIS turn: finish the explanation if needed, call submit_diagnosis, and "
+                "move straight on to the next moment (or the game synthesis if this was the last one). "
+                "Do not end your turn by announcing future actions.]")
 
     def _eval_swing_note(self, fen_before: str, fen_after: str) -> str:
         if not (self.engines and getattr(self.engines, "stockfish", None)):

@@ -367,6 +367,7 @@ class CoachTools:
         if student_threat in main_moves:
             attempts[key] = attempts.get(key, 0) + 1
             matched = next(t for t in threats if t["threat_line"].split()[0] == student_threat)
+            self._persist_lesson_progress(fen, "awaiting_diagnosis")
             return {"verdict": "correct_threat", "student_threat": student_threat,
                     "threat_severity": matched.get("threat"),
                     "threat_line": matched.get("threat_line"),
@@ -374,13 +375,15 @@ class CoachTools:
 
         # Not the engine's main threat — is it a real threat at all?
         is_real = False
+        student_gain_cp = None
         try:
             current, _ = self.engines.quick_eval(fen)
             current_cp = current.pov(probe.turn).score(mate_score=MATE_CP)
             after = probe.copy(stack=False)
             after.push(move)
             score, _ = self.engines.quick_eval(after.fen())
-            is_real = (score.pov(probe.turn).score(mate_score=MATE_CP) - current_cp) >= 120
+            student_gain_cp = score.pov(probe.turn).score(mate_score=MATE_CP) - current_cp
+            is_real = student_gain_cp >= 120
         except Exception:
             pass
 
@@ -389,6 +392,17 @@ class CoachTools:
         result = {"student_threat": student_threat, "attempts_so_far": n,
                   "verdict": "real_but_secondary_threat" if is_real else "not_a_real_threat",
                   "reveal_allowed": n >= 2}
+        # Verified material for explaining the verdict — the model was observed
+        # inventing geometric reasons ("the e-pawn is blocked") when handed a
+        # bare classification. Explanations must come from THIS data.
+        result["comparison"] = {
+            "your_named_threat_gain_for_opponent": (
+                f"{student_gain_cp / 100.0:+.2f}" if student_gain_cp is not None else "unknown"),
+            "engine_main_threat": threats[0].get("threat") if threats else "none found",
+            "note": "Explain why the named move is secondary or not a threat ONLY from these "
+                    "numbers and lines. NEVER invent a geometric reason (blocked pawns, pins, "
+                    "defenders) that no tool stated — call analyze_position if you need geometry.",
+        }
         if not threats:
             if not is_real:
                 result["verdict"] = "no_significant_threat_exists"
@@ -398,6 +412,7 @@ class CoachTools:
             result["actual_threats"] = threats
         elif not result["reveal_allowed"]:
             result["note"] = "Withheld. Tell the student this is not the main threat and let them look again."
+        self._persist_lesson_progress(fen, "awaiting_diagnosis" if result["reveal_allowed"] else "awaiting_answer")
         return result
 
     # NOTE: the old predict_human_move tool was retired: analyze_position already
