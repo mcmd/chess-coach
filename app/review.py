@@ -391,7 +391,10 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
 
         before_m = eval_before_cp if mover_white else -eval_before_cp
         after_m = eval_after_cp if mover_white else -eval_after_cp
-        drop = max(0.0, cp_to_win_pct(before_m) - cp_to_win_pct(after_m))
+        # Round ONCE, here: classification, agenda selection, and display must
+        # all see the same number (9.96 classified as "ok" but displayed and
+        # agenda-selected as 10.0 produced "critical moment (ok)" absurdities).
+        drop = round(max(0.0, cp_to_win_pct(before_m) - cp_to_win_pct(after_m)), 1)
 
         # Maia on EVERY move: the human-vs-engine comparison is high-quality
         # signal both for normalizing errors and for spotting praise moments.
@@ -441,7 +444,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             ply=ply, number=(ply // 2) + 1, color="white" if mover_white else "black",
             san=san, uci=uci, fen_before=fen_before, fen_after=fen_after,
             eval_before_cp=eval_before_cp, eval_after_cp=eval_after_cp,
-            drop_pct=round(drop, 1), quality=quality,
+            drop_pct=drop, quality=quality,
             best_move_san=_uci_to_san(fen_before, best_uci),
             is_capture=is_capture, time_spent=time_spent, clock_remaining=clock_remaining,
             time_flag=time_flag_for(quality, time_spent, clock_remaining, is_forced),
@@ -733,7 +736,8 @@ def _question_ladder(r: MoveRecord, board_before: chess.Board) -> dict:
             move = board_before.parse_san(r.best_move_san)
             piece = board_before.piece_at(move.from_square)
             piece_name = chess.piece_name(piece.piece_type) if piece else "piece"
-            if chess.square_rank(move.from_square) in (0, 7):
+            home_rank = 0 if board_before.turn == chess.WHITE else 7
+            if chess.square_rank(move.from_square) == home_rank:
                 ladder[2] = "Look at your back-rank pieces."
             else:
                 ladder[2] = f"Look at your {piece_name}s."
@@ -762,8 +766,10 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
     forcing = _first_forcing_punishment(board_after, r.punishment_line)
     if forcing:
         san, move = forcing
+        consequences = _forcing_move_consequences(board_after, san, move)
         data["forcing_move"] = san
         data["target_square"] = chess.square_name(move.to_square)
+        data["forcing_move_consequences"] = consequences
         data["why_wrong_move_fails"] = (
             f"{r.san} does not address {san}; the opponent gets a forcing move on "
             f"{chess.square_name(move.to_square)}.")
@@ -796,6 +802,36 @@ def _first_forcing_punishment(board_after: chess.Board, punishment_line: list):
     if board_after.gives_check(move) or board_after.is_capture(move):
         return punishment_line[0], move
     return None
+
+
+def _forcing_move_consequences(board: chess.Board, san: str, move: chess.Move) -> dict:
+    mover = board.turn
+    moving_piece = board.piece_at(move.from_square)
+    captured = board.piece_at(move.to_square)
+    after = board.copy(stack=False)
+    after.push(move)
+    consequences = {
+        "move": san,
+        "moving_piece": (chess.piece_name(moving_piece.piece_type) if moving_piece else None),
+        "from": chess.square_name(move.from_square),
+        "to": chess.square_name(move.to_square),
+        "captured_piece": (f"{chess.piece_name(captured.piece_type)} on {chess.square_name(move.to_square)}"
+                           if captured else None),
+        "gives_check": board.gives_check(move),
+        "checks": None,
+        "also_attacks": [],
+    }
+    if board.gives_check(move):
+        king = after.king(not mover)
+        consequences["checks"] = f"king on {chess.square_name(king)}" if king is not None else "king"
+    attacker_sq = move.to_square
+    attacked = []
+    for sq in after.attacks(attacker_sq):
+        piece = after.piece_at(sq)
+        if piece and piece.color != mover and piece.piece_type != chess.KING:
+            attacked.append(f"{chess.piece_name(piece.piece_type)} on {chess.square_name(sq)}")
+    consequences["also_attacks"] = sorted(attacked)
+    return consequences
 
 
 def _best_move_answer_to_target(board_before: chess.Board, best_san: str, target_sq: chess.Square) -> str:

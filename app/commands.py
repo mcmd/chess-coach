@@ -4,6 +4,7 @@ Extracted from coach.py so the command surface is importable and testable.
 Returns CommandResult objects instead of mutating the chat session directly.
 """
 import contextlib
+import hashlib
 import io
 import os
 import random
@@ -13,7 +14,9 @@ from dataclasses import dataclass
 import chess
 import chess.pgn
 
-from app.memory import load_dossier, update_dossier
+from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata,
+                        update_dossier)
+from app.notation import legal_san_mentions
 from app.review import review_game, attach_board_tokens
 
 HELP_TEXT = """[bold]Commands[/bold]
@@ -98,7 +101,7 @@ class CommandProcessor:
         if looks_like_pgn(text):
             return self._load_pasted_pgn(text)
 
-        return CommandResult(prompt=self._enrich(text))
+        return CommandResult(prompt=self._enrich(text) + self._candidate_list_note(text))
 
     # ------------------------------------------------------------------
     # GAME LOADING & REVIEW
@@ -121,6 +124,12 @@ class CommandProcessor:
     def _load_pasted_pgn(self, text: str) -> CommandResult:
         return self._review_and_load(text, source="pasted game")
 
+    @staticmethod
+    def _local_game_id(review) -> str:
+        """Stable identity for local/pasted games so lessons can resume."""
+        movetext = " ".join(r.uci for r in review.records)
+        return "local-" + hashlib.sha1(movetext.encode()).hexdigest()[:12]
+
     def _review_and_load(self, pgn_text: str, source: str) -> CommandResult:
         try:
             review = review_game(pgn_text, self.engines, self.config,
@@ -135,14 +144,44 @@ class CommandProcessor:
         self.state.socratic_attempts.clear()
         attach_board_tokens(review, self.state, invert=getattr(self.config, "dark_terminal", False))
 
+        game_id = self._local_game_id(review)
+        self.state.current_game_id = game_id
+        lesson_file = getattr(self.config, "lesson_file", None)
+        meta = dict(self.state.lesson_metadata or load_lesson_metadata(lesson_file))
+        resumable = (meta.get("last_game_id") == game_id
+                     and meta.get("lesson_status") not in (None, "", "unavailable",
+                                                           "lesson_complete", "fresh_review")
+                     and review.agenda_plies)
+
         n = len(review.agenda_plies)
-        prompt = (review.digest()
-                  + "\n\n[System: The game is loaded with the board at the STARTING position. "
-                    "The student steps through moves with /next. Greet the student with a one-paragraph "
-                    "summary of the game and the agenda, then suggest starting with Moment 1. "
-                    "Do not analyze anything yet.]")
-        message = (f"[green]Reviewed {source}: {len(review.records)} moves analyzed, "
-                   f"{n} critical moment(s) found. Board set to the start.[/green]")
+        if resumable:
+            idx = max(0, min(int(meta.get("last_agenda_index") or 0), n - 1))
+            self.timeline.go_to_ply(review.agenda_plies[idx])
+            record = review.agenda[idx]
+            meta.update({"last_game_id": game_id, "last_agenda_index": idx,
+                         "lesson_status": "awaiting_answer"})
+            prompt = (review.digest()
+                      + f"\n\n[System: This game was recognized from a previous session. The lesson "
+                        f"RESUMES at Moment {idx + 1} ({record.move_label}); the board is already at "
+                        "that position. Greet the student briefly, remind them where the lesson left "
+                        "off, and continue that moment. The student can /reset to restart from move 1. "
+                        "Do not re-analyze earlier moments.]")
+            message = (f"[green]Recognized {source} from a previous session — resumed at "
+                       f"Moment {idx + 1} ({record.move_label}). Use /reset to start over.[/green]")
+        else:
+            meta.update({"last_game_id": game_id, "last_agenda_index": 0,
+                         "lesson_status": "fresh_review"})
+            prompt = (review.digest()
+                      + "\n\n[System: The game is loaded with the board at the STARTING position. "
+                        "The student steps through moves with /next. Greet the student with a one-paragraph "
+                        "summary of the game and the agenda, then suggest starting with Moment 1. "
+                        "Do not analyze anything yet.]")
+            message = (f"[green]Reviewed {source}: {len(review.records)} moves analyzed, "
+                       f"{n} critical moment(s) found. Board set to the start.[/green]")
+
+        self.state.lesson_metadata = meta
+        if lesson_file:
+            save_lesson_metadata(lesson_file, meta)
         return CommandResult(prompt=self._enrich(prompt), message=message)
 
     # ------------------------------------------------------------------
@@ -322,6 +361,30 @@ class CommandProcessor:
                      "(time, attention), not the pattern.")
         note += "]"
         return note
+
+    def _candidate_list_note(self, text: str) -> str:
+        """The model can cherry-pick one move out of a multi-candidate answer
+        and grade it (observed live: 'd5, Rad1 or Qd3' -> graded Rad1, praised).
+        The command layer sees the student's FULL text, so it injects the
+        verified candidate list — making the hedge impossible to ignore."""
+        if not (self.state.review or self.state.sparring_mode):
+            return ""
+        boards = [self.state.board.copy(stack=False)]
+        if self.state.review:
+            boards.extend(chess.Board(r.fen_before) for r in self.state.review.agenda)
+        best = []
+        for board in boards:
+            mentions = legal_san_mentions(board, text)
+            if len(mentions) > len(best):
+                best = mentions
+        if len(best) < 2:
+            return ""
+        return ("\n[Backend: the student's message mentions multiple legal candidate moves: "
+                + ", ".join(best[:6]) +
+                ". If you asked them to find a move: grade ONLY a move they clearly committed to "
+                "(e.g. 'X is better'); if they did not commit to one, do NOT grade — ask which ONE "
+                "they choose. NEVER pick the best candidate for them. If you did not ask a "
+                "find-the-move question, ignore this note.]")
 
     def _eval_swing_note(self, fen_before: str, fen_after: str) -> str:
         if not (self.engines and getattr(self.engines, "stockfish", None)):

@@ -1,5 +1,6 @@
 import io
 import random
+import re
 
 import chess
 import chess.engine
@@ -42,6 +43,29 @@ def _score_to_str(score: chess.engine.PovScore) -> str:
     if white.is_mate():
         return f"#{white.mate()}"
     return f"{white.score(mate_score=MATE_CP) / 100.0:+.2f}"
+
+
+from app.notation import legal_san_mentions as _legal_san_mentions
+
+
+def _valid_diagnosis_override(reason: str, recommended: str, chosen: str) -> bool:
+    if not reason:
+        return False
+    text = reason.strip().casefold()
+    if len(text) < 24:
+        return False
+    boilerplate = (
+        "matches backend recommendation",
+        "backend recommendation",
+        "same as recommended",
+        "override",
+        "n/a",
+    )
+    if any(phrase in text for phrase in boilerplate):
+        return False
+    if recommended.replace("_", " ") in text and chosen.replace("_", " ") not in text:
+        return False
+    return True
 
 
 class CoachTools:
@@ -148,6 +172,14 @@ class CoachTools:
             return {"error": f"Invalid FEN: {e}"}
 
         attempts = self.state.socratic_attempts
+        mentioned = _legal_san_mentions(board, student_move_san)
+        if len(mentioned) > 1:
+            return {
+                "verdict": "needs_commitment",
+                "candidate_moves": mentioned,
+                "message": "The student listed several legal candidates. Ask which one they choose before grading.",
+                "reveal_allowed": False,
+            }
         try:
             move = board.parse_san(student_move_san)
         except ValueError:
@@ -256,7 +288,9 @@ class CoachTools:
                 result["recommended_diagnosis"] = getattr(record, "recommended_diagnosis", None)
                 result["lesson_objective"] = getattr(record, "lesson_objective", None)
                 result["next_step"] = ("Ask the student to explain WHY the move works before logging diagnosis; "
-                                       "then teach from these concrete primitives, not abstract pressure words.")
+                                       "then teach from these concrete primitives. Vivid phrasing is fine, "
+                                       "but immediately unpack it with the move, square, target, checked king, "
+                                       "captured piece, or attacked piece.")
         else:
             result["note"] = "Answer withheld by backend. Give ONE hint and ask the student to try once more."
             result["hint_facts"] = self._hint_facts(board, best_move)
@@ -435,8 +469,10 @@ class CoachTools:
             error_explanation: One sentence explaining what went wrong in THIS position.
             preventative_habit: One actionable habit to avoid this mistake in the future.
             confidence: Your confidence in the diagnosis, 0.0-1.0.
-            override_reason: Required if you choose a category different from
-                the backend's recommended diagnosis for this agenda moment.
+            override_reason: ONLY when you choose a category DIFFERENT from the
+                backend's recommended diagnosis: state the conversational evidence
+                for the different root cause. OMIT this argument entirely when
+                your category matches the recommendation.
         """
         category = (error_category or "").strip().lower()
         if category not in ERROR_TAXONOMY:
@@ -452,7 +488,8 @@ class CoachTools:
         if recommended and category != recommended:
             mismatch_warning = (f"Backend recommended '{recommended}' for this moment; "
                                 f"you logged '{category}'.")
-            if not override_reason:
+            valid_override = _valid_diagnosis_override(override_reason, recommended, category)
+            if not valid_override:
                 return {"error": mismatch_warning + " Provide override_reason if the conversation revealed a different root cause.",
                         "recommended_diagnosis": recommended,
                         "chosen_category": category,
@@ -488,17 +525,25 @@ class CoachTools:
     def _persist_lesson_progress(self, fen: str = None, status: str = "awaiting_answer") -> None:
         if not getattr(self.config, "lesson_file", None):
             return
+        # Only agenda moments drive lesson state: dossier drills, sparring, and
+        # free-question grading must never overwrite a saved lesson position.
+        if not (self.state.review and fen):
+            return
+        agenda = self.state.review.agenda
+        idx = next((i for i, record in enumerate(agenda) if record.fen_before == fen), None)
+        if idx is None:
+            return
         meta = dict(self.state.lesson_metadata or {})
         if self.state.current_game_id:
             meta["last_game_id"] = self.state.current_game_id
-        if self.state.review and fen:
-            for idx, record in enumerate(self.state.review.agenda):
-                if record.fen_before == fen:
-                    if status == "diagnosis_logged":
-                        meta["last_agenda_index"] = min(idx + 1, max(len(self.state.review.agenda) - 1, 0))
-                    else:
-                        meta["last_agenda_index"] = idx
-                    break
+        if status == "diagnosis_logged":
+            if idx + 1 >= len(agenda):
+                status = "lesson_complete"   # finished the final moment
+                meta["last_agenda_index"] = idx
+            else:
+                meta["last_agenda_index"] = idx + 1
+        else:
+            meta["last_agenda_index"] = idx
         meta["lesson_status"] = status
         self.state.lesson_metadata = meta
         save_lesson_metadata(self.config.lesson_file, meta)
@@ -713,8 +758,10 @@ class CoachTools:
 
     def _has_resume_metadata(self, game_id: str) -> bool:
         meta = self.state.lesson_metadata or {}
+        # A completed (or never-started) lesson has nothing to resume into.
         return (meta.get("last_game_id") == game_id
-                and meta.get("lesson_status") not in (None, "", "unavailable"))
+                and meta.get("lesson_status") not in (None, "", "unavailable",
+                                                      "lesson_complete", "fresh_review"))
 
     def _review_and_load(self, pgn_text: str, source_game_id: str = None, resume: bool = False) -> dict:
         console.print("[dim yellow]↳ Running full engine review on the downloaded game (may take a minute)...[/dim yellow]")

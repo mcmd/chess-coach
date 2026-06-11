@@ -2,46 +2,93 @@
 
 ## Overview
 
-An AI chess coach that runs in your terminal. A Gemini LLM conducts the lesson — asks questions, explains ideas, adapts to you — while a Python backend computes every chess fact it teaches from: Stockfish evaluations, Maia-2 human-move predictions, exact exchange evaluation, tactical motif detection, Lichess opening statistics, and Syzygy tablebases.
+An AI chess coach that runs in your terminal. A Gemini LLM conducts the lesson — asks questions, explains ideas, adapts to you — while a Python backend computes every chess fact it teaches from: Stockfish evaluations, Maia-2 human-move predictions, exact exchange evaluation, tactical motif detection, Lichess opening/master databases, and Syzygy tablebases.
 
-The architecture is deliberately **hybrid**:
+The architecture is deliberately **hybrid: backend-led analysis, LLM-led pedagogy**.
 
-- **Backend-led analysis.** When you load a game, the backend reviews every move (evaluation swings measured in win-percentage space), classifies each move (`blunder` / `mistake` / `inaccuracy` / `ok` / `good` / `best` / `only-move` / `forced`), selects the most instructive moments as a **lesson agenda**, and hands the coach a verified digest — including the engine's answers, marked *withheld*.
-- **LLM-led pedagogy.** The coach works through the agenda one moment at a time: it sets the scene, asks you ONE question, and grades your answer through a backend tool that counts your attempts — the engine line is only unlocked when you get it right or after two tries. Verified good moves get genuine credit; mistakes that Maia says most players at your rating also make are normalized before they're dissected.
+- **The backend finds the mistakes and assembles the truth.** When you load a game, it reviews every move (evaluation swings measured in win-percentage space, with Maia consulted on every position), classifies each move, selects the most instructive moments as a **lesson agenda**, and hands the coach a verified digest: the better move and its line (marked *withheld*), the punishment line with named tactical motifs, verified positional facts, a graded **question ladder**, a recommended diagnosis, and concrete explanation primitives for the reveal phase.
+- **The LLM teaches.** It works the agenda one moment at a time: opens with a Level-0/1 question, grades your answers through a backend tool that counts attempts (the answer unlocks only when you earn it or after two tries), asks you *why* the right move works, then explains from backend-verified facts.
 
-The LLM is never the source of chess truth. It cannot judge your answers itself, cannot pick its own sparring moves, and cannot reveal withheld analysis early — those are all backend-enforced.
+The LLM is never the source of chess truth. It cannot judge your answers itself, cannot pick its own sparring moves, cannot reveal withheld analysis early, cannot log a diagnosis category the backend disagrees with without justifying the override, and cannot quietly grade one move out of a hedged candidate list — those are all backend-enforced.
 
 ## Key Features
 
-- **Full-game review with a lesson agenda.** `/load_pgn` (or pasting a PGN) runs an engine review of every move and produces critical moments with: win% swing, the better move and its line, the punishment line, detected tactical motifs (forks, pins, skewers, back-rank mates, removal of the defender, discovered checks), Maia's probability that a player at your rating makes the same mistake, and clock-based time flags (`hope_chess`, `time_scramble`, `freezing`).
-- **Socratic loop with graded answers.** When the coach asks "find the better move", your answer is engine-graded (`best` / `excellent_alternative` / `reasonable_but_imprecise` / `inaccurate` / `wrong`, with rank and win% cost). Near-misses get partial credit; after two failed attempts the answer unlocks and is taught step by step.
-- **Exact piece-safety (SEE).** Hanging and weakly-defended pieces are computed by legal-move static exchange evaluation — pinned defenders, x-rays, and capture sequences are handled correctly, so "your knight was actually lost there" is mathematically true.
-- **A rich, verified concept library.** Loose pieces (LPDO), overloaded defenders, trapped pieces, pawn tension, available pawn breaks, backward pawns, back-rank/luft vulnerability, rooks on open files, opposite-colored bishops, mobility counts, and exact endgame rules (rule of the square, wrong-colored-bishop draws) — all pure-Python, all emitted only when present, all fed into the lesson agenda's "Verified position facts."
-- **Threat detection.** A null-move engine probe answers "what was the opponent threatening if you'd done nothing?" — the most important question at club level.
-- **Human-realistic sparring.** In `/spar` mode the coach's moves are picked by the backend by sampling Maia-2 at your Elo (not by the LLM). If your move loses significant win%, the coach pauses the game and turns it into a mini-lesson.
-- **A dossier that actually accumulates.** Diagnoses use a closed mistake taxonomy (`hanging_piece`, `ignored_threat`, `missed_fork`, ...) so your recurring weaknesses aggregate across sessions. `/review` quizzes you on positions from your own past mistakes.
-- **Anti-hallucination plumbing.** The backend owns the board; the model is fed the current FEN, legal moves, and capture-annotated history with every message; board diagrams are rendered by the backend and inserted via opaque tokens the model can only paste, never draw.
-- **Elo-aware everywhere.** Maia predictions, opening statistics (master *and* your-rating amateur databases), and the coaching register all key off your configured rating.
-- **Profiles, persistent memory, clock analysis, multi-language coaching** — as before, with history persistence now atomic, capped, and scrubbed of internal scratchpads.
+- **Full-game review with a lesson agenda.** `/load_pgn` (or pasting a PGN, or fetching by Lichess/chessgames ID) runs an engine review of every move and produces critical moments with: win% swing, the better move and line, the punishment line, detected motifs, time flags from PGN clocks (`hope_chess`, `time_scramble`, `freezing`), and verified position facts (open files, hanging/loose/trapped pieces, king exposure, pawn tension…).
+- **Maia-2 on every move — the typicality lens.** Each mistake is classified as *typical for your level* (a knowledge gap: normalize, then teach the pattern) or *atypical* (a process slip: coach the habit, skip the lecture). The same data finds **brilliancies** (only-moves few peers find), **avoided traps** (you sidestepped the move most peers play), **findability** of the right move (calibrates hints and praise), **practical difficulty** (engine eval vs. how often humans actually convert), your **most likely wrong answer** (pre-refuted), the **aspirational instinct** (what players ~350 Elo above you choose), and a per-phase **human-alignment** stat.
+- **A Socratic loop that is enforced, not requested.** Question ladder (open question → conceptual nudge → directed hint → near-reveal), answer grading with engine verdicts and partial credit, attempt counting with reveal-on-earn, verified `hint_facts` so hints can't be invented, and a command-layer guard that detects hedged multi-candidate answers and forces a commitment before grading.
+- **Online database grounding (network-enhanced, never network-dependent).** Reviews walk the opening through the Lichess masters database: book moves are tagged (theory is never scolded), and the exact move where the game **left established theory** is reported with what masters and your-Elo peers play instead. In tablebase range (≤7 pieces), agenda moments get provable truth ("this move turned a proven WIN into a proven DRAW; 2 of 14 legal moves kept the win") and answer grading switches from centipawns to game-theoretic categories. All of it degrades silently to engine-only behavior when offline.
+- **Exact piece-safety (SEE).** Hanging, weakly-defended, and trapped pieces are computed by legal-move static exchange evaluation — pinned defenders, x-rays, and capture sequences are handled correctly, so "your knight was actually lost there" is mathematically true.
+- **A rich, verified concept library.** Loose pieces (LPDO), overloaded defenders, pawn tension, available pawn breaks, backward pawns, back-rank/luft vulnerability, rooks on open files, opposite-colored bishops, mobility counts, king castled-status, and exact endgame rules (rule of the square, wrong-colored-bishop draws) — all pure Python, emitted only when present.
+- **Tactical motif detection on engine lines.** Forks, pins, skewers, discovered attacks and checks, double checks, zwischenzugs, removal of the defender, back-rank and smothered mates, promotions — detected on forcing engine PVs for precision, and used to name what you missed, what punished you, and what diagnosis fits.
+- **A dossier that actually accumulates.** Diagnoses use a closed 16-category mistake taxonomy with backend-recommended categories and override governance, so recurring weaknesses aggregate across sessions — including a **typicality trend** (improvement shows as fewer peer-common errors). `/review` quizzes you on positions from your own past mistakes.
+- **Lesson resume.** Lessons persist across sessions: re-fetching a Lichess game offers continue-or-restart; reloading a local or pasted game (identified by movetext hash) resumes at the saved moment automatically (`/reset` restarts). Completed lessons load fresh.
+- **Grounded storytelling.** `explain_pawn_structure_evolution` turns the game's structural history into a backend-verified narrative with vivid/concrete language pairs and explicit avoid-claims derived from the actual position, so color commentary never contradicts the board.
+- **Human-realistic sparring.** In `/spar` mode the coach's moves are sampled from Maia-2 at your Elo (not chosen by the LLM); blunders pause the game for a mini-lesson.
+- **Anti-hallucination plumbing.** The backend owns the board; every message carries FEN, legal moves, and capture-annotated history; board diagrams are backend-rendered and inserted via opaque pre-minted tokens (invented tokens are scrubbed at render time); positional prose may only cite backend facts.
+- **Execution tracing.** `--trace` (or `"trace": true`) shows every tool call with arguments and timing, and every Stockfish/Maia/Lichess invocation — the coach's reasoning made visible.
+- **Profiles, persistent memory, multi-language coaching**, atomic file writes, capped/scrubbed history.
+
+## The Science Behind the Coach
+
+Every mechanism below exists in the code today; references are foundations, not decoration.
+
+### 1. LLMs cannot be trusted with board state — so they never hold it
+Language models are sequence predictors without a persistent board representation; in chess they reliably drift into illegal moves, phantom pieces, and invented geometry ([Westerdale 2024][ref-westerdale]). The backend therefore owns the only board (`SessionState` + `TimelineManager`); the model's spatial claims are restricted to backend-computed data (verified position facts, SEE-based safety, motif details), diagrams are opaque backend-minted tokens, and every hypothetical line must be verified through `analyze_position` before it may be asserted.
+
+### 2. Computation is delegated to solvers; language stays with the language model
+Strategic calculation plateaus far below expert level when attempted in text, while tool-delegating architectures let each component do what it is actually good at ([Hwang et al. 2025][ref-sirl]; [Chen et al. 2025][ref-vtool]). Stockfish provides evaluation and refutation, Maia-2 provides human behavior, Syzygy provides proven endgame truth, pure-Python chess logic provides concepts and motifs — and the LLM's job narrows to pedagogy and prose. Engine lines are truncated (≤8 plies) and multipv-bounded to keep the model grounded rather than flooded.
+
+### 3. Human-aligned modeling: teaching the player you are, not the engine you aren't
+Maia was built to predict *human* moves at specific skill levels, motivated explicitly by chess teaching ([McIlroy-Young et al., KDD 2020][ref-maia1]; [Maia-2, NeurIPS 2024][ref-maia2]). This coach uses it on **every move** of a review: mistakes most peers share are taught as knowledge gaps; mistakes peers rarely make are coached as process slips; only-moves few peers find are celebrated as brilliancies; the findability of the right answer calibrates hints; and the "aspirational instinct" shows what players a few hundred points stronger choose — a concrete image of the next level. Engine-only coaching can do none of this.
+
+### 4. Move quality in win-percentage space
+Centipawn swings exaggerate irrelevant differences in decided positions (−2 → −5 is not a blunder in any human sense). Classification therefore converts evaluations to expected win percentage and measures the *drop*, following the approach popularized by Lichess's accuracy metric ([Lichess][ref-lichess-acc]). Thresholds: ≥30 blunder, ≥20 mistake, ≥10 inaccuracy — applied to the student's side of the board.
+
+### 5. Retrieval before instruction: the question ladder and the earned reveal
+Being made to retrieve (or honestly attempt) an answer before receiving it produces dramatically better retention than being told ([Roediger & Karpicke 2006][ref-testing]), errors corrected after a confident attempt are remembered *better* than passive instruction ([Butterfield & Metcalfe 2001][ref-hypercorrection]), and struggling before instruction beats instruction-first ([Kapur 2008][ref-kapur]). Hence: the backend withholds the answer until the student attempts (or exhausts two attempts), the question ladder escalates scaffolding gradually in the spirit of the zone of proximal development ([Vygotsky][ref-vygotsky]), hedged candidate lists must be committed to one move before grading, and after the reveal the student is asked to explain *why* the move works. The sharpest facts are deliberately saved for the post-reveal explanation ("ask less before, explain more after").
+
+### 6. Deliberate practice on critical moments, not move-by-move commentary
+Expertise grows from focused effort on specific weaknesses at the edge of competence, with immediate feedback ([Ericsson et al. 1993][ref-ericsson]). The review compresses a game into 3–6 agenda moments chosen by win% damage, each teaching ONE concept, each ending in a taxonomy-classified diagnosis — and the dossier turns those diagnoses into a longitudinal picture (recurring categories, assigned habits, typicality trend) that `/review` converts into spaced re-testing on your own positions.
+
+### 7. Concept-grounded commentary
+Free-form chess commentary by generative models is fluent but strategically vacuous or wrong; grounding the commentary in explicitly computed concepts measurably improves it ([Kim et al. 2024][ref-ccc]). The concept extractor (SEE safety, pawn-play, king safety, activity, endgame rules) and the motif detector feed every lesson; the pawn-structure narrator goes further and supplies vivid/concrete language *pairs* plus position-derived avoid-claims, so style can never outrun truth.
+
+### 8. Self-reported confidence is not calibration
+Models behave like good test-takers: they guess confidently rather than admit uncertainty ([Kalai et al. 2025][ref-kalai]). An earlier design asked the model to self-score diagnosis confidence and filtered on it; that mechanism was removed. Instead, diagnosis categories are **recommended by the backend from motif and clock evidence**, and the model may only deviate by stating the conversational evidence for a different root cause — justification, not self-rated confidence.
+
+[ref-westerdale]: https://www.nicowesterdale.com/blog/why-llms-cant-play-chess
+[ref-sirl]: https://arxiv.org/abs/2507.00726
+[ref-vtool]: https://arxiv.org/abs/2505.11792
+[ref-maia1]: https://arxiv.org/abs/2006.01855
+[ref-maia2]: https://arxiv.org/abs/2409.20553
+[ref-lichess-acc]: https://lichess.org/page/accuracy
+[ref-testing]: https://doi.org/10.1111/j.1467-9280.2006.01693.x
+[ref-hypercorrection]: https://doi.org/10.1037/0278-7393.27.6.1491
+[ref-kapur]: https://doi.org/10.1080/07370000802212669
+[ref-vygotsky]: https://en.wikipedia.org/wiki/Zone_of_proximal_development
+[ref-ericsson]: https://doi.org/10.1037/0033-295X.100.3.363
+[ref-ccc]: https://arxiv.org/abs/2410.20811
+[ref-kalai]: https://arxiv.org/abs/2509.04664
 
 ## The Coach's Tools
 
 | Tool | What it does |
 |---|---|
-| `analyze_position` | The full coaching packet: top-3 engine lines, SEE piece safety, threats-if-you-pass, Maia tendencies, tactical motifs, phase, structural features, before/after board tokens. Supports hypothetical lines via `moves_to_apply`. |
-| `evaluate_student_answer` | Grades the student's proposed move; counts attempts; withholds the answer until earned. |
+| `analyze_position` | The full coaching packet: top-3 engine lines, SEE piece safety, threats-if-you-pass (null-move probe), Maia tendencies, tactical motifs, phase, structural features, before/after board tokens. Supports hypothetical lines via `moves_to_apply`. |
+| `evaluate_student_answer` | Grades the student's move (tablebase categories override centipawns in ≤7-piece endings); counts attempts; withholds the answer until earned; returns verified `hint_facts` while withholding and explanation primitives on reveal; refuses to grade uncommitted candidate lists. |
+| `submit_diagnosis` | Logs a mistake using the closed 16-category taxonomy; deviating from the backend's recommended category requires a substantive override reason. |
+| `explain_pawn_structure_evolution` | Backend-verified pawn-structure story of the loaded game with safe/avoid language guardrails. |
+| `get_game_review_summary` | Re-fetches the loaded game's review digest. |
 | `play_sparring_reply` | Backend plays the coach's sparring move (Maia-sampled at student Elo). |
 | `execute_coach_move` | Plays a user-dictated move, guarded by the Logic Tutor legality layer. |
-| `submit_diagnosis` | Logs a mistake to the dossier using the closed taxonomy. |
-| `get_game_review_summary` | Re-fetches the loaded game's review digest. |
-| `get_opening_repertoire` | Lichess master + amateur (your Elo bracket) opening statistics. |
-| `query_endgame_tablebase` | Syzygy perfect play (≤7 pieces, backend-enforced). |
-| `fetch_lichess_game_by_id` / `fetch_chessgames_com_game` | Download a game, review it, load it. |
+| `get_opening_repertoire` | Lichess master + your-Elo amateur opening statistics (cached). |
+| `query_endgame_tablebase` | Syzygy proven result, best move, and margin for error ("2 of 14 legal moves preserve the win"). ≤7 pieces, backend-enforced. |
+| `fetch_lichess_game_by_id` / `fetch_chessgames_com_game` | Download, review, and load a game. The Lichess fetch supports `mode=auto/continue/restart` for lesson resume. |
 
 ## Commands
 
 ```
-/load_pgn <path>   Load + review a PGN file (engine review, lesson agenda)
+/load_pgn <path>   Load + review a PGN file (engine review, lesson agenda, auto-resume)
 /move <san>        Play a move (e.g. /move Nf3)
 /next  /prev       Step forward / back through the loaded game
 /goto <n>[b]       Jump to before White's (or Black's) move n
@@ -49,7 +96,7 @@ The LLM is never the source of chess truth. It cannot judge your answers itself,
 /spar  /nospar     Sparring mode on / off
 /review            Quiz yourself on a past mistake from your dossier
 /memorize          Save this session's diagnoses to your long-term dossier
-/clear             Wipe board, review, and conversation memory
+/clear             Wipe board, review, lesson state, and conversation memory
 /help              Show commands
 ```
 
@@ -69,19 +116,25 @@ You can also paste a PGN directly, or just talk.
        "stockfish_path": "/path/to/your/stockfish",
        "gemini_model": "gemini-3.1-pro-preview",
        "profiles_dir": "./profiles",
-       "player_name": "your-lichess-username"
+       "player_name": "your-lichess-username",
+       "dark_terminal": false,
+       "trace": false,
+       "review_eval_time": 0.5,
+       "use_online_databases": true
    }
    ```
-   `player_name` is matched against PGN headers so the coach knows which side you played. Download [Stockfish](https://stockfishchess.org/download/) for your OS; Maia-2 installs via pip and downloads its model on first run.
+   `player_name` is matched against PGN headers so the coach knows which side you played. `review_eval_time` is Stockfish seconds per position during a game review (higher = more reliable classification, slower scan). `use_online_databases` toggles the Lichess explorer/tablebase enrichment. Download [Stockfish](https://stockfishchess.org/download/) for your OS; Maia-2 installs via pip and downloads its model on first run.
 3. Install and run:
    ```bash
    python -m venv .venv
    # Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
    pip install -r requirements.txt
-   python coach.py                # or: python coach.py --profile=name
+   python coach.py                # or: python coach.py --profile=name --trace
    ```
 
-CLI flags: `--profile=<name>` (isolated config/memory/dossier per user), `--wipe_memory`, `--dark_terminal`.
+CLI flags: `--profile=<name>` (isolated config/memory/dossier/lesson state per user), `--wipe_memory`, `--dark_terminal`, `--trace`.
+
+Runtime files (per profile): `chess_coach_memory.json` (conversation), `player_dossier.json` (long-term weaknesses), `lesson_state.json` (lesson resume), `chess_cli_history.txt` (CLI history). All gitignored.
 
 ## Development & Testing
 
@@ -89,7 +142,7 @@ CLI flags: `--profile=<name>` (isolated config/memory/dossier per user), `--wipe
 python -m pytest tests/ -q
 ```
 
-The suite (66 tests) runs in ~2 seconds with no engines or network — engine doubles live in `tests/conftest.py`. It includes adversarial SEE positions (pinned defenders), motif detection, classification thresholds, the full review pipeline against scripted evaluations, command-layer regressions, the Socratic attempt/reveal state machine, and dossier aggregation.
+The suite (160+ tests) runs in a few seconds with no engines and no network — engine doubles live in `tests/conftest.py`, and an autouse fixture blocks all real HTTP. It covers adversarial SEE positions (pinned defenders), motif detection, classification thresholds, the review pipeline against scripted evaluations, opening/tablebase grounding with injected API payloads, the Socratic attempt/reveal state machine, candidate-commitment guards, lesson resume, diagnosis override governance, and dossier aggregation.
 
 If you intentionally change the concept extractor, regenerate the snapshot baseline: `python -m tests.test_concepts_snapshot --save`.
 

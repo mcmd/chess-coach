@@ -222,27 +222,55 @@ def safe_language(events: list, final_snapshot: dict, final_shield: dict) -> lis
         if event.event == "passed_pawn_created":
             pawn = event.facts["pawn"]
             if event.facts.get("is_isolated"):
-                phrases.append(f"the {pawn} pawn became an isolated passer: powerful, but dependent on piece support")
+                phrases.append({
+                    "vivid": f"the {pawn} pawn became the spearhead of your position",
+                    "concrete": f"{pawn} is an isolated passed pawn, so it can advance without enemy pawn blockers but needs piece support",
+                })
             else:
-                phrases.append(f"the {pawn} pawn became a passer")
+                phrases.append({
+                    "vivid": f"the {pawn} pawn became a runner",
+                    "concrete": f"{pawn} is passed: no enemy pawn on its file or adjacent files can stop it directly",
+                })
     pinned = final_shield.get("pinned_shield_pawns") or []
     threats = final_shield.get("forcing_threats") or []
     if pinned:
-        phrases.append(f"the {', '.join(pinned)} pawn became the hinge of the king shelter")
+        phrases.append({
+            "vivid": f"the {', '.join(pinned)} pawn became the hinge of the king shelter",
+            "concrete": f"{', '.join(pinned)} is pinned to the king, so it cannot behave like a normal shield pawn",
+        })
     if threats:
-        phrases.append(f"the concrete king-safety issue was {', '.join(threats)}, not a vague open-file problem")
+        phrases.append({
+            "vivid": "the king shelter started to fray",
+            "concrete": f"the concrete issue was {', '.join(threats)}, not a vague open-file problem",
+        })
     if final_shield.get("friendly_pawns_near_king"):
-        phrases.append("the remaining king shelter was: " + ", ".join(final_shield["friendly_pawns_near_king"]))
+        phrases.append({
+            "vivid": "your king still had shelter, but it was specific and fragile",
+            "concrete": "the remaining nearby pawns were: " + ", ".join(final_shield["friendly_pawns_near_king"]),
+        })
     return phrases
 
 
 def avoid_language(final_snapshot: dict, final_shield: dict) -> list:
+    """False claims a model might be tempted to make, derived from the ACTUAL
+    final position — never hardcoded to any particular game."""
     avoid = []
-    if "f2" in final_snapshot["pawns"]:
-        avoid.append("your f-pawn was gone")
-    if final_snapshot["file_statuses"].get("g") != "open":
-        avoid.append("the g-file was open")
+    statuses = final_snapshot["file_statuses"]
+
+    # Claims that shield pawns are gone, when they are demonstrably present.
+    for pawn in final_shield.get("friendly_pawns_near_king") or []:
+        avoid.append(f"the {pawn[0]}-pawn was gone (it is still on {pawn})")
+
+    # Claims that files near the king are open, when they are not.
+    king = final_shield.get("king")
+    if king:
+        king_file = FILES.index(king[0])
+        for f_idx in _adjacent_files(king_file) + [king_file]:
+            f = FILES[f_idx]
+            if statuses[f] != "open":
+                avoid.append(f"the {f}-file was open (it is {statuses[f].replace('_', ' ')})")
+
     if final_shield.get("pinned_shield_pawns"):
         avoid.append("total kingside collapse without naming the pinned pawn")
-    avoid.append("Ne4 blockaded the center")
+    avoid.append("any blockade/outpost/battery label the backend events do not state")
     return avoid

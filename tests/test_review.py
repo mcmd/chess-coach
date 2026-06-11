@@ -360,3 +360,36 @@ def test_agenda_has_question_ladder_and_reveal_primitives():
     assert "Recommended diagnosis" in review.digest()
     assert record.explanation_primitives["played_move"] == "Qxf7+"
     assert "reveal-phase explanation primitives" in review.digest()
+
+
+def test_forcing_move_consequences_name_actual_targets_not_wrong_rook():
+    from app.review import MoveRecord, _explanation_primitives
+    before = chess.Board("1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26")
+    after_wrong = before.copy(stack=False)
+    after_wrong.push_san("Qxa7")
+    record = MoveRecord(
+        ply=50, number=26, color="white", san="Qxa7", uci="c5a7",
+        fen_before=before.fen(), fen_after=after_wrong.fen(),
+        eval_before_cp=0, eval_after_cp=0, drop_pct=40, quality="blunder",
+        best_move_san="Rd4", is_capture=True, punishment_line=["Qxg4+"],
+        lesson_objective="defend_against_direct_threat",
+    )
+    primitives = _explanation_primitives(record, before, after_wrong)
+    consequences = primitives["forcing_move_consequences"]
+    assert consequences["move"] == "Qxg4+"
+    assert consequences["checks"] == "king on g2"
+    assert "rook on d1" in consequences["also_attacks"]
+    assert "rook on f1" not in consequences["also_attacks"]
+
+
+def test_drop_rounding_consistent_between_classify_and_agenda():
+    # Unrounded drop ~9.99 rounds to 10.0: it must BOTH classify as an
+    # inaccuracy AND qualify for the agenda (no more "critical moment (ok)").
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[1]] = -110  # after 1. e4: drop just under 10, rounds to 10.0
+    review = review_game(PGN, FakeEngines(evals=evals), _Cfg())
+    record = review.records[0]
+    assert record.drop_pct == 10.0
+    assert record.quality == "inaccuracy"
+    assert record.ply in review.agenda_plies

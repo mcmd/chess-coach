@@ -144,3 +144,77 @@ def test_memorize_annotates_diagnoses_with_typicality(stub_config):
     d = load_dossier(stub_config.dossier_file)
     assert d["typicality_history"][0]["typical_errors"] == 1
     assert d["recent_positions"][0]["error_typicality"] == "typical_for_level"
+
+
+# --- CANDIDATE-LIST COMMITMENT (cherry-pick loophole observed live) ---
+
+def test_multi_candidate_answer_gets_backend_note(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    # Legal candidates at the agenda moment (before 3. Qxf7+): hedged answer.
+    result = proc.process("I would consider Qxf7, or Nf3, or maybe Bc4")
+    assert "multiple legal candidate moves" in result.prompt
+    assert "Qxf7+" in result.prompt and "Nf3" in result.prompt and "Bc4" in result.prompt
+    assert "NEVER pick the best candidate for them" in result.prompt
+
+
+def test_single_move_answer_gets_no_note(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    result = proc.process("I think the answer is Nf3")
+    assert "multiple legal candidate moves" not in result.prompt
+
+
+def test_no_note_outside_lesson_or_sparring_context(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    result = proc.process("should I study e4 or d4 openings?")
+    assert "multiple legal candidate moves" not in result.prompt
+
+
+# --- LOCAL-GAME LESSON RESUME ---
+
+def test_local_game_resumes_at_saved_moment(stub_config):
+    from app.memory import save_lesson_metadata, load_lesson_metadata
+    from app.commands import CommandProcessor
+    from app.state import SessionState, TimelineManager
+    from tests.test_review import PGN as RPGN, _scripted_engines
+
+    # Session 1: load the game, note its local id, simulate mid-lesson state.
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    game_id = state.current_game_id
+    assert game_id and game_id.startswith("local-")
+    assert state.lesson_metadata["lesson_status"] == "fresh_review"
+    save_lesson_metadata(stub_config.lesson_file,
+                         {"last_game_id": game_id, "last_agenda_index": 0,
+                          "lesson_status": "awaiting_diagnosis"})
+
+    # Session 2: same game -> resume at the saved agenda moment.
+    state2 = SessionState()
+    proc2 = CommandProcessor(state2, TimelineManager(state2), _scripted_engines(), stub_config)
+    result = proc2.process(RPGN)
+    assert "RESUMES at Moment 1" in result.prompt
+    assert "resumed at Moment 1" in result.message
+    # Board is at the agenda moment's position, not the start.
+    assert state2.board.fen() == state2.review.agenda[0].fen_before
+
+
+def test_completed_lesson_loads_fresh(stub_config):
+    from app.memory import save_lesson_metadata
+    from app.commands import CommandProcessor
+    from app.state import SessionState, TimelineManager
+    from tests.test_review import PGN as RPGN, _scripted_engines
+
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    save_lesson_metadata(stub_config.lesson_file,
+                         {"last_game_id": state.current_game_id, "last_agenda_index": 0,
+                          "lesson_status": "lesson_complete"})
+    state2 = SessionState()
+    proc2 = CommandProcessor(state2, TimelineManager(state2), _scripted_engines(), stub_config)
+    result = proc2.process(RPGN)
+    assert "STARTING position" in result.prompt
+    import chess as _chess
+    assert state2.board.fen() == _chess.STARTING_FEN

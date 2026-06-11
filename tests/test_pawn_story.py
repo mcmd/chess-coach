@@ -39,7 +39,8 @@ def test_pawn_story_does_not_claim_f_pawn_missing():
     event_text = " ".join(e["safe_summary"] for e in story["events"]).lower()
     assert "f-pawn" not in event_text
     assert "f2 pawn was gone" not in event_text
-    assert "your f-pawn was gone" in story["avoid_language"]
+    # The avoid-claim is derived from the board (f2 is present), not hardcoded.
+    assert any("f-pawn was gone (it is still on f2)" in a for a in story["avoid_language"])
 
 
 def test_g_file_not_called_open_when_pawns_on_g_file():
@@ -48,7 +49,9 @@ def test_g_file_not_called_open_when_pawns_on_g_file():
     story = analyze_pawn_structure_evolution(_review(), "white")
     g_status = story["final_pawn_snapshot"]["file_statuses"]["g"]
     assert g_status == "blocked_by_pawns"
-    assert "the g-file was open" in story["avoid_language"]
+    assert any(a.startswith("the g-file was open") for a in story["avoid_language"])
+    # No transcript residue: nothing about specific piece moves like Ne4.
+    assert not any("Ne4" in a for a in story["avoid_language"])
 
 
 def test_ne4_not_described_as_blockade():
@@ -71,5 +74,12 @@ def test_kingside_story_names_g4_pin_not_total_collapse():
     assert "g4" in text
     assert "pinned" in text
     assert "collapse" not in text
-    assert any("g4" in phrase and "hinge" in phrase for phrase in story["safe_language"])
-    assert any("Qxg4+" in phrase for phrase in story["safe_language"])
+    assert any("g4" in pair["vivid"] and "hinge" in pair["vivid"] for pair in story["safe_language"])
+    assert any("Qxg4+" in pair["concrete"] for pair in story["safe_language"])
+
+
+def test_safe_language_uses_vivid_concrete_pairs():
+    story = analyze_pawn_structure_evolution(_review(), "white")
+    assert story["safe_language"]
+    assert all(set(pair) == {"vivid", "concrete"} for pair in story["safe_language"])
+    assert any("pinned to the king" in pair["concrete"] for pair in story["safe_language"])

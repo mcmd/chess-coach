@@ -64,6 +64,16 @@ def test_illegal_answer_counts_as_attempt(stub_config):
     assert result["attempts_so_far"] == 1
 
 
+def test_candidate_list_requires_commitment_before_grading(stub_config):
+    fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
+    engines = FakeEngines(multipv={fen: [("c3e4", 300), ("e2e4", 0)]})
+    tools, _ = make_tools(stub_config, engines)
+    result = tools.evaluate_student_answer(fen, "I could do Qe4, or Ne4?")
+    assert result["verdict"] == "needs_commitment"
+    assert result["candidate_moves"] == ["Qe4", "Ne4"]
+    assert result["reveal_allowed"] is False
+
+
 # --- submit_diagnosis: closed taxonomy (F2) ---
 
 def test_diagnosis_rejects_free_text_category(stub_config):
@@ -106,6 +116,17 @@ def test_diagnosis_allows_mismatched_backend_recommendation_with_override(stub_c
     assert result["success"] is True
     assert "warning" in result
     assert state.diagnostics[0]["recommended_diagnosis"] == rec
+
+
+def test_diagnosis_rejects_boilerplate_override_when_mismatched(stub_config):
+    tools, state = make_tools(stub_config, _scripted_engines())
+    tools._review_and_load(REVIEW_PGN)
+    fen = state.review.agenda[0].fen_before
+    rec = state.review.agenda[0].recommended_diagnosis
+    wrong = next(c for c in ERROR_TAXONOMY if c != rec)
+    result = tools.submit_diagnosis(fen, wrong, "x", "y", override_reason="Matches backend recommendation")
+    assert "error" in result
+    assert state.diagnostics == []
 
 
 # --- tablebase gate ---
@@ -241,3 +262,31 @@ def test_explain_pawn_structure_evolution_returns_guardrails(stub_config):
     assert "safe_language" in result
     assert "avoid_language" in result
     assert any("open file" in rule for rule in result["language_guardrails"])
+
+
+# --- LESSON STATE FIXES: completion + no overwrites outside agenda moments ---
+
+def test_final_diagnosis_marks_lesson_complete(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    from app.memory import load_lesson_metadata
+    tools, state = make_tools(stub_config, _scripted_engines())
+    from app.review import review_game
+    state.review = review_game(RPGN, _scripted_engines(), stub_config)
+    state.current_game_id = "testgame1"
+    record = state.review.agenda[-1]  # the ONLY agenda moment here
+    result = tools.submit_diagnosis(record.fen_before, record.recommended_diagnosis, "x", "y")
+    assert result.get("success")
+    assert state.lesson_metadata["lesson_status"] == "lesson_complete"
+    stored = load_lesson_metadata(stub_config.lesson_file)
+    assert stored["lesson_status"] == "lesson_complete"
+    assert not tools._has_resume_metadata("testgame1")  # nothing to resume into
+
+
+def test_drill_grading_does_not_touch_lesson_state(stub_config):
+    tools, state = make_tools(stub_config, _answer_engines())
+    state.lesson_metadata = {"last_game_id": "g1", "last_agenda_index": 2,
+                             "lesson_status": "awaiting_diagnosis"}
+    # Grading a position that is NOT an agenda moment (no review loaded at all).
+    tools.evaluate_student_answer(START, "e4")
+    assert state.lesson_metadata["lesson_status"] == "awaiting_diagnosis"
+    assert state.lesson_metadata["last_agenda_index"] == 2
