@@ -103,6 +103,10 @@ class MoveRecord:
     best_line_motifs: list = field(default_factory=list)  # tactics the student MISSED
     suggested_categories: list = field(default_factory=list)
     position_facts: str = None  # backend-verified positional facts for the position before the move
+    lesson_objective: str = None
+    recommended_diagnosis: str = None
+    question_ladder: dict = field(default_factory=dict)
+    explanation_primitives: dict = field(default_factory=dict)
 
     @property
     def move_label(self) -> str:
@@ -261,6 +265,15 @@ class GameReview:
             if r.time_spent is not None:
                 flag = f" (flag: {r.time_flag})" if r.time_flag else ""
                 lines.append(f"  Time: spent {int(r.time_spent)}s, {int(r.clock_remaining)}s remaining{flag}.")
+            if r.lesson_objective:
+                lines.append(f"  Lesson objective: {r.lesson_objective}.")
+            if r.recommended_diagnosis:
+                lines.append(f"  Recommended diagnosis: {r.recommended_diagnosis} "
+                             "(use this unless the student's explanation proves a different root cause).")
+            if r.question_ladder:
+                ladder = " | ".join(f"L{level}: {text}" for level, text in r.question_ladder.items())
+                lines.append("  Question ladder (start at Level 0 or 1; use Level 2/3 only after failed attempts): "
+                             + ladder)
             secret = []
             if r.best_move_san:
                 secret.append(f"better was {r.best_move_san}" +
@@ -277,6 +290,9 @@ class GameReview:
                 secret.append(f"aspirational instinct: at ~{r.aspirational['elo']} Elo most players choose "
                               f"{r.aspirational['move']} ({r.aspirational['probability']:.0%}) — the instinct "
                               "the student is growing toward; share it AFTER the moment is resolved")
+            if r.explanation_primitives:
+                secret.append("reveal-phase explanation primitives: " + "; ".join(
+                    f"{k}={v}" for k, v in r.explanation_primitives.items() if v))
             if secret:
                 lines.append("  WITHHELD ANSWER (do NOT reveal until the student attempts; "
                              "verify attempts with evaluate_student_answer): " + " | ".join(secret))
@@ -285,8 +301,9 @@ class GameReview:
                              "(use it unless the conversation reveals a different root cause).")
         lines.append("")
         lines.append("Coaching protocol: for each moment, set the scene at the FEN BEFORE the move, "
-                     "ask ONE focused question (e.g. 'What was the threat?' or 'Find the better move'), "
-                     "grade answers with evaluate_student_answer, then teach the named motif/concept. "
+                     "ask ONE Level 0 or Level 1 question from the ladder, "
+                     "grade answers with evaluate_student_answer, ask the student WHY the move works, "
+                     "then teach using the reveal-phase explanation primitives. "
                      "Log each diagnosed mistake once with submit_diagnosis.")
         return "\n".join(lines)
 
@@ -644,9 +661,161 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
             pass
         r.suggested_categories = suggest_error_categories(r)
         r.position_facts = position_facts(board_before)
+        _attach_lesson_primitives(r, board_before, board_after)
         # Per-move Maia data was already collected during the main scan.
         _anticipate_wrong_answer(r, engines, board_before)
         _aspirational_instinct(r, engines, review)
+
+
+def _attach_lesson_primitives(r: MoveRecord, board_before: chess.Board, board_after: chess.Board) -> None:
+    r.lesson_objective = _infer_lesson_objective(r)
+    r.recommended_diagnosis = _recommended_diagnosis(r)
+    r.question_ladder = _question_ladder(r, board_before)
+    r.explanation_primitives = _explanation_primitives(r, board_before, board_after)
+
+
+def _infer_lesson_objective(r: MoveRecord) -> str:
+    cats = set(r.suggested_categories)
+    if "ignored_threat" in cats:
+        return "defend_against_direct_threat"
+    if "bad_trade" in cats:
+        return "material_vs_activity"
+    if "king_safety" in cats:
+        return "king_safety_before_material"
+    if "premature_attack" in cats:
+        return "improve_pieces_before_committing_pawns"
+    if r.time_flag in ("hope_chess", "time_scramble"):
+        return "threat_scan_under_time_pressure"
+    if r.is_capture:
+        return "material_temptation_vs_position_priority"
+    return "priority_selection"
+
+
+def _recommended_diagnosis(r: MoveRecord) -> str:
+    objective_map = {
+        "defend_against_direct_threat": "ignored_threat",
+        "material_vs_activity": "bad_trade",
+        "king_safety_before_material": "king_safety",
+        "improve_pieces_before_committing_pawns": "premature_attack",
+        "threat_scan_under_time_pressure": "time_management",
+        "material_temptation_vs_position_priority": "bad_trade",
+    }
+    mapped = objective_map.get(r.lesson_objective)
+    if mapped:
+        return mapped
+    if r.suggested_categories:
+        return r.suggested_categories[0]
+    if r.is_capture:
+        return "bad_trade"
+    return "calculation_error"
+
+
+def _question_ladder(r: MoveRecord, board_before: chess.Board) -> dict:
+    side = "White" if board_before.turn == chess.WHITE else "Black"
+    opponent = "Black" if side == "White" else "White"
+    ladder = {
+        0: f"{side} to move. What candidate moves would you consider, and what is {opponent} threatening?",
+    }
+    objective = r.lesson_objective or ""
+    if objective == "defend_against_direct_threat":
+        ladder[1] = "First identify the forcing threat against your king or material, then choose a move that answers it."
+    elif objective == "material_vs_activity":
+        ladder[1] = "This is not primarily about grabbing material. What move improves your active piece or supports your main asset?"
+    elif objective == "king_safety_before_material":
+        ladder[1] = "Before recapturing or taking material near your king, what defensive move reduces the opponent's forcing play?"
+    elif objective == "improve_pieces_before_committing_pawns":
+        ladder[1] = "Before changing the pawn structure, which piece still needs to join the position?"
+    else:
+        ladder[1] = "What is the position's most urgent priority before considering natural material moves?"
+
+    if r.best_move_san:
+        try:
+            move = board_before.parse_san(r.best_move_san)
+            piece = board_before.piece_at(move.from_square)
+            piece_name = chess.piece_name(piece.piece_type) if piece else "piece"
+            if chess.square_rank(move.from_square) in (0, 7):
+                ladder[2] = "Look at your back-rank pieces."
+            else:
+                ladder[2] = f"Look at your {piece_name}s."
+            article = "An" if piece_name[0].lower() in "aeiou" else "A"
+            ladder[3] = f"{article} {piece_name} move solves the problem."
+        except (ValueError, AttributeError):
+            pass
+    return ladder
+
+
+def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_after: chess.Board) -> dict:
+    data = {
+        "lesson_objective": r.lesson_objective,
+        "played_move": r.san,
+        "best_move": r.best_move_san,
+    }
+    if r.is_capture:
+        try:
+            played = chess.Move.from_uci(r.uci)
+            captured = board_before.piece_at(played.to_square)
+            if captured:
+                data["human_temptation"] = f"won a {chess.piece_name(captured.piece_type)} on {chess.square_name(played.to_square)}"
+        except ValueError:
+            pass
+
+    forcing = _first_forcing_punishment(board_after, r.punishment_line)
+    if forcing:
+        san, move = forcing
+        data["forcing_move"] = san
+        data["target_square"] = chess.square_name(move.to_square)
+        data["why_wrong_move_fails"] = (
+            f"{r.san} does not address {san}; the opponent gets a forcing move on "
+            f"{chess.square_name(move.to_square)}.")
+        if r.best_move_san:
+            works = _best_move_answer_to_target(board_before, r.best_move_san, move.to_square)
+            if works:
+                data["why_best_move_works"] = works
+    elif r.best_move_san:
+        data["why_best_move_works"] = (
+            f"{r.best_move_san} was the engine-verified improvement; use the line "
+            f"{' '.join(r.best_line)} to explain the concrete consequence." if r.best_line
+            else f"{r.best_move_san} was the engine-verified improvement.")
+
+    if r.time_flag:
+        data["process_habit"] = "Before moving quickly, ask what forcing checks, captures, or threats the opponent has."
+    elif r.is_capture:
+        data["process_habit"] = "Before taking material, ask what the position's urgent priority is."
+    else:
+        data["process_habit"] = "Name the position's urgent priority before choosing a natural move."
+    return data
+
+
+def _first_forcing_punishment(board_after: chess.Board, punishment_line: list):
+    if not punishment_line:
+        return None
+    try:
+        move = board_after.parse_san(punishment_line[0])
+    except ValueError:
+        return None
+    if board_after.gives_check(move) or board_after.is_capture(move):
+        return punishment_line[0], move
+    return None
+
+
+def _best_move_answer_to_target(board_before: chess.Board, best_san: str, target_sq: chess.Square) -> str:
+    try:
+        best = board_before.parse_san(best_san)
+    except ValueError:
+        return None
+    piece = board_before.piece_at(best.from_square)
+    after_best = board_before.copy(stack=False)
+    after_best.push(best)
+    if target_sq in after_best.attacks(best.to_square):
+        return (f"After {best_san}, the {chess.piece_name(piece.piece_type) if piece else 'piece'} "
+                f"on {chess.square_name(best.to_square)} controls {chess.square_name(target_sq)}, "
+                "so the opponent's forcing capture can be met tactically.")
+    defenders = [sq for sq in after_best.attackers(not after_best.turn, target_sq)
+                 if after_best.piece_at(sq) and after_best.piece_at(sq).color == board_before.turn]
+    if defenders:
+        names = ", ".join(chess.square_name(sq) for sq in defenders[:3])
+        return f"After {best_san}, {chess.square_name(target_sq)} is defended by {names}."
+    return None
 
 
 def _anticipate_wrong_answer(r: MoveRecord, engines, board_before: chess.Board) -> None:

@@ -14,6 +14,7 @@ class AppConfig:
     history_file: str
     dossier_file: str
     cli_history_file: str
+    lesson_file: str
     profile: str = None
     dark_terminal: bool = False
     player_name: str = None  # matched against PGN White/Black headers to find the student's side
@@ -60,6 +61,7 @@ Examples:
     HISTORY_FILE = "chess_coach_memory.json"
     DOSSIER_FILE = "player_dossier.json"
     CLI_HISTORY_FILE = "chess_cli_history.txt"
+    LESSON_FILE = "lesson_state.json"
 
     if not os.path.exists(ROOT_CONFIG_FILE):
         print(f"Error: {ROOT_CONFIG_FILE} not found in the root directory. Please create it first.")
@@ -78,6 +80,7 @@ Examples:
         HISTORY_FILE = os.path.join(profile_dir, "chess_coach_memory.json")
         DOSSIER_FILE = os.path.join(profile_dir, "player_dossier.json")
         CLI_HISTORY_FILE = os.path.join(profile_dir, "chess_cli_history.txt")
+        LESSON_FILE = os.path.join(profile_dir, "lesson_state.json")
         
         if not os.path.exists(CONFIG_FILE):
             print(f"Creating new config for profile '{args.profile}'.")
@@ -104,6 +107,7 @@ Examples:
         history_file=HISTORY_FILE,
         dossier_file=DOSSIER_FILE,
         cli_history_file=CLI_HISTORY_FILE,
+        lesson_file=LESSON_FILE,
         profile=args.profile,
         dark_terminal=args.dark_terminal or _is_dark_terminal() or app_config.get("dark_terminal", False),
         player_name=app_config.get("player_name"),

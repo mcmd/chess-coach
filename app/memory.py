@@ -58,6 +58,34 @@ _DOSSIER_DEFAULT = {
     "typicality_history": [],
 }
 
+_LESSON_DEFAULT = {
+    "last_game_id": None,
+    "last_agenda_index": 0,
+    "lesson_status": "unavailable",
+}
+
+
+def load_lesson_metadata(lesson_file: str) -> dict:
+    data = dict(_LESSON_DEFAULT)
+    if lesson_file and os.path.exists(lesson_file):
+        try:
+            with open(lesson_file, "r", encoding="utf-8") as f:
+                stored = json.load(f)
+            for key in _LESSON_DEFAULT:
+                if key in stored:
+                    data[key] = stored[key]
+        except (json.JSONDecodeError, OSError):
+            pass
+    return data
+
+
+def save_lesson_metadata(lesson_file: str, metadata: dict) -> None:
+    if not lesson_file:
+        return
+    data = dict(_LESSON_DEFAULT)
+    data.update(metadata or {})
+    _atomic_write_json(lesson_file, data)
+
 
 def load_dossier(dossier_file: str) -> dict:
     dossier = dict(_DOSSIER_DEFAULT)

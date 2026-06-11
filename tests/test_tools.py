@@ -1,8 +1,10 @@
 import chess
 
+from app.memory import load_lesson_metadata, save_lesson_metadata
 from app.state import SessionState, TimelineManager
 from app.tools import CoachTools, ERROR_TAXONOMY
 from tests.conftest import FakeEngines
+from tests.test_review import PGN as REVIEW_PGN, _scripted_engines
 
 START = chess.STARTING_FEN
 
@@ -82,6 +84,30 @@ def test_diagnosis_accepts_taxonomy_and_dedupes(stub_config):
     assert len(state.diagnostics) == 1
 
 
+def test_diagnosis_rejects_mismatched_backend_recommendation_without_override(stub_config):
+    tools, state = make_tools(stub_config, _scripted_engines())
+    tools._review_and_load(REVIEW_PGN)
+    fen = state.review.agenda[0].fen_before
+    rec = state.review.agenda[0].recommended_diagnosis
+    wrong = next(c for c in ERROR_TAXONOMY if c != rec)
+    result = tools.submit_diagnosis(fen, wrong, "x", "y")
+    assert "error" in result
+    assert result["recommended_diagnosis"] == rec
+    assert state.diagnostics == []
+
+
+def test_diagnosis_allows_mismatched_backend_recommendation_with_override(stub_config):
+    tools, state = make_tools(stub_config, _scripted_engines())
+    tools._review_and_load(REVIEW_PGN)
+    fen = state.review.agenda[0].fen_before
+    rec = state.review.agenda[0].recommended_diagnosis
+    wrong = next(c for c in ERROR_TAXONOMY if c != rec)
+    result = tools.submit_diagnosis(fen, wrong, "x", "y", override_reason="Student explained a different root cause.")
+    assert result["success"] is True
+    assert "warning" in result
+    assert state.diagnostics[0]["recommended_diagnosis"] == rec
+
+
 # --- tablebase gate ---
 
 def test_tablebase_refuses_middlegame_without_network(stub_config):
@@ -145,3 +171,73 @@ def test_withheld_answer_includes_verified_hint_facts(stub_config):
     assert facts["is_a_capture"] is False
     assert facts["gives_check"] is False
     assert "best_move" not in result                # still withheld
+
+
+# --- lesson resume/restart boundary ---
+
+class _FakeResponse:
+    status_code = 200
+    text = REVIEW_PGN
+
+
+def test_known_lichess_game_requires_resume_choice(stub_config):
+    save_lesson_metadata(stub_config.lesson_file, {
+        "last_game_id": "2dtDqQgR",
+        "last_agenda_index": 0,
+        "lesson_status": "awaiting_answer",
+    })
+    tools, state = make_tools(stub_config, _scripted_engines())
+    result = tools.fetch_lichess_game_by_id("2dtDqQgRy2OD")
+    assert result["resume_choice_required"] is True
+    assert result["game_id"] == "2dtDqQgR"
+    assert state.review is None
+
+
+def test_restart_known_lichess_game_loads_from_start(stub_config, monkeypatch):
+    save_lesson_metadata(stub_config.lesson_file, {
+        "last_game_id": "2dtDqQgR",
+        "last_agenda_index": 0,
+        "lesson_status": "awaiting_answer",
+    })
+    monkeypatch.setattr("app.tools.requests.get", lambda *args, **kwargs: _FakeResponse())
+    tools, state = make_tools(stub_config, _scripted_engines())
+    result = tools.fetch_lichess_game_by_id("2dtDqQgRy2OD", mode="restart")
+    assert "GAME REVIEW" in result["review_digest"]
+    assert state.review is not None
+    assert state.move_index == 0
+    meta = load_lesson_metadata(stub_config.lesson_file)
+    assert meta["last_game_id"] == "2dtDqQgR"
+    assert meta["lesson_status"] == "fresh_review"
+
+
+def test_continue_known_lichess_game_jumps_to_saved_agenda(stub_config, monkeypatch):
+    save_lesson_metadata(stub_config.lesson_file, {
+        "last_game_id": "2dtDqQgR",
+        "last_agenda_index": 0,
+        "lesson_status": "diagnosis_logged",
+    })
+    monkeypatch.setattr("app.tools.requests.get", lambda *args, **kwargs: _FakeResponse())
+    tools, state = make_tools(stub_config, _scripted_engines())
+    result = tools.fetch_lichess_game_by_id("2dtDqQgRy2OD", mode="continue")
+    assert result["resume"]["moment_number"] == 1
+    assert result["resume"]["move_label"] == "3. Qxf7+"
+    assert state.move_index == state.review.agenda_plies[0]
+    meta = load_lesson_metadata(stub_config.lesson_file)
+    assert meta["lesson_status"] == "awaiting_answer"
+
+
+def test_explain_pawn_structure_evolution_requires_loaded_review(stub_config):
+    tools, _ = make_tools(stub_config)
+    result = tools.explain_pawn_structure_evolution()
+    assert "error" in result
+
+
+def test_explain_pawn_structure_evolution_returns_guardrails(stub_config):
+    tools, state = make_tools(stub_config, _scripted_engines())
+    tools._review_and_load(REVIEW_PGN)
+    result = tools.explain_pawn_structure_evolution("white")
+    assert result["color"] == "white"
+    assert "language_guardrails" in result
+    assert "safe_language" in result
+    assert "avoid_language" in result
+    assert any("open file" in rule for rule in result["language_guardrails"])

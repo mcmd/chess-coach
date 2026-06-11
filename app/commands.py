@@ -3,9 +3,11 @@
 Extracted from coach.py so the command surface is importable and testable.
 Returns CommandResult objects instead of mutating the chat session directly.
 """
+import contextlib
 import io
 import os
 import random
+import re
 from dataclasses import dataclass
 
 import chess
@@ -41,10 +43,12 @@ def looks_like_pgn(text: str) -> bool:
     Prevents chat like 'why is 1. e4 best?' from clobbering the board."""
     if "[Event " in text:
         return True
-    if "1." not in text:
+    move_numbers = re.findall(r"\b\d+\.(?:\.\.)?\s*[A-Za-z0-9O+#=x-]+", text)
+    if len(move_numbers) < 3:
         return False
     try:
-        game = chess.pgn.read_game(io.StringIO(text))
+        with contextlib.redirect_stderr(io.StringIO()):
+            game = chess.pgn.read_game(io.StringIO(text))
     except Exception:
         return False
     return game is not None and len(list(game.mainline_moves())) >= 3
@@ -237,6 +241,13 @@ class CommandProcessor:
                 os.remove(self.config.history_file)
             except OSError:
                 pass
+        lesson_file = getattr(self.config, "lesson_file", None)
+        if lesson_file and os.path.exists(lesson_file):
+            try:
+                os.remove(lesson_file)
+            except OSError:
+                pass
+        self.state.lesson_metadata.clear()
         return CommandResult(message="[bold green]✨ Session memory, board state, and timeline wiped clean![/bold green]",
                              reset_chat=True)
 

@@ -17,6 +17,7 @@ __pycache__/
 profiles/
 chess_coach_memory.json
 chess_cli_history.txt
+lesson_state.json
 
 # Do not commit the root config, as it often contains local paths to executables
 # Consider providing a `config.example.json` instead

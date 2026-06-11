@@ -8,7 +8,9 @@ import requests
 from rich.panel import Panel
 
 from app.concepts import extract_board_features
+from app.memory import load_lesson_metadata, save_lesson_metadata
 from app.motifs import detect_motifs_in_line
+from app.pawn_story import analyze_pawn_structure_evolution
 from app.render import render_board_token
 from app.review import review_game, attach_board_tokens, cp_to_win_pct, MATE_CP
 from app.ui import console
@@ -48,6 +50,7 @@ class CoachTools:
         self.timeline = timeline
         self.engines = engines
         self.config = config
+        self.state.lesson_metadata = load_lesson_metadata(getattr(config, "lesson_file", None))
 
     # ------------------------------------------------------------------
     # ANALYSIS
@@ -247,10 +250,23 @@ class CoachTools:
                 temp.push(m)
             result["best_move"] = board.san(best_move)
             result["best_line"] = " ".join(pv_san)
+            record = self._agenda_record_for_fen(fen)
+            if record and getattr(record, "explanation_primitives", None):
+                result["explanation_primitives"] = record.explanation_primitives
+                result["recommended_diagnosis"] = getattr(record, "recommended_diagnosis", None)
+                result["lesson_objective"] = getattr(record, "lesson_objective", None)
+                result["next_step"] = ("Ask the student to explain WHY the move works before logging diagnosis; "
+                                       "then teach from these concrete primitives, not abstract pressure words.")
         else:
             result["note"] = "Answer withheld by backend. Give ONE hint and ask the student to try once more."
             result["hint_facts"] = self._hint_facts(board, best_move)
+        self._persist_lesson_progress(fen, "awaiting_diagnosis" if reveal else "awaiting_answer")
         return result
+
+    def _agenda_record_for_fen(self, fen: str):
+        if not self.state.review:
+            return None
+        return next((r for r in self.state.review.agenda if r.fen_before == fen), None)
 
     def _hint_facts(self, board: chess.Board, best_move: chess.Move) -> dict:
         """Verified facts about the withheld best move, so hints are never invented."""
@@ -388,7 +404,8 @@ class CoachTools:
     # ------------------------------------------------------------------
 
     def submit_diagnosis(self, fen: str, error_category: str, error_explanation: str,
-                         preventative_habit: str, confidence: float = 1.0) -> dict:
+                         preventative_habit: str, confidence: float = 1.0,
+                         override_reason: str = None) -> dict:
         """
         Logs a diagnosed mistake to the student's long-term dossier. Call this ONCE
         per distinct mistake, after the student has worked through it.
@@ -418,6 +435,8 @@ class CoachTools:
             error_explanation: One sentence explaining what went wrong in THIS position.
             preventative_habit: One actionable habit to avoid this mistake in the future.
             confidence: Your confidence in the diagnosis, 0.0-1.0.
+            override_reason: Required if you choose a category different from
+                the backend's recommended diagnosis for this agenda moment.
         """
         category = (error_category or "").strip().lower()
         if category not in ERROR_TAXONOMY:
@@ -427,6 +446,18 @@ class CoachTools:
         if any(d.get("fen") == fen for d in self.state.diagnostics):
             return {"success": True, "message": "Diagnosis already logged for this position. Do not call this tool again."}
 
+        record = self._agenda_record_for_fen(fen)
+        recommended = getattr(record, "recommended_diagnosis", None) if record else None
+        mismatch_warning = None
+        if recommended and category != recommended:
+            mismatch_warning = (f"Backend recommended '{recommended}' for this moment; "
+                                f"you logged '{category}'.")
+            if not override_reason:
+                return {"error": mismatch_warning + " Provide override_reason if the conversation revealed a different root cause.",
+                        "recommended_diagnosis": recommended,
+                        "chosen_category": category,
+                        "lesson_objective": getattr(record, "lesson_objective", None)}
+
         diagnosis = {
             "fen": fen,
             "error_category": category,
@@ -434,7 +465,12 @@ class CoachTools:
             "preventative_habit": (preventative_habit or "")[:200],
             "confidence": float(confidence),
         }
+        if recommended:
+            diagnosis["recommended_diagnosis"] = recommended
+        if override_reason:
+            diagnosis["override_reason"] = override_reason[:200]
         self.state.diagnostics.append(diagnosis)
+        self._persist_lesson_progress(fen, "diagnosis_logged")
 
         console.print()
         console.print(Panel(
@@ -444,7 +480,28 @@ class CoachTools:
             title="[dim italic]Diagnosis logged[/dim italic]",
             border_style="dim blue", expand=False
         ))
-        return {"success": True}
+        result = {"success": True}
+        if mismatch_warning:
+            result["warning"] = mismatch_warning
+        return result
+
+    def _persist_lesson_progress(self, fen: str = None, status: str = "awaiting_answer") -> None:
+        if not getattr(self.config, "lesson_file", None):
+            return
+        meta = dict(self.state.lesson_metadata or {})
+        if self.state.current_game_id:
+            meta["last_game_id"] = self.state.current_game_id
+        if self.state.review and fen:
+            for idx, record in enumerate(self.state.review.agenda):
+                if record.fen_before == fen:
+                    if status == "diagnosis_logged":
+                        meta["last_agenda_index"] = min(idx + 1, max(len(self.state.review.agenda) - 1, 0))
+                    else:
+                        meta["last_agenda_index"] = idx
+                    break
+        meta["lesson_status"] = status
+        self.state.lesson_metadata = meta
+        save_lesson_metadata(self.config.lesson_file, meta)
 
     def get_game_review_summary(self) -> dict:
         """
@@ -455,6 +512,26 @@ class CoachTools:
         if not self.state.review:
             return {"error": "No game review available. Ask the user to load a game first (/load_pgn or paste a PGN)."}
         return {"review_digest": self.state.review.digest()}
+
+    def explain_pawn_structure_evolution(self, color: str = None) -> dict:
+        """
+        Returns a backend-verified pawn-structure story for the loaded game.
+        Call this whenever the student asks how the pawn structure evolved.
+
+        The result includes square-level events, file-status labels, king-shield
+        facts, and language guardrails. Do not use structural terms like "open
+        file", "collapsed", "isolated", "passed", or "pinned" unless this tool
+        returned them.
+
+        Args:
+            color: Optional "white" or "black". Defaults to the student's side.
+        """
+        if not self.state.review:
+            return {"error": "No game review available. Load a game first."}
+        side = (color or self.state.review.student_color or "white").strip().lower()
+        if side not in ("white", "black"):
+            return {"error": "color must be 'white' or 'black'"}
+        return analyze_pawn_structure_evolution(self.state.review, side)
 
     # ------------------------------------------------------------------
     # EXTERNAL DATA
@@ -561,18 +638,41 @@ class CoachTools:
             "note": "status is from the side to move's perspective ('win' = side to move wins with perfect play)."
         }
 
-    def fetch_lichess_game_by_id(self, game_id: str) -> dict:
+    def fetch_lichess_game_by_id(self, game_id: str, mode: str = "auto") -> dict:
         """
         Downloads a game from Lichess.org, runs the full backend review
         (move classification + critical-moment agenda), loads it into the
-        timeline at move 0, and returns the review digest.
+        timeline, and returns the review digest.
+
+        If mode is "auto" and this game matches persisted lesson metadata,
+        this tool does NOT load the game yet. It returns `resume_choice_required`
+        so you can ask the student whether to continue from the saved moment or
+        restart from move 1. Call again with mode="continue" or mode="restart".
 
         Args:
             game_id: The 8-character Lichess game ID. Do NOT pass the full URL.
+            mode: "auto" (default), "continue", or "restart".
         """
         game_id = (game_id or "").strip()[:8]
         if not game_id.isalnum():
             return {"error": "Invalid Lichess game ID (must be 8 alphanumeric characters)."}
+        mode = (mode or "auto").strip().lower()
+        if mode not in ("auto", "continue", "restart"):
+            return {"error": "mode must be one of: auto, continue, restart"}
+        if mode == "auto" and self._has_resume_metadata(game_id):
+            meta = self.state.lesson_metadata
+            return {
+                "resume_choice_required": True,
+                "game_id": game_id,
+                "saved_lesson": {
+                    "last_agenda_index": meta.get("last_agenda_index", 0),
+                    "lesson_status": meta.get("lesson_status", "unknown"),
+                },
+                "message": ("I recognize this game from a previous session. Ask the student: "
+                            "continue from the saved lesson moment, or restart from move 1? "
+                            "If they choose continue, call fetch_lichess_game_by_id with mode='continue'. "
+                            "If they choose restart, call it with mode='restart'."),
+            }
         try:
             url = f"https://lichess.org/game/export/{game_id}"
             params = {"evals": "false", "clocks": "true", "opening": "true", "tags": "true"}
@@ -581,7 +681,7 @@ class CoachTools:
                 return {"error": f"Game with ID '{game_id}' not found."}
             if r.status_code != 200:
                 return {"error": f"Lichess API returned status {r.status_code}."}
-            return self._review_and_load(r.text)
+            return self._review_and_load(r.text, source_game_id=game_id, resume=(mode == "continue"))
         except Exception as e:
             return {"error": str(e)}
 
@@ -611,15 +711,52 @@ class CoachTools:
         except Exception as e:
             return {"error": str(e)}
 
-    def _review_and_load(self, pgn_text: str) -> dict:
+    def _has_resume_metadata(self, game_id: str) -> bool:
+        meta = self.state.lesson_metadata or {}
+        return (meta.get("last_game_id") == game_id
+                and meta.get("lesson_status") not in (None, "", "unavailable"))
+
+    def _review_and_load(self, pgn_text: str, source_game_id: str = None, resume: bool = False) -> dict:
         console.print("[dim yellow]↳ Running full engine review on the downloaded game (may take a minute)...[/dim yellow]")
         review = review_game(pgn_text, self.engines, self.config)
         if review is None:
             return {"error": "Could not parse a game with moves from the downloaded PGN."}
         self.timeline.load_game(review.game)
         self.state.review = review
+        self.state.current_game_id = source_game_id
         self.state.socratic_attempts.clear()
         attach_board_tokens(review, self.state, invert=getattr(self.config, "dark_terminal", False))
+        meta = dict(self.state.lesson_metadata or {})
+        if source_game_id:
+            meta["last_game_id"] = source_game_id
+        if resume:
+            agenda_index = int(meta.get("last_agenda_index") or 0)
+            agenda_index = max(0, min(agenda_index, max(len(review.agenda_plies) - 1, 0)))
+            if review.agenda_plies:
+                self.timeline.go_to_ply(review.agenda_plies[agenda_index])
+            meta["last_agenda_index"] = agenda_index
+            meta["lesson_status"] = "awaiting_answer"
+            self.state.lesson_metadata = meta
+            if getattr(self.config, "lesson_file", None):
+                save_lesson_metadata(self.config.lesson_file, meta)
+            record = review.agenda[agenda_index] if review.agenda else None
+            return {
+                "review_digest": review.digest(),
+                "resume": {
+                    "agenda_index": agenda_index,
+                    "moment_number": agenda_index + 1,
+                    "move_label": record.move_label if record else None,
+                    "fen_before": record.fen_before if record else None,
+                    "board_token": record.board_token if record else None,
+                    "lesson_status": meta.get("lesson_status"),
+                },
+                "board_state": "Loaded at the saved agenda position. Continue that moment unless the student redirects.",
+            }
+        meta.setdefault("last_agenda_index", 0)
+        meta["lesson_status"] = "fresh_review"
+        self.state.lesson_metadata = meta
+        if source_game_id and getattr(self.config, "lesson_file", None):
+            save_lesson_metadata(self.config.lesson_file, meta)
         return {"review_digest": review.digest(),
                 "board_state": "Loaded at the STARTING position. The user steps through with /next."}
 
@@ -628,7 +765,8 @@ class CoachTools:
         return [
             self.analyze_position, self.evaluate_student_answer, self.predict_human_move,
             self.play_sparring_reply, self.execute_coach_move, self.submit_diagnosis,
-            self.get_game_review_summary, self.get_opening_repertoire,
+            self.get_game_review_summary, self.explain_pawn_structure_evolution,
+            self.get_opening_repertoire,
             self.query_endgame_tablebase, self.fetch_lichess_game_by_id,
             self.fetch_chessgames_com_game,
         ]

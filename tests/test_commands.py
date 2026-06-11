@@ -28,6 +28,14 @@ def test_chat_mentioning_move_one_is_not_a_pgn():
     assert not looks_like_pgn("why is 1. e4 considered the best move for beginners?")
 
 
+def test_prose_with_move_names_and_squares_is_not_a_pgn(capsys):
+    text = ("There are only two possible moves here, Kxg2 or Rfe1. "
+            "Leaving the pawn on g2 gives me shelter.")
+    assert not looks_like_pgn(text)
+    captured = capsys.readouterr()
+    assert "illegal san" not in captured.err.lower()
+
+
 def test_real_pgn_detected():
     assert looks_like_pgn(PGN)
     assert looks_like_pgn("1. e4 e5 2. Nf3 Nc6 3. Bb5 a6")

@@ -95,5 +95,6 @@ def stub_config(tmp_path):
         history_file=str(tmp_path / "history.json"),
         dossier_file=str(tmp_path / "dossier.json"),
         cli_history_file=str(tmp_path / "cli_history.txt"),
+        lesson_file=str(tmp_path / "lesson_state.json"),
         player_name="mcmd",
     )

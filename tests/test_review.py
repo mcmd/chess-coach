@@ -348,3 +348,15 @@ def test_phase_alignment_breakdown_in_digest():
     review = review_game(PGN, _scripted_engines(), _Cfg())
     assert review.records[0].phase == "opening"
     assert "opening" in review.digest().split("Human-alignment")[1].split("\n")[0]
+
+
+def test_agenda_has_question_ladder_and_reveal_primitives():
+    review = review_game(PGN, _scripted_engines(), _Cfg())
+    record = review.agenda[0]
+    assert record.lesson_objective
+    assert record.recommended_diagnosis
+    assert record.question_ladder[0].startswith("White to move")
+    assert "Level 0 or Level 1" in review.digest()
+    assert "Recommended diagnosis" in review.digest()
+    assert record.explanation_primitives["played_move"] == "Qxf7+"
+    assert "reveal-phase explanation primitives" in review.digest()

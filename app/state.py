@@ -14,6 +14,8 @@ class SessionState:
     board_counter: int = 0
     review: object = None                       # GameReview of the loaded game
     socratic_attempts: dict = field(default_factory=dict)  # fen -> attempt count
+    lesson_metadata: dict = field(default_factory=dict)    # persisted resume/restart boundary
+    current_game_id: str = None
 
 class TimelineManager:
     """Safely manages all physical board mutations, branching invariants, and PGN metadata."""
@@ -37,6 +39,7 @@ class TimelineManager:
         self.state.diagnostics.clear()
         self.state.review = None
         self.state.socratic_attempts.clear()
+        self.state.current_game_id = None
         self.pgn_nodes = []
 
     def load_game(self, game: chess.pgn.Game):
