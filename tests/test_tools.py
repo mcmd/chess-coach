@@ -473,5 +473,8 @@ def test_wrong_threat_includes_verified_comparison(stub_config):
     result = tools.evaluate_threat_answer(THREAT_FEN, "a5")
     comparison = result["comparison"]
     assert comparison["engine_main_threat"] == "mate in 1 if you do nothing"
+    assert comparison["engine_main_threat_line"] == "Qh4#"
+    assert comparison["student_named_move_is_legal"] is True
     assert comparison["your_named_threat_gain_for_opponent"] == "+0.00"
+    assert "not the verified main threat" in comparison["secondary_threat_guidance"]
     assert "NEVER invent a geometric reason" in comparison["note"]

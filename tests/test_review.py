@@ -350,6 +350,32 @@ def test_phase_alignment_breakdown_in_digest():
     assert "opening" in review.digest().split("Human-alignment")[1].split("\n")[0]
 
 
+def test_opening_alignment_facts_separate_book_from_maia():
+    from app.review import MoveRecord, _opening_alignment_facts
+    records = [
+        MoveRecord(
+            ply=0, number=1, color="white", san="e4", uci="e2e4",
+            fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+            eval_before_cp=0, eval_after_cp=0, drop_pct=0, quality="good",
+            phase="opening", maia_top=[{"move": "e4", "probability": 0.5}],
+            was_maia_top=True, book_share=0.32,
+        ),
+        MoveRecord(
+            ply=2, number=2, color="white", san="Nf3", uci="g1f3",
+            fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+            eval_before_cp=0, eval_after_cp=0, drop_pct=0, quality="good",
+            phase="opening", maia_top=[{"move": "Nc3", "probability": 0.4}],
+            was_maia_top=False,
+        ),
+    ]
+    facts = _opening_alignment_facts(records)
+    assert "book/theory" in facts
+    assert "Maia human-commonness" in facts
+    assert "DIFFERENT" in facts
+    assert "1/2 student opening moves were in the masters database" in facts
+    assert "matched Maia's top move on 1/2 student opening moves" in facts
+
+
 def test_agenda_has_question_ladder_and_reveal_primitives():
     review = review_game(PGN, _scripted_engines(), _Cfg())
     record = review.agenda[0]
@@ -434,6 +460,61 @@ def test_practical_mistake_flagged_with_narrow_saving_resource():
     assert "saving resource" in digest
 
 
+def test_agenda_enrichment_uses_configured_engine_limits():
+    class Cfg(_Cfg):
+        agenda_best_depth = 21
+        agenda_best_time = 7.0
+        agenda_punishment_depth = 19
+        agenda_punishment_time = 5.0
+        practicality_depth = 17
+        practicality_time = 3.5
+
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(
+        evals=evals,
+        multipv={fens[5]: [("e8f7", 700)]},
+        maia={fens[4]: {"h5f7": 0.45}},
+    )
+    engines.config = Cfg()
+
+    review_game(PGN, engines, Cfg())
+
+    assert any(c["depth"] == 21 and c["time_cap"] == 7.0 and c["multipv"] == 3
+               for c in engines.top_line_calls)
+    assert any(c["depth"] == 19 and c["time_cap"] == 5.0 and c["multipv"] == 1
+               for c in engines.top_line_calls)
+
+
+def test_practicality_probe_uses_configured_engine_limits():
+    class Cfg(_Cfg):
+        practicality_depth = 17
+        practicality_time = 3.5
+
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    reply_board = chess.Board(fens[6])
+    saving_uci = next(iter(reply_board.legal_moves)).uci()
+    engines = FakeEngines(
+        evals=evals,
+        multipv={
+            fens[5]: [("e8f7", -20)],
+            fens[6]: [(saving_uci, 300), ("d2d4", 0)],
+        },
+        maia={fens[4]: {"h5f7": 0.45}, fens[6]: {saving_uci: 0.07}},
+    )
+    engines.config = Cfg()
+
+    review_game(PGN, engines, Cfg())
+
+    assert any(c["depth"] == 17 and c["time_cap"] == 3.5 and c["multipv"] == 2
+               for c in engines.top_line_calls)
+
+
 def test_concrete_mistake_flagged_when_deep_analysis_confirms_loss():
     fens = _fens_of(PGN)
     evals = {fen: 0 for fen in fens}
@@ -471,3 +552,22 @@ def test_forcing_check_punishment_recommends_ignored_threat():
     assert _infer_lesson_objective(r) == "defend_against_direct_threat"
     r.lesson_objective = "defend_against_direct_threat"
     assert _recommended_diagnosis(r) == "ignored_threat"
+
+
+def test_pawn_push_to_avoid_tension_is_not_missed_fork():
+    from app.review import MoveRecord, suggest_error_categories, _infer_lesson_objective, _recommended_diagnosis
+    r = MoveRecord(
+        ply=32, number=17, color="white", san="d5", uci="d4d5",
+        fen_before="r4rk1/p4ppp/n1pq4/1p2p3/1P1PP1n1/P1N2N2/4QPPP/R4RK1 w - - 0 17",
+        fen_after="r4rk1/p4ppp/n1pq4/1p1Pp3/1P2P1n1/P1N2N2/4QPPP/R4RK1 b - - 0 17",
+        eval_before_cp=50, eval_after_cp=-30, drop_pct=10.2,
+        quality="inaccuracy", best_move_san="Rad1",
+        best_line_motifs=[{"motif": "knight_fork", "detail": "synthetic tactical residue"}],
+    )
+    cats = suggest_error_categories(r)
+    assert cats[0] == "premature_attack"
+    assert "missed_fork" not in cats
+    r.suggested_categories = cats
+    assert _infer_lesson_objective(r) == "improve_pieces_before_committing_pawns"
+    r.lesson_objective = "improve_pieces_before_committing_pawns"
+    assert _recommended_diagnosis(r) == "premature_attack"

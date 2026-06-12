@@ -454,6 +454,10 @@ class CoachTools:
             "your_named_threat_gain_for_opponent": (
                 f"{student_gain_cp / 100.0:+.2f}" if student_gain_cp is not None else "unknown"),
             "engine_main_threat": threats[0].get("threat") if threats else "none found",
+            "engine_main_threat_line": threats[0].get("threat_line") if threats else None,
+            "student_named_move_is_legal": True,
+            "secondary_threat_guidance": "If the named move is legal and thematically relevant, say so, "
+                                         "but state that it is not the verified main threat.",
             "note": "Explain why the named move is secondary or not a threat ONLY from these "
                     "numbers and lines. NEVER invent a geometric reason (blocked pawns, pins, "
                     "defenders) that no tool stated — call analyze_position if you need geometry.",

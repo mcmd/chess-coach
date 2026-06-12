@@ -221,6 +221,9 @@ class GameReview:
             lines.append(f"Human-alignment: the student played Maia's most-likely human move in "
                          f"{matched}/{len(with_maia)} moves ({breakdown}). Big divergence in one "
                          "phase shows WHERE the student differs from peers.")
+            opening_alignment = _opening_alignment_facts(student_records)
+            if opening_alignment:
+                lines.append(opening_alignment)
         praised = [(r, r.brilliancy_note or r.avoided_natural_mistake)
                    for r in student_records
                    if r.brilliancy_note or r.avoided_natural_mistake][:3]
@@ -250,6 +253,35 @@ class GameReview:
                      "then teach using the reveal-phase explanation primitives. "
                      "Log each diagnosed mistake once with submit_diagnosis.")
         return "\n".join(lines)
+
+
+def _opening_alignment_facts(student_records: list) -> str:
+    """Separate master-book facts from Maia human-commonness facts.
+    The coach was observed merging these into "most common human moves for the
+    first 7 moves" without the exact backend fact being present."""
+    opening = [r for r in student_records if r.phase == "opening"]
+    if not opening:
+        return ""
+    maia_seen = [r for r in opening if r.maia_top]
+    book_seen = [r for r in opening if r.book_share]
+    parts = []
+    if book_seen:
+        last = book_seen[-1].move_label
+        parts.append(f"book/theory: {len(book_seen)}/{len(opening)} student opening moves were in the masters database through {last}")
+    if maia_seen:
+        matches = sum(1 for r in maia_seen if r.was_maia_top)
+        streak = 0
+        for r in maia_seen:
+            if r.was_maia_top:
+                streak += 1
+            else:
+                break
+        parts.append(f"Maia human-commonness: matched Maia's top move on {matches}/{len(maia_seen)} student opening moves"
+                     + (f"; opening streak from move 1 was {streak}" if streak else ""))
+    if not parts:
+        return ""
+    return ("Opening alignment facts (book theory and human-commonness are DIFFERENT; "
+            "do not merge them): " + "; ".join(parts) + ".")
 
 
 def moment_digest_lines(i: int, r: MoveRecord) -> list:
@@ -765,6 +797,10 @@ def _tablebase_verify(r: MoveRecord) -> None:
                             f"{preserving} of {len(moves)} legal moves preserve that result.")
 
 
+def _engine_setting(engines, name: str, default):
+    return getattr(getattr(engines, "config", None), name, default)
+
+
 def _enrich_agenda(review: GameReview, engines, online: bool = True):
     for ply in review.agenda_plies:
         r = review.records[ply]
@@ -780,7 +816,10 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
                 pass
 
         try:
-            infos = engines.top_lines(board_before, multipv=3, depth=18, time_cap=3.0)
+            infos = engines.top_lines(
+                board_before, multipv=3,
+                depth=int(_engine_setting(engines, "agenda_best_depth", 20)),
+                time_cap=float(_engine_setting(engines, "agenda_best_time", 6.0)))
             pv = infos[0].get("pv") or []
             r.best_line = _pv_to_san(board_before, pv[:8])
             r.best_line_motifs = detect_motifs_in_line(board_before, r.best_line)
@@ -789,7 +828,10 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
 
         deep_after_white_cp = None
         try:
-            infos = engines.top_lines(board_after, multipv=1, depth=16, time_cap=2.0)
+            infos = engines.top_lines(
+                board_after, multipv=1,
+                depth=int(_engine_setting(engines, "agenda_punishment_depth", 18)),
+                time_cap=float(_engine_setting(engines, "agenda_punishment_time", 4.0)))
             pv = infos[0].get("pv") or []
             r.punishment_line = _pv_to_san(board_after, pv[:8])
             r.motifs = detect_motifs_in_line(board_after, r.punishment_line)
@@ -836,7 +878,10 @@ def _assess_practicality(r: MoveRecord, engines, review: GameReview, deep_after_
             reply_board = chess.Board(r.fen_after)
             reply_board.push_san(r.punishment_line[0])
             if not reply_board.is_game_over():
-                infos = engines.top_lines(reply_board, multipv=2, depth=12, time_cap=1.5)
+                infos = engines.top_lines(
+                    reply_board, multipv=2,
+                    depth=int(_engine_setting(engines, "practicality_depth", 16)),
+                    time_cap=float(_engine_setting(engines, "practicality_time", 3.0)))
                 pov = reply_board.turn
                 pv = infos[0].get("pv") or []
                 if pv:
@@ -880,6 +925,8 @@ def _attach_lesson_primitives(r: MoveRecord, board_before: chess.Board, board_af
 
 def _infer_lesson_objective(r: MoveRecord) -> str:
     cats = set(r.suggested_categories)
+    if _punishment_starts_with_forcing_check(r):
+        return "defend_against_direct_threat"
     if "ignored_threat" in cats:
         return "defend_against_direct_threat"
     if "bad_trade" in cats:
@@ -896,6 +943,8 @@ def _infer_lesson_objective(r: MoveRecord) -> str:
 
 
 def _recommended_diagnosis(r: MoveRecord) -> str:
+    if _punishment_starts_with_forcing_check(r):
+        return "ignored_threat"
     objective_map = {
         "defend_against_direct_threat": "ignored_threat",
         "material_vs_activity": "bad_trade",
@@ -912,6 +961,20 @@ def _recommended_diagnosis(r: MoveRecord) -> str:
     if r.is_capture:
         return "bad_trade"
     return "calculation_error"
+
+
+def _punishment_starts_with_forcing_check(r: MoveRecord) -> bool:
+    if not r.punishment_line:
+        return False
+    first = r.punishment_line[0]
+    if first.endswith(("+", "#")):
+        return True
+    try:
+        board = chess.Board(r.fen_after)
+        move = board.parse_san(first)
+        return board.gives_check(move)
+    except (ValueError, AssertionError):
+        return False
 
 
 def _question_ladder(r: MoveRecord, board_before: chess.Board) -> dict:
@@ -1165,11 +1228,24 @@ def suggest_error_categories(record: MoveRecord) -> list:
     MISSED map to missed_*; tactics in the opponent's punishment map to what
     the student failed to see coming."""
     suggestions = []
+    try:
+        played = chess.Move.from_uci(record.uci)
+        before = chess.Board(record.fen_before)
+        piece = before.piece_at(played.from_square)
+        best = before.parse_san(record.best_move_san) if record.best_move_san else None
+        best_piece = before.piece_at(best.from_square) if best else None
+        if (piece and piece.piece_type == chess.PAWN and best_piece
+                and best_piece.piece_type in (chess.ROOK, chess.KNIGHT, chess.BISHOP)
+                and not record.is_capture):
+            suggestions.append("premature_attack")
+    except (ValueError, AssertionError, AttributeError):
+        pass
     missed_kinds = {m["motif"] for m in record.best_line_motifs}
     punish_kinds = {m["motif"] for m in record.motifs}
 
     if any(k.endswith("fork") for k in missed_kinds):
-        suggestions.append("missed_fork")
+        if "premature_attack" not in suggestions:
+            suggestions.append("missed_fork")
     if missed_kinds & {"pin", "skewer"}:
         suggestions.append("missed_pin_or_skewer")
     if missed_kinds & {"checkmate", "back_rank_mate", "smothered_mate"}:

@@ -82,8 +82,11 @@ class EngineManager:
             probe.push(chess.Move.null())
             current_score, _ = self.quick_eval(board.fen())
             current_cp_opp = current_score.pov(probe.turn).score(mate_score=100000)
-            infos = self.top_lines(probe, multipv=multipv, depth=12,
-                                   time_cap=self.THREAT_TIME_CAP)
+            depth = int(getattr(self.config, "threat_depth", 18))
+            time_cap = float(getattr(self.config, "threat_time", self.THREAT_TIME_CAP))
+            mpv = int(getattr(self.config, "threat_multipv", multipv))
+            infos = self.top_lines(probe, multipv=mpv, depth=depth,
+                                   time_cap=time_cap)
         except Exception:
             return []
 

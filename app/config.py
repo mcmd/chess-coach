@@ -19,8 +19,20 @@ class AppConfig:
     dark_terminal: bool = False
     player_name: str = None  # matched against PGN White/Black headers to find the student's side
     trace: bool = False      # show tool calls and engine invocations
-    review_eval_time: float = 0.5  # Stockfish seconds per position in the game-review scan
     use_online_databases: bool = True  # opening explorer + tablebase enrichment of reviews
+
+    # Engine quality knobs. Broad scans are cheaper; agenda/threat/practicality
+    # analysis is where extra time most directly improves coaching quality.
+    review_eval_time: float = 1.0
+    agenda_best_depth: int = 20
+    agenda_best_time: float = 6.0
+    agenda_punishment_depth: int = 18
+    agenda_punishment_time: float = 4.0
+    threat_depth: int = 18
+    threat_time: float = 4.0
+    threat_multipv: int = 3
+    practicality_depth: int = 16
+    practicality_time: float = 3.0
     batch_eval_time: float = 0.4   # Stockfish seconds per position in the /batch fast scan
     batch_max_games: int = 50      # cap on games per /batch run
     batch_top_patterns: int = 3    # patterns presented in the training plan
@@ -96,6 +108,10 @@ Examples:
 
     with open(CONFIG_FILE, "r") as f:
         app_config = json.load(f)
+    engine_config = app_config.get("engine", {})
+
+    def engine_value(name, default):
+        return engine_config.get(name, app_config.get(name, default))
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -116,9 +132,18 @@ Examples:
         dark_terminal=args.dark_terminal or _is_dark_terminal() or app_config.get("dark_terminal", False),
         player_name=app_config.get("player_name"),
         trace=args.trace or app_config.get("trace", False),
-        review_eval_time=float(app_config.get("review_eval_time", 0.5)),
         use_online_databases=bool(app_config.get("use_online_databases", True)),
-        batch_eval_time=float(app_config.get("batch_eval_time", 0.4)),
+        review_eval_time=float(engine_value("review_eval_time", 1.0)),
+        agenda_best_depth=int(engine_value("agenda_best_depth", 20)),
+        agenda_best_time=float(engine_value("agenda_best_time", 6.0)),
+        agenda_punishment_depth=int(engine_value("agenda_punishment_depth", 18)),
+        agenda_punishment_time=float(engine_value("agenda_punishment_time", 4.0)),
+        threat_depth=int(engine_value("threat_depth", 18)),
+        threat_time=float(engine_value("threat_time", 4.0)),
+        threat_multipv=int(engine_value("threat_multipv", 3)),
+        practicality_depth=int(engine_value("practicality_depth", 16)),
+        practicality_time=float(engine_value("practicality_time", 3.0)),
+        batch_eval_time=float(engine_value("batch_eval_time", 0.4)),
         batch_max_games=int(app_config.get("batch_max_games", 50)),
         batch_top_patterns=int(app_config.get("batch_top_patterns", 3)),
         batch_reps=int(app_config.get("batch_reps", 3)),

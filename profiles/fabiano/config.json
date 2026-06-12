@@ -1,0 +1,20 @@
+{
+    "user_elo": 2800,
+    "language": "English",
+    "stockfish_path": "C:\\Users\\Shadow\\Downloads\\stockfish\\stockfish-windows-x86-64-avx2.exe",
+    "gemini_model": "gemini-3.1-pro-preview",
+    "profiles_dir": "./profiles",
+    "engine": {
+        "review_eval_time": 1.0,
+        "agenda_best_depth": 20,
+        "agenda_best_time": 6.0,
+        "agenda_punishment_depth": 18,
+        "agenda_punishment_time": 4.0,
+        "threat_depth": 18,
+        "threat_time": 4.0,
+        "threat_multipv": 3,
+        "practicality_depth": 16,
+        "practicality_time": 3.0,
+        "batch_eval_time": 0.4
+    }
+}

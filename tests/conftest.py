@@ -29,6 +29,7 @@ class FakeEngines:
         self.config = None
         self.quick_eval_calls = 0
         self.maia_calls = 0
+        self.top_line_calls = []
 
     def quick_eval(self, fen, time_limit=0.3):
         self.quick_eval_calls += 1
@@ -36,6 +37,8 @@ class FakeEngines:
         return chess.engine.PovScore(chess.engine.Cp(cp), chess.WHITE), self.bests.get(fen)
 
     def top_lines(self, board, multipv=3, depth=18, time_cap=None):
+        self.top_line_calls.append({"fen": board.fen(), "multipv": multipv,
+                                    "depth": depth, "time_cap": time_cap})
         entries = self.multipv.get(board.fen())
         infos = []
         if entries:

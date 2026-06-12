@@ -7,7 +7,18 @@
     "player_name": "your-lichess-username",
     "dark_terminal": false,
     "trace": false,
-    "review_eval_time": 0.5,
     "use_online_databases": true,
-    "batch_eval_time": 0.4
+    "engine": {
+        "review_eval_time": 1.0,
+        "agenda_best_depth": 20,
+        "agenda_best_time": 6.0,
+        "agenda_punishment_depth": 18,
+        "agenda_punishment_time": 4.0,
+        "threat_depth": 18,
+        "threat_time": 4.0,
+        "threat_multipv": 3,
+        "practicality_depth": 16,
+        "practicality_time": 3.0,
+        "batch_eval_time": 0.4
+    }
 }

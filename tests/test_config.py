@@ -1,0 +1,43 @@
+import json
+
+from app.config import load_config
+
+
+def test_load_config_reads_nested_engine_section(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({
+        "user_elo": 1150,
+        "language": "English",
+        "stockfish_path": "stockfish",
+        "gemini_model": "test-model",
+        "engine": {
+            "review_eval_time": 1.25,
+            "agenda_best_depth": 21,
+            "agenda_best_time": 7.0,
+            "agenda_punishment_depth": 19,
+            "agenda_punishment_time": 5.0,
+            "threat_depth": 18,
+            "threat_time": 4.0,
+            "threat_multipv": 3,
+            "practicality_depth": 17,
+            "practicality_time": 3.5,
+            "batch_eval_time": 0.45,
+        },
+    }), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr("sys.argv", ["coach.py"])
+
+    config = load_config()
+
+    assert config.review_eval_time == 1.25
+    assert config.agenda_best_depth == 21
+    assert config.agenda_best_time == 7.0
+    assert config.agenda_punishment_depth == 19
+    assert config.agenda_punishment_time == 5.0
+    assert config.threat_depth == 18
+    assert config.threat_time == 4.0
+    assert config.threat_multipv == 3
+    assert config.practicality_depth == 17
+    assert config.practicality_time == 3.5
+    assert config.batch_eval_time == 0.45
