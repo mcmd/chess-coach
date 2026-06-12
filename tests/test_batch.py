@@ -225,7 +225,8 @@ def test_saved_report_reloads_without_rescanning(stub_config):
     assert len(loaded.records) == 3
     assert loaded.patterns[0].count == 3
     assert loaded.records[0].question_ladder  # int keys restored after JSON round-trip
-    assert 0 in loaded.records[0].question_ladder
+    assert 1 in loaded.records[0].question_ladder
+    assert loaded.records[0].initial_question.startswith("White to move")
     assert "BATCH TRAINING REPORT" in loaded.digest()
 
 

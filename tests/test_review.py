@@ -381,12 +381,16 @@ def test_agenda_has_question_ladder_and_reveal_primitives():
     record = review.agenda[0]
     assert record.lesson_objective
     assert record.recommended_diagnosis
-    assert record.question_ladder[0].startswith("White to move")
-    assert "Level 0 or Level 1" in review.digest()
+    assert record.initial_question.startswith("White to move")
+    assert 0 not in record.question_ladder
+    assert "Initial question (ask this EXACTLY first" in review.digest()
+    assert "Level 0 or Level 1" not in review.digest()
+    assert "Hint ladder (use only after the student attempts" in review.digest()
     assert "Recommended diagnosis" in review.digest()
     assert record.explanation_primitives["played_move"] == "Qxf7+"
     assert record.explanation_primitives["played_move_label"] == "3. Qxf7+"
     assert "best_move_label" in record.explanation_primitives
+    assert "diagnosis_sentence" in record.explanation_primitives
     assert "reveal-phase explanation primitives" in review.digest()
 
 
@@ -552,6 +556,28 @@ def test_forcing_check_punishment_recommends_ignored_threat():
     assert _infer_lesson_objective(r) == "defend_against_direct_threat"
     r.lesson_objective = "defend_against_direct_threat"
     assert _recommended_diagnosis(r) == "ignored_threat"
+
+
+def test_material_grab_recaptured_is_not_taught_as_standing_square_threat():
+    from app.review import MoveRecord, suggest_error_categories, _infer_lesson_objective, _recommended_diagnosis
+    before = chess.Board("r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20")
+    after = before.copy(stack=False)
+    after.push_san("Nxb5")
+    r = MoveRecord(
+        ply=38, number=20, color="white", san="Nxb5", uci="c3b5",
+        fen_before=before.fen(), fen_after=after.fen(),
+        eval_before_cp=350, eval_after_cp=90, drop_pct=19.1,
+        quality="inaccuracy", best_move_san="Ne4", is_capture=True,
+        punishment_line=["Nxb5"],
+        motifs=[{"motif": "knight_fork", "detail": "synthetic residue"}],
+    )
+    cats = suggest_error_categories(r)
+    assert cats[0] == "bad_trade"
+    assert "ignored_threat" not in cats
+    r.suggested_categories = cats
+    assert _infer_lesson_objective(r) == "material_vs_activity"
+    r.lesson_objective = "material_vs_activity"
+    assert _recommended_diagnosis(r) == "bad_trade"
 
 
 def test_pawn_push_to_avoid_tension_is_not_missed_fork():

@@ -110,6 +110,7 @@ class MoveRecord:
     position_facts: str = None  # backend-verified positional facts for the position before the move
     lesson_objective: str = None
     recommended_diagnosis: str = None
+    initial_question: str = None
     question_ladder: dict = field(default_factory=dict)
     explanation_primitives: dict = field(default_factory=dict)
 
@@ -248,7 +249,8 @@ class GameReview:
             lines.extend(moment_digest_lines(i, r))
         lines.append("")
         lines.append("Coaching protocol: for each moment, set the scene at the FEN BEFORE the move, "
-                     "ask ONE Level 0 or Level 1 question from the ladder, "
+                     "ask the Initial question EXACTLY as the first prompt, "
+                     "use the hint ladder only after the student has made an attempt or asked for help, "
                      "grade answers with evaluate_student_answer, ask the student WHY the move works, "
                      "then teach using the reveal-phase explanation primitives. "
                      "Log each diagnosed mistake once with submit_diagnosis.")
@@ -340,9 +342,11 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
     if r.recommended_diagnosis:
         lines.append(f"  Recommended diagnosis: {r.recommended_diagnosis} "
                      "(use this unless the student's explanation proves a different root cause).")
+    if r.initial_question:
+        lines.append(f"  Initial question (ask this EXACTLY first; do not start from hints): {r.initial_question}")
     if r.question_ladder:
         ladder = " | ".join(f"L{level}: {text}" for level, text in r.question_ladder.items())
-        lines.append("  Question ladder (start at Level 0 or 1; use Level 2/3 only after failed attempts): "
+        lines.append("  Hint ladder (use only after the student attempts or asks for help): "
                      + ladder)
     secret = []
     if r.best_move_san:
@@ -919,12 +923,15 @@ def _assess_practicality(r: MoveRecord, engines, review: GameReview, deep_after_
 def _attach_lesson_primitives(r: MoveRecord, board_before: chess.Board, board_after: chess.Board) -> None:
     r.lesson_objective = _infer_lesson_objective(r)
     r.recommended_diagnosis = _recommended_diagnosis(r)
+    r.initial_question = _initial_question(board_before)
     r.question_ladder = _question_ladder(r, board_before)
     r.explanation_primitives = _explanation_primitives(r, board_before, board_after)
 
 
 def _infer_lesson_objective(r: MoveRecord) -> str:
     cats = set(r.suggested_categories)
+    if _is_simple_capture_punishment(r):
+        return "material_vs_activity"
     if _punishment_starts_with_forcing_check(r):
         return "defend_against_direct_threat"
     if "ignored_threat" in cats:
@@ -943,6 +950,8 @@ def _infer_lesson_objective(r: MoveRecord) -> str:
 
 
 def _recommended_diagnosis(r: MoveRecord) -> str:
+    if _is_simple_capture_punishment(r):
+        return "bad_trade"
     if _punishment_starts_with_forcing_check(r):
         return "ignored_threat"
     objective_map = {
@@ -977,12 +986,32 @@ def _punishment_starts_with_forcing_check(r: MoveRecord) -> bool:
         return False
 
 
-def _question_ladder(r: MoveRecord, board_before: chess.Board) -> dict:
+def _is_simple_capture_punishment(r: MoveRecord) -> bool:
+    """A capture punished by an immediate recapture is usually not a standing
+    "threat" lesson. The teachable point is the student's material temptation
+    or trade choice, not that the opponent was threatening the occupied square.
+    """
+    if not (r.is_capture and r.punishment_line and r.best_move_san):
+        return False
+    try:
+        board_after = chess.Board(r.fen_after)
+        reply = board_after.parse_san(r.punishment_line[0])
+        if board_after.gives_check(reply) or not board_after.is_capture(reply):
+            return False
+        played = chess.Move.from_uci(r.uci)
+        return reply.to_square == played.to_square
+    except (ValueError, AssertionError):
+        return False
+
+
+def _initial_question(board_before: chess.Board) -> str:
     side = "White" if board_before.turn == chess.WHITE else "Black"
     opponent = "Black" if side == "White" else "White"
-    ladder = {
-        0: f"{side} to move. What candidate moves would you consider, and what is {opponent} threatening?",
-    }
+    return f"{side} to move. What candidate moves would you consider, and what is {opponent} threatening?"
+
+
+def _question_ladder(r: MoveRecord, board_before: chess.Board) -> dict:
+    ladder = {}
     objective = r.lesson_objective or ""
     if objective == "defend_against_direct_threat":
         ladder[1] = "First identify the forcing threat against your king or material, then choose a move that answers it."
@@ -1019,6 +1048,8 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
         "played_move_label": r.move_label,
         "best_move": r.best_move_san,
         "best_move_label": r.best_move_label,
+        "punishment_after_played_move": " ".join(r.punishment_line[:6]) if r.punishment_line else None,
+        "diagnosis_sentence": _diagnosis_sentence(r),
     }
     if r.is_capture:
         try:
@@ -1056,6 +1087,23 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
     else:
         data["process_habit"] = "Name the position's urgent priority before choosing a natural move."
     return data
+
+
+def _diagnosis_sentence(r: MoveRecord) -> str:
+    if _is_simple_capture_punishment(r):
+        first = r.punishment_line[0] if r.punishment_line else "a recapture"
+        return (f"Played {r.move_label} to win material, but after {first} the exchange did not solve "
+                f"the position's main priority; {r.best_move_label or r.best_move_san} kept the stronger plan.")
+    if _punishment_starts_with_forcing_check(r):
+        first = r.punishment_line[0] if r.punishment_line else "a forcing check"
+        return (f"Played {r.move_label} without stopping {first}; "
+                f"{r.best_move_label or r.best_move_san} was needed to meet that forcing threat.")
+    if r.lesson_objective == "improve_pieces_before_committing_pawns":
+        return (f"Played {r.move_label} before improving the pieces; "
+                f"{r.best_move_label or r.best_move_san} supported the position before changing the pawn structure.")
+    if r.best_move_san:
+        return f"Played {r.move_label}; {r.best_move_label or r.best_move_san} was the engine-verified improvement."
+    return f"Played {r.move_label} and lost ground in the position."
 
 
 def _first_forcing_punishment(board_after: chess.Board, punishment_line: list):
@@ -1228,6 +1276,8 @@ def suggest_error_categories(record: MoveRecord) -> list:
     MISSED map to missed_*; tactics in the opponent's punishment map to what
     the student failed to see coming."""
     suggestions = []
+    if _is_simple_capture_punishment(record):
+        suggestions.append("bad_trade")
     try:
         played = chess.Move.from_uci(record.uci)
         before = chess.Board(record.fen_before)
@@ -1258,9 +1308,10 @@ def suggest_error_categories(record: MoveRecord) -> list:
         suggestions.append("calculation_error")
     if punish_kinds & {"checkmate", "back_rank_mate", "smothered_mate"}:
         suggestions.append("king_safety")
-    elif (any(k.endswith("fork") for k in punish_kinds)
+    elif (not _is_simple_capture_punishment(record)
+          and (any(k.endswith("fork") for k in punish_kinds)
           or punish_kinds & {"pin", "skewer", "discovered_check", "discovered_attack",
-                             "double_check", "removal_of_defender"}):
+                              "double_check", "removal_of_defender"})):
         suggestions.append("ignored_threat")
     elif record.punishment_line and record.punishment_line[0].endswith(("+", "#")):
         # The refutation is an immediate forcing check: whatever else the move
@@ -1270,7 +1321,11 @@ def suggest_error_categories(record: MoveRecord) -> list:
 
     if record.time_flag in ("hope_chess", "time_scramble"):
         suggestions.append("time_management")
-    return suggestions[:2]
+    deduped = []
+    for suggestion in suggestions:
+        if suggestion not in deduped:
+            deduped.append(suggestion)
+    return deduped[:2]
 
 
 def attach_board_tokens(review: GameReview, state, invert: bool = False) -> None:

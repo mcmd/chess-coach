@@ -110,6 +110,31 @@ def _ungrounded_diagnosis_moves(record, explanation: str) -> list:
             if t.rstrip("+#") not in verified and not any(parses(b, t) for b in boards)]
 
 
+def _weak_diagnosis_text(text: str) -> bool:
+    text = (text or "").strip()
+    if len(text.split()) < 5:
+        return True
+    lowered = text.rstrip(". ").casefold()
+    dangling = (
+        "with", "starting with", "because", "after", "by", "to", "from",
+        "against", "allowing black to launch a devastating attack starting with",
+    )
+    return any(lowered.endswith(word) for word in dangling)
+
+
+def _backend_diagnosis_sentence(record) -> str:
+    primitives = getattr(record, "explanation_primitives", None) or {}
+    sentence = primitives.get("diagnosis_sentence")
+    if sentence:
+        return sentence
+    if getattr(record, "punishment_line", None):
+        return (f"The student played {record.move_label}; the verified punishment is "
+                f"{' '.join(record.punishment_line[:4])}.")
+    if getattr(record, "best_move_san", None):
+        return f"The student played {record.move_label} instead of {record.best_move_label or record.best_move_san}."
+    return f"The student played {record.move_label} and lost ground in the position."
+
+
 def _move_label(board: chess.Board, san: str) -> str:
     dots = "." if board.turn == chess.WHITE else "..."
     return f"{board.fullmove_number}{dots} {san}"
@@ -346,7 +371,8 @@ class CoachTools:
                 result["next_step"] = ("Ask the student to explain WHY the move works before logging diagnosis; "
                                        "then teach from these concrete primitives. Vivid phrasing is fine, "
                                        "but immediately unpack it with the move, square, target, checked king, "
-                                       "captured piece, or attacked piece.")
+                                       "captured piece, or attacked piece. Prefer the backend "
+                                       "diagnosis_sentence when logging to the dossier.")
         else:
             result["note"] = "Answer withheld by backend. Give ONE hint and ask the student to try once more."
             result["hint_facts"] = self._hint_facts(board, best_move)
@@ -618,10 +644,7 @@ class CoachTools:
                 if self._diagnosis_rejections[fen] >= 2:
                     # Don't let a stubborn fabrication stall the lesson: log a
                     # backend-built explanation instead of the invented one.
-                    error_explanation = (
-                        f"The student played {record.san}; the verified punishment is "
-                        f"{' '.join(record.punishment_line[:4])}." if record.punishment_line
-                        else f"The student played {record.san} instead of {record.best_move_san}.")
+                    error_explanation = _backend_diagnosis_sentence(record)
                 else:
                     return {"error": f"error_explanation names {', '.join(ungrounded)} — not a legal move "
                                      "in this position and not part of any verified line. NEVER invent "
@@ -631,6 +654,8 @@ class CoachTools:
                             "best_move": record.best_move_san,
                             "verified_punishment_line": record.punishment_line or None,
                             "verified_best_line": record.best_line or None}
+            elif _weak_diagnosis_text(error_explanation):
+                error_explanation = _backend_diagnosis_sentence(record)
 
         diagnosis = {
             "fen": fen,

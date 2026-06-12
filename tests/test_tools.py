@@ -206,6 +206,21 @@ def test_diagnosis_second_fabrication_logs_backend_explanation(stub_config):
     assert "cxd5" in logged
 
 
+def test_weak_diagnosis_text_is_replaced_with_backend_sentence(stub_config):
+    tools, state, record = _m17_tools(stub_config)
+    record.explanation_primitives = {
+        "diagnosis_sentence": "Played 17. d5 before improving the pieces; 17. Rad1 supported the center first."
+    }
+    result = tools.submit_diagnosis(
+        record.fen_before, "calculation_error",
+        "The student allowed Black to launch a devastating attack starting with",
+        "Name the urgent priority first.")
+    assert result["success"] is True
+    logged = state.diagnostics[0]["error_explanation"]
+    assert logged == record.explanation_primitives["diagnosis_sentence"]
+    assert not logged.endswith("with")
+
+
 def test_diagnosis_allows_naming_the_opponents_prevented_threat(stub_config):
     from app.review import GameReview, MoveRecord
     fen = "6k1/8/8/8/8/Q6q/6P1/6K1 w - - 0 1"

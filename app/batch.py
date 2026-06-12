@@ -387,8 +387,8 @@ class BatchReview:
             lines.extend(moment_digest_lines(i, r))
         lines.append("")
         lines.append("Coaching protocol: for each position, set the scene at the FEN BEFORE the move, "
-                     "ask ONE Level 0 or Level 1 question from the ladder, grade answers with "
-                     "evaluate_student_answer, ask the student WHY the move works, then teach using "
+                     "ask the Initial question EXACTLY first, use the hint ladder only after an attempt, "
+                     "grade answers with evaluate_student_answer, ask the student WHY the move works, then teach using "
                      "the reveal-phase explanation primitives. Log each diagnosed mistake once with "
                      "submit_diagnosis. After finishing a pattern's positions, give a pattern "
                      "synthesis around its habit and offer the next pattern.")
