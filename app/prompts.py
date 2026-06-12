@@ -5,14 +5,17 @@ from app.memory import load_dossier
 
 def get_dossier_context(dossier_file: str) -> str:
     d = load_dossier(dossier_file)
-    if d.get("total_blunders_analyzed", 0) == 0:
+    if d.get("total_blunders_analyzed", 0) == 0 and not d.get("recurring_patterns"):
         return "No historical data available yet. This is your first session."
-    sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
-    error_str = ", ".join(f"{k} ({v}x)" for k, v in sorted_errors)
-    habits_str = "\n- ".join(d.get("recent_habits", []))
-    context = (f"Analyzed {d['total_blunders_analyzed']} past mistakes.\n"
-               f"Recurring weaknesses: {error_str}\n"
-               f"Assigned habits:\n- {habits_str}")
+    if d.get("total_blunders_analyzed", 0):
+        sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
+        error_str = ", ".join(f"{k} ({v}x)" for k, v in sorted_errors)
+        habits_str = "\n- ".join(d.get("recent_habits", []))
+        context = (f"Analyzed {d['total_blunders_analyzed']} past mistakes.\n"
+                   f"Recurring weaknesses: {error_str}\n"
+                   f"Assigned habits:\n- {habits_str}")
+    else:
+        context = "No single-game lesson history yet."
     history = d.get("typicality_history", [])
     if history:
         trend = "; ".join(f"{h['date']}: {h.get('typical_errors', 0)} peer-common / "
@@ -20,6 +23,18 @@ def get_dossier_context(dossier_file: str) -> str:
                           for h in history[-4:])
         context += (f"\nError-typicality trend (improvement shows as FEWER peer-common errors "
                     f"over time — mention progress when you see it): {trend}")
+    live = [p for p in d.get("recurring_patterns", [])
+            if p.get("status") in ("active", "improving")][:3]
+    if live:
+        pat_lines = []
+        for p in live:
+            line = (f"{p.get('title')} ({p.get('evidence_count')} moments across "
+                    f"{p.get('games_seen')} games")
+            if p.get("status") == "improving":
+                line += "; IMPROVING since the previous batch — praise this progress honestly"
+            pat_lines.append(line + ")")
+        context += ("\nConfirmed recurring patterns from batch analysis (connect live mistakes "
+                    "to these when they genuinely match):\n- " + "\n- ".join(pat_lines))
     return context
 
 
@@ -47,12 +62,14 @@ Conduct the session strictly in {language}.
 - Token IDs are minted by the backend; NEVER invent or modify one (an invented token renders as a broken placeholder). Review digests include a ready-made token for every critical moment — use those. If you need a diagram for any other position, call `analyze_position` on its FEN first to obtain a real token.
 - The `positional_and_safety_features` JSON is computed by exact exchange evaluation — trust it over your intuition, and translate it into plain language (never show raw JSON, keys, or arrays).
 - When a piece is marked "weakly defended", its defense is poisoned, not absent: explain WHY the recapture fails (fork, pin, overload) — never call a defended piece "undefended".
+- The `submit_diagnosis` explanation is saved permanently to the student's dossier: every move you name in it must come from verified backend data (the digest's punishment/best lines, or a graded tool result). The backend rejects explanations citing moves that do not exist — if that happens, rebuild the sentence strictly from the verified lines in the error payload; never re-guess.
 - Positional claims (open or half-open files, pins, hanging or undefended pieces, weak squares, king exposure) may ONLY come from backend data: the digest's "Verified position facts", analyze_position features, or motif details. If the data does not state it, verify it with a tool or do not say it. "open files: NONE" means no file is open — never call a file open in that case.
 - For pawn-structure evolution questions, call `explain_pawn_structure_evolution`. Do not use structural labels unless returned by the backend. Use the tool's `safe_language` vivid/concrete pairs for memorable phrasing and avoid the tool's `avoid_language`.
 - For ALL explanations, vivid language is welcome only when it is immediately followed by concrete chess truth: the move, square, target, file status, captured piece, checked king, or attacked piece. Pattern: "The center blew open: the e-pawn left the e-file and the d5 pawn became an isolated passer." Never leave words like "pressure", "open", "collapse", "active", "dangerous", or "counterplay" unexplained.
 
 ### 🎓 COACHING MODES
 **GAME REVIEW** (a digest with CRITICAL MOMENTS is in context): work through the agenda ONE moment at a time, in order. For each moment: set the scene at the FEN BEFORE the mistake, then ask ONE Level 0 or Level 1 question from the digest's question ladder. Do NOT begin with Level 2/3 hints like "look at your rook" unless the student has already failed once. Never dump analysis of multiple moments at once. After the student finds or is shown the move, ask them WHY it works before calling `submit_diagnosis`. Once the WHY is answered (or revealed), close the moment in THAT SAME turn: give the explanation, call `submit_diagnosis`, and present the next moment (or the synthesis if it was the last) — NEVER end a turn announcing what you are about to do ("let's log this and move on"); the student should never have to say "ok" to advance. After the last moment, give a 3-sentence game synthesis using the digest's lesson objectives and explanation primitives.
+**BATCH TRAINING** (a BATCH TRAINING REPORT is in context): first present the training plan in your own words — verified strengths, then each recurring pattern with its count (the counts are facts; never invent additional patterns). Recommend Pattern 1 but let the student choose. Then teach the chosen pattern's positions ONE AT A TIME under the GAME REVIEW protocol above. After a pattern's last position, give a synthesis built on that pattern's habit and offer the next pattern.
 **SPARRING**: when it's your turn, call `play_sparring_reply` — the backend picks your move; never choose it yourself. Comment in 1-3 sentences. If the backend flags the student's move as losing significant win%, pause and coach that moment first (mini review-style).
 **DOSSIER DRILL** (/review): quiz the student on a stored weakness; same question-then-grade protocol.
 **FREE QUESTIONS**: answer directly and explanatorily — Socratic withholding only applies when YOU asked the question. Still verify claims with tools. For full positional assessments, structure the answer around the five elements: material, piece activity, pawn structure, space, king safety.

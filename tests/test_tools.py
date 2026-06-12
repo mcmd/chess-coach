@@ -150,6 +150,106 @@ def test_diagnosis_rejects_boilerplate_override_when_mismatched(stub_config):
     assert state.diagnostics == []
 
 
+# --- submit_diagnosis: explanation grounding ---
+
+M17_FEN = "r4rk1/p4ppp/n1pq4/1p2p3/1P1PP1n1/P1N2N2/4QPPP/R4RK1 w - - 0 17"
+
+
+def _m17_tools(stub_config):
+    """The live-session moment where the model fabricated 'cxb4' in a diagnosis."""
+    from app.review import GameReview, MoveRecord
+    board = chess.Board(M17_FEN)
+    board.push_san("d5")
+    record = MoveRecord(
+        ply=32, number=17, color="white", san="d5", uci="d4d5",
+        fen_before=M17_FEN, fen_after=board.fen(), eval_before_cp=50,
+        eval_after_cp=-30, drop_pct=10.4, quality="inaccuracy",
+        best_move_san="Rad1", is_capture=False,
+        best_line=["Rad1", "Rfe8"], punishment_line=["cxd5", "exd5", "Nxd5"],
+    )
+    tools, state = make_tools(stub_config)
+    state.review = GameReview(headers={}, records=[record],
+                              student_color="white", agenda_plies=[0])
+    return tools, state, record
+
+
+def test_diagnosis_rejects_fabricated_move_in_explanation(stub_config):
+    tools, state, record = _m17_tools(stub_config)
+    result = tools.submit_diagnosis(
+        record.fen_before, "missed_fork",
+        "The student played d5, which allowed Black to play cxb4, forking the a3 pawn and the c3 knight.",
+        "Name the urgent priority first.")
+    assert "error" in result
+    assert "cxb4" in result["error"]
+    assert result["verified_punishment_line"] == ["cxd5", "exd5", "Nxd5"]
+    assert state.diagnostics == []
+
+
+def test_diagnosis_accepts_explanation_built_from_verified_lines(stub_config):
+    tools, state, record = _m17_tools(stub_config)
+    result = tools.submit_diagnosis(
+        record.fen_before, "calculation_error",
+        "The student played d5, allowing cxd5; Rad1 instead adds a defender to the d4 pawn.",
+        "Count defenders before pushing.")
+    assert result["success"] is True
+    assert "cxd5" in state.diagnostics[0]["error_explanation"]
+
+
+def test_diagnosis_second_fabrication_logs_backend_explanation(stub_config):
+    tools, state, record = _m17_tools(stub_config)
+    bad = "It allowed Black to play cxb4, forking the knight."
+    assert "error" in tools.submit_diagnosis(record.fen_before, "missed_fork", bad, "habit")
+    result = tools.submit_diagnosis(record.fen_before, "missed_fork", bad, "habit")
+    assert result["success"] is True
+    logged = state.diagnostics[0]["error_explanation"]
+    assert "cxb4" not in logged
+    assert "cxd5" in logged
+
+
+def test_diagnosis_allows_naming_the_opponents_prevented_threat(stub_config):
+    from app.review import GameReview, MoveRecord
+    fen = "6k1/8/8/8/8/Q6q/6P1/6K1 w - - 0 1"
+    board = chess.Board(fen)
+    board.push_san("Qxh3")
+    record = MoveRecord(
+        ply=0, number=1, color="white", san="Qxh3", uci="a3h3",
+        fen_before=fen, fen_after=board.fen(), eval_before_cp=0,
+        eval_after_cp=900, drop_pct=0.0, quality="good",
+        best_move_san="Qxh3", is_capture=True)
+    tools, state = make_tools(stub_config)
+    state.review = GameReview(headers={}, records=[record],
+                              student_color="white", agenda_plies=[0])
+    # Qxg2# is legal for neither side after the move — it is the threat the
+    # move PREVENTED, only visible with the turn flipped in the before-position.
+    result = tools.submit_diagnosis(
+        fen, "ignored_threat",
+        "Black threatened Qxg2#, and Qxh3 removed the attacking queen.",
+        "Scan checks first.")
+    assert result["success"] is True
+
+
+# --- _valid_diagnosis_override: evidence, not phrasing ---
+
+def test_override_reason_arguing_against_recommendation_is_valid():
+    from app.tools import _valid_diagnosis_override
+    reason = ("This was not primarily a bad trade: the student ignored the forcing "
+              "check Qxg4+, which they admitted they never considered.")
+    assert _valid_diagnosis_override(reason, "bad_trade", "ignored_threat") is True
+
+
+def test_override_reason_mentioning_override_is_valid():
+    from app.tools import _valid_diagnosis_override
+    reason = ("Overriding the backend recommendation: the student never looked "
+              "at the opponent's forcing check during the discussion.")
+    assert _valid_diagnosis_override(reason, "bad_trade", "ignored_threat") is True
+
+
+def test_override_reason_pure_category_talk_is_invalid():
+    from app.tools import _valid_diagnosis_override
+    assert _valid_diagnosis_override(
+        "override to ignored_threat from bad_trade", "bad_trade", "ignored_threat") is False
+
+
 # --- tablebase gate ---
 
 def test_tablebase_refuses_middlegame_without_network(stub_config):

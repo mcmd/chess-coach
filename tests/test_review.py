@@ -450,3 +450,24 @@ def test_concrete_mistake_flagged_when_deep_analysis_confirms_loss():
     assert "CONCRETE" in record.practical_note
     assert record.saving_resource is None
     assert "Nature of the mistake: CONCRETE" in review.digest()
+
+
+def test_forcing_check_punishment_recommends_ignored_threat():
+    """A refutation that starts with a forcing check means the student ignored
+    a direct threat — even when the mistake was a capture (live-session bug:
+    26. Qxa7 punished by Qxg4+ was recommended as bad_trade)."""
+    from app.review import (MoveRecord, suggest_error_categories,
+                            _infer_lesson_objective, _recommended_diagnosis)
+    r = MoveRecord(
+        ply=50, number=26, color="white", san="Qxa7", uci="c5a7",
+        fen_before="1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+        fen_after="1r2r1k1/Q4ppp/6q1/3P4/1P4P1/P7/5PK1/3R1R2 b - - 0 26",
+        eval_before_cp=200, eval_after_cp=-300, drop_pct=39.7,
+        quality="blunder", best_move_san="Rd4", is_capture=True,
+        punishment_line=["Qxg4+", "Kh1", "Re2"])
+    cats = suggest_error_categories(r)
+    assert cats[0] == "ignored_threat"
+    r.suggested_categories = cats
+    assert _infer_lesson_objective(r) == "defend_against_direct_threat"
+    r.lesson_objective = "defend_against_direct_threat"
+    assert _recommended_diagnosis(r) == "ignored_threat"

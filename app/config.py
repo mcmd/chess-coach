@@ -21,6 +21,10 @@ class AppConfig:
     trace: bool = False      # show tool calls and engine invocations
     review_eval_time: float = 0.5  # Stockfish seconds per position in the game-review scan
     use_online_databases: bool = True  # opening explorer + tablebase enrichment of reviews
+    batch_eval_time: float = 0.4   # Stockfish seconds per position in the /batch fast scan
+    batch_max_games: int = 50      # cap on games per /batch run
+    batch_top_patterns: int = 3    # patterns presented in the training plan
+    batch_reps: int = 3            # deep-verified teaching positions per pattern
 
 
 def _is_dark_terminal() -> bool:
@@ -113,5 +117,9 @@ Examples:
         player_name=app_config.get("player_name"),
         trace=args.trace or app_config.get("trace", False),
         review_eval_time=float(app_config.get("review_eval_time", 0.5)),
-        use_online_databases=bool(app_config.get("use_online_databases", True))
+        use_online_databases=bool(app_config.get("use_online_databases", True)),
+        batch_eval_time=float(app_config.get("batch_eval_time", 0.4)),
+        batch_max_games=int(app_config.get("batch_max_games", 50)),
+        batch_top_patterns=int(app_config.get("batch_top_patterns", 3)),
+        batch_reps=int(app_config.get("batch_reps", 3)),
     )

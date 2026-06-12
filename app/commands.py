@@ -15,12 +15,15 @@ import chess
 import chess.pgn
 
 from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata,
-                        update_dossier)
+                        update_dossier, update_dossier_with_batch)
 from app.notation import legal_san_mentions
 from app.review import review_game, attach_board_tokens
+from app.ui import console
 
 HELP_TEXT = """[bold]Commands[/bold]
   /load_pgn <path>   Load + review a PGN file (full engine review, lesson agenda)
+  /batch <path>      Scan a multi-game PGN (10-50 games) for recurring mistake patterns
+                     and train on them (/batch alone reloads the last report)
   /move <san>        Play a move on the board (e.g. /move Nf3)
   /next  /prev       Step forward / back through the loaded game
   /goto <n>[b]       Jump to before White's (or Black's, with 'b') move n
@@ -74,6 +77,8 @@ class CommandProcessor:
             return CommandResult(message=HELP_TEXT)
         if text.startswith("/load_pgn"):
             return self._load_pgn(text)
+        if text.startswith("/batch"):
+            return self._batch(text)
         if text.startswith("/move"):
             return self._move(text)
         if text.startswith("/undo") or text.startswith("/prev"):
@@ -124,6 +129,85 @@ class CommandProcessor:
 
     def _load_pasted_pgn(self, text: str) -> CommandResult:
         return self._review_and_load(text, source="pasted game")
+
+    # ------------------------------------------------------------------
+    # BATCH PATTERN REVIEW
+    # ------------------------------------------------------------------
+
+    def _batch(self, text: str) -> CommandResult:
+        from app.batch import batch_dossier_summary, load_latest_batch, run_batch_review
+        parts = text.split(" ", 1)
+        if len(parts) < 2 or not parts[1].strip():
+            batch = load_latest_batch(self.config)
+            if batch is None:
+                return CommandResult(message="No saved batch report yet. Usage: /batch <path-to.pgn>")
+            return self._load_batch(batch, f"[green]Reloaded batch report {batch.batch_id} "
+                                           f"({batch.games_analyzed} games).[/green]")
+        path = parts[1].strip().strip('"')
+        if not os.path.exists(path):
+            return CommandResult(message=f"[red]Could not find the file: {path}[/red]")
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                pgn_text = f.read()
+        except OSError as e:
+            return CommandResult(message=f"[red]Error reading PGN: {e}[/red]")
+        console.print("[dim yellow]↳ Batch scan starting (cached games are reused; "
+                      "interrupting and rerunning is safe)...[/dim yellow]")
+        try:
+            batch = run_batch_review(
+                pgn_text, self.engines, self.config, on_progress=self.on_progress,
+                on_status=lambda s: console.print(f"[dim]· batch | {s}[/dim]"))
+        except Exception as e:
+            return CommandResult(message=f"[red]Batch review failed: {e}[/red]")
+        if isinstance(batch, dict):
+            return CommandResult(message=f"[red]{batch['error']}[/red]")
+        update_dossier_with_batch(self.config.dossier_file, batch_dossier_summary(batch))
+        return self._load_batch(
+            batch, f"[green]Batch report ready: {batch.games_analyzed} games, "
+                   f"{batch.moments_found} mistake moments, "
+                   f"{len(batch.patterns)} recurring pattern(s).[/green]")
+
+    def _load_batch(self, batch, message: str) -> CommandResult:
+        from app.batch import attach_batch_board_tokens
+        meta = dict(self.state.lesson_metadata or {})
+        resume_idx = None
+        if (meta.get("batch_id") == batch.batch_id and batch.records
+                and meta.get("batch_lesson_status") not in (None, "", "unavailable",
+                                                            "lesson_complete", "fresh_review")):
+            resume_idx = max(0, min(int(meta.get("batch_agenda_index") or 0),
+                                    len(batch.records) - 1))
+        self.state.review = batch
+        self.state.current_game_id = f"batch:{batch.batch_id}"
+        self.timeline.initial_fen = chess.STARTING_FEN
+        self.state.board = chess.Board()
+        self.state.loaded_moves = []
+        self.state.move_index = 0
+        self.timeline.pgn_nodes = []
+        self.state.socratic_attempts.clear()
+        attach_batch_board_tokens(batch, self.state,
+                                  invert=getattr(self.config, "dark_terminal", False))
+        meta["batch_id"] = batch.batch_id
+        if resume_idx is not None:
+            meta["batch_agenda_index"] = resume_idx
+            meta["batch_lesson_status"] = "awaiting_answer"
+        else:
+            meta["batch_agenda_index"] = 0
+            meta["batch_lesson_status"] = "fresh_review"
+        self.state.lesson_metadata = meta
+        if getattr(self.config, "lesson_file", None):
+            save_lesson_metadata(self.config.lesson_file, meta)
+        prompt = batch.digest()
+        if resume_idx is not None:
+            record = batch.records[resume_idx]
+            prompt += (f"\n\n(The student is RESUMING this batch lesson at teaching position "
+                       f"{resume_idx + 1} ({record.move_label}). Welcome them back briefly and "
+                       "continue that position — do not re-present the whole training plan.)")
+        else:
+            prompt += ("\n\n(The student just ran /batch. Present the training plan now: "
+                       "strengths first, then the recurring patterns with their counts, then "
+                       "recommend Pattern 1 and ask which pattern they want to work on. "
+                       "Do not start teaching a position yet.)")
+        return CommandResult(prompt=prompt, message=message)
 
     @staticmethod
     def _local_game_id(review) -> str:

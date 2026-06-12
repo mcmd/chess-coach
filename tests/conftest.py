@@ -27,8 +27,11 @@ class FakeEngines:
         self.maia = bool(self.maia_data) or bool(self.maia_by_elo)
         self.maia_error = None
         self.config = None
+        self.quick_eval_calls = 0
+        self.maia_calls = 0
 
     def quick_eval(self, fen, time_limit=0.3):
+        self.quick_eval_calls += 1
         cp = self.evals.get(fen, 0)
         return chess.engine.PovScore(chess.engine.Cp(cp), chess.WHITE), self.bests.get(fen)
 
@@ -49,6 +52,7 @@ class FakeEngines:
         return self.threats_data.get(board.fen(), [])
 
     def maia_predict(self, fen, elo_self=None, elo_oppo=None):
+        self.maia_calls += 1
         probs = None
         if elo_self is not None and (fen, elo_self) in self.maia_by_elo:
             probs = self.maia_by_elo[(fen, elo_self)]

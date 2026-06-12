@@ -56,12 +56,19 @@ _DOSSIER_DEFAULT = {
     "recent_habits": [],
     "recent_positions": [],
     "typicality_history": [],
+    "recurring_patterns": [],   # confirmed cross-game patterns from batch analysis
+    "batch_trends": [],         # one entry per batch run: top patterns with counts
 }
 
 _LESSON_DEFAULT = {
     "last_game_id": None,
     "last_agenda_index": 0,
     "lesson_status": "unavailable",
+    # Batch lessons get their own resume slot so running /batch never clobbers
+    # an unfinished single-game lesson (and vice versa).
+    "batch_id": None,
+    "batch_agenda_index": 0,
+    "batch_lesson_status": "unavailable",
 }
 
 
@@ -93,6 +100,8 @@ def load_dossier(dossier_file: str) -> dict:
     dossier["recent_habits"] = []
     dossier["recent_positions"] = []
     dossier["typicality_history"] = []
+    dossier["recurring_patterns"] = []
+    dossier["batch_trends"] = []
     if os.path.exists(dossier_file):
         try:
             with open(dossier_file, "r", encoding="utf-8") as f:
@@ -140,4 +149,53 @@ def update_dossier(diagnostics, dossier_file):
     dossier["recent_positions"] = dossier["recent_positions"][:20]
     dossier["typicality_history"] = dossier["typicality_history"][-20:]
 
+    _atomic_write_json(dossier_file, dossier)
+
+
+def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
+    """Distill a batch run into the long-term player model. Only pattern
+    summaries enter the dossier — raw per-moment findings stay in the batch
+    report file. Re-running batches updates rates so trends stay honest:
+    a pattern whose rate falls is marked 'improving', one absent from two
+    consecutive batches goes 'stale' (no permanent accusations)."""
+    dossier = load_dossier(dossier_file)
+    existing = {p.get("id"): dict(p) for p in dossier.get("recurring_patterns", [])}
+    today = date.today().isoformat()
+    seen_ids = set()
+    for pat in batch_summary.get("patterns", []):
+        seen_ids.add(pat["id"])
+        prev = existing.get(pat["id"])
+        entry = {
+            "id": pat["id"],
+            "title": pat["title"],
+            "evidence_count": pat["count"],
+            "games_seen": pat["games_seen"],
+            "representative_positions": list(pat.get("representative_positions", []))[:3],
+            "habit": pat.get("habit"),
+            "first_seen": prev.get("first_seen") if prev else today,
+            "last_seen": today,
+            "rate": pat.get("rate"),  # moments per game in this batch
+            "previous_rate": prev.get("rate") if prev else None,
+            "status": "active",
+            "missed_batches": 0,
+        }
+        if (entry["previous_rate"] and entry["rate"] is not None
+                and entry["rate"] <= entry["previous_rate"] * 0.6):
+            entry["status"] = "improving"
+        existing[pat["id"]] = entry
+    for pid, p in existing.items():
+        if pid not in seen_ids:
+            p["missed_batches"] = p.get("missed_batches", 0) + 1
+            if p["missed_batches"] >= 2:
+                p["status"] = "stale"
+    ranked = sorted(existing.values(),
+                    key=lambda p: (p.get("status") == "stale", -(p.get("evidence_count") or 0)))
+    dossier["recurring_patterns"] = ranked[:8]
+    dossier["batch_trends"].append({
+        "date": today,
+        "batch_id": batch_summary.get("batch_id"),
+        "games": batch_summary.get("games"),
+        "top_patterns": [[p["id"], p["count"]] for p in batch_summary.get("patterns", [])],
+    })
+    dossier["batch_trends"] = dossier["batch_trends"][-12:]
     _atomic_write_json(dossier_file, dossier)

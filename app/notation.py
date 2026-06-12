@@ -8,6 +8,21 @@ _SAN_RE = re.compile(
     r"[a-h]x?[a-h][1-8](?:=[QRBN])?[+#]?)[!?]*\b")
 
 
+def san_mentions(text: str) -> list:
+    """SAN-looking tokens in free text (annotations stripped), first-seen order.
+    Unlike legal_san_mentions there is no legality filter — callers decide how
+    to validate each token."""
+    if not text:
+        return []
+    seen, result = set(), []
+    for token in _SAN_RE.findall(text):
+        san = token.rstrip("!?")
+        if san not in seen:
+            seen.add(san)
+            result.append(san)
+    return result
+
+
 def legal_san_mentions(board: chess.Board, text: str) -> list:
     """Legal SAN moves mentioned in free text, preserving first-seen order.
     Only moves that are actually legal on `board` count — the regex proposes,

@@ -81,6 +81,7 @@ class MoveRecord:
     time_spent: float = None
     clock_remaining: float = None
     time_flag: str = None
+    punisher_uci: str = None     # engine's best reply to the played move (free from the scan)
     # Agenda enrichment (populated only for critical moments):
     is_agenda: bool = False
     best_line: list = field(default_factory=list)
@@ -241,91 +242,7 @@ class GameReview:
 
         lines.append("CRITICAL MOMENTS — the lesson agenda. Work through them ONE AT A TIME, in order.")
         for i, r in enumerate(self.agenda, 1):
-            wb = cp_to_win_pct(r.eval_before_cp if r.color == "white" else -r.eval_before_cp)
-            wa = cp_to_win_pct(r.eval_after_cp if r.color == "white" else -r.eval_after_cp)
-            lines.append(f"[Moment {i}] {r.move_label} by {r.color} — {r.quality} "
-                         f"(win% {wb:.0f} -> {wa:.0f}; eval {r.eval_before_cp / 100.0:+.2f} -> {r.eval_after_cp / 100.0:+.2f}).")
-            lines.append(f"  FEN before the move: {r.fen_before}")
-            if r.board_token:
-                lines.append(f"  Board diagram token for this position: {r.board_token} "
-                             "(paste this EXACT token to show the diagram)")
-            if r.position_facts:
-                lines.append(f"  Verified position facts (cite ONLY these for positional claims): {r.position_facts}")
-            if r.maia_played_prob is not None:
-                lines.append(f"  Maia: ~{r.maia_played_prob:.0%} of similar-rated players choose {r.san}. "
-                             f"Top human moves: " + ", ".join(f"{m['move']} ({m['probability']:.0%})" for m in r.maia_top))
-            if r.book_share:
-                lines.append(f"  Theory note: {r.san} is established master theory (~{r.book_share:.0%} of "
-                             "master games) — do NOT scold it; if the engine dislikes it slightly, explain "
-                             "the idea behind the theory instead.")
-            if r.is_opening_deviation:
-                lines.append("  OPENING DEVIATION moment: this is where the student left established "
-                             "theory. Teach the theory move and its idea, and recommend this line as a "
-                             "study item — the student will reach this position again.")
-            if r.tablebase_note:
-                lines.append(f"  {r.tablebase_note}")
-            if r.practical_note:
-                lines.append(f"  Nature of the mistake: {r.practical_note}")
-            if r.error_typicality == "typical_for_level":
-                lines.append("  Typicality: this mistake is COMMON at this level — normalize it first, "
-                             "then teach the underlying pattern thoroughly (it is a real knowledge gap).")
-            elif r.error_typicality == "atypical_for_level":
-                lines.append("  Typicality: players at this level RARELY play this — treat it as a "
-                             "process slip (time, attention, tilt), NOT a knowledge gap. Check the clock "
-                             "data and coach the habit, not the pattern.")
-            if r.best_move_human_prob is not None:
-                lines.append(f"  Findability: ~{r.best_move_human_prob:.0%} of similar-rated players find "
-                             "the right move here — calibrate your hints and your praise accordingly.")
-            if r.human_win_prob is not None:
-                engine_pct = cp_to_win_pct(r.eval_before_cp if r.color == "white" else -r.eval_before_cp)
-                human_pct = r.human_win_prob * 100
-                if abs(engine_pct - human_pct) >= 20:
-                    lines.append(f"  Practical difficulty: the engine win% here is {engine_pct:.0f}, but players "
-                                 f"at this level actually score ~{human_pct:.0f}% — the position is "
-                                 + ("HARDER to play than the eval suggests; teach technique, not the number."
-                                    if human_pct < engine_pct else
-                                    "easier in practice than the eval suggests."))
-            if r.time_spent is not None:
-                flag = f" (flag: {r.time_flag})" if r.time_flag else ""
-                lines.append(f"  Time: spent {int(r.time_spent)}s, {int(r.clock_remaining)}s remaining{flag}.")
-            if r.lesson_objective:
-                lines.append(f"  Lesson objective: {r.lesson_objective}.")
-            if r.recommended_diagnosis:
-                lines.append(f"  Recommended diagnosis: {r.recommended_diagnosis} "
-                             "(use this unless the student's explanation proves a different root cause).")
-            if r.question_ladder:
-                ladder = " | ".join(f"L{level}: {text}" for level, text in r.question_ladder.items())
-                lines.append("  Question ladder (start at Level 0 or 1; use Level 2/3 only after failed attempts): "
-                             + ladder)
-            secret = []
-            if r.best_move_san:
-                secret.append(f"better was {r.best_move_san}" +
-                              (f" (line: {' '.join(r.best_line)})" if r.best_line else ""))
-            if r.best_line_motifs:
-                secret.append("what the student missed: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in r.best_line_motifs))
-            if r.punishment_line:
-                secret.append(f"the punishment of {r.san} is: {' '.join(r.punishment_line)}")
-            if r.motifs:
-                secret.append("motifs in the punishment: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in r.motifs))
-            if r.opening_theory_brief:
-                secret.append(r.opening_theory_brief)
-            if r.saving_resource:
-                secret.append(r.saving_resource)
-            if r.likely_wrong_answer:
-                secret.append(f"most likely student guess: {r.likely_wrong_answer}")
-            if r.aspirational:
-                secret.append(f"aspirational instinct: at ~{r.aspirational['elo']} Elo most players choose "
-                              f"{r.aspirational['move']} ({r.aspirational['probability']:.0%}) — the instinct "
-                              "the student is growing toward; share it AFTER the moment is resolved")
-            if r.explanation_primitives:
-                secret.append("reveal-phase explanation primitives: " + "; ".join(
-                    f"{k}={v}" for k, v in r.explanation_primitives.items() if v))
-            if secret:
-                lines.append("  WITHHELD ANSWER (do NOT reveal until the student attempts; "
-                             "verify attempts with evaluate_student_answer): " + " | ".join(secret))
-            if r.suggested_categories:
-                lines.append(f"  Suggested diagnosis category: {' or '.join(r.suggested_categories)} "
-                             "(use it unless the conversation reveals a different root cause).")
+            lines.extend(moment_digest_lines(i, r))
         lines.append("")
         lines.append("Coaching protocol: for each moment, set the scene at the FEN BEFORE the move, "
                      "ask ONE Level 0 or Level 1 question from the ladder, "
@@ -333,6 +250,98 @@ class GameReview:
                      "then teach using the reveal-phase explanation primitives. "
                      "Log each diagnosed mistake once with submit_diagnosis.")
         return "\n".join(lines)
+
+
+def moment_digest_lines(i: int, r: MoveRecord) -> list:
+    """The digest block for one agenda moment — shared by single-game reviews
+    and batch training reports so the coaching protocol sees identical data."""
+    lines = []
+    wb = cp_to_win_pct(r.eval_before_cp if r.color == "white" else -r.eval_before_cp)
+    wa = cp_to_win_pct(r.eval_after_cp if r.color == "white" else -r.eval_after_cp)
+    lines.append(f"[Moment {i}] {r.move_label} by {r.color} — {r.quality} "
+                 f"(win% {wb:.0f} -> {wa:.0f}; eval {r.eval_before_cp / 100.0:+.2f} -> {r.eval_after_cp / 100.0:+.2f}).")
+    lines.append(f"  FEN before the move: {r.fen_before}")
+    if r.board_token:
+        lines.append(f"  Board diagram token for this position: {r.board_token} "
+                     "(paste this EXACT token to show the diagram)")
+    if r.position_facts:
+        lines.append(f"  Verified position facts (cite ONLY these for positional claims): {r.position_facts}")
+    if r.maia_played_prob is not None:
+        lines.append(f"  Maia: ~{r.maia_played_prob:.0%} of similar-rated players choose {r.san}. "
+                     f"Top human moves: " + ", ".join(f"{m['move']} ({m['probability']:.0%})" for m in r.maia_top))
+    if r.book_share:
+        lines.append(f"  Theory note: {r.san} is established master theory (~{r.book_share:.0%} of "
+                     "master games) — do NOT scold it; if the engine dislikes it slightly, explain "
+                     "the idea behind the theory instead.")
+    if r.is_opening_deviation:
+        lines.append("  OPENING DEVIATION moment: this is where the student left established "
+                     "theory. Teach the theory move and its idea, and recommend this line as a "
+                     "study item — the student will reach this position again.")
+    if r.tablebase_note:
+        lines.append(f"  {r.tablebase_note}")
+    if r.practical_note:
+        lines.append(f"  Nature of the mistake: {r.practical_note}")
+    if r.error_typicality == "typical_for_level":
+        lines.append("  Typicality: this mistake is COMMON at this level — normalize it first, "
+                     "then teach the underlying pattern thoroughly (it is a real knowledge gap).")
+    elif r.error_typicality == "atypical_for_level":
+        lines.append("  Typicality: players at this level RARELY play this — treat it as a "
+                     "process slip (time, attention, tilt), NOT a knowledge gap. Check the clock "
+                     "data and coach the habit, not the pattern.")
+    if r.best_move_human_prob is not None:
+        lines.append(f"  Findability: ~{r.best_move_human_prob:.0%} of similar-rated players find "
+                     "the right move here — calibrate your hints and your praise accordingly.")
+    if r.human_win_prob is not None:
+        engine_pct = cp_to_win_pct(r.eval_before_cp if r.color == "white" else -r.eval_before_cp)
+        human_pct = r.human_win_prob * 100
+        if abs(engine_pct - human_pct) >= 20:
+            lines.append(f"  Practical difficulty: the engine win% here is {engine_pct:.0f}, but players "
+                         f"at this level actually score ~{human_pct:.0f}% — the position is "
+                         + ("HARDER to play than the eval suggests; teach technique, not the number."
+                            if human_pct < engine_pct else
+                            "easier in practice than the eval suggests."))
+    if r.time_spent is not None:
+        flag = f" (flag: {r.time_flag})" if r.time_flag else ""
+        lines.append(f"  Time: spent {int(r.time_spent)}s, {int(r.clock_remaining)}s remaining{flag}.")
+    if r.lesson_objective:
+        lines.append(f"  Lesson objective: {r.lesson_objective}.")
+    if r.recommended_diagnosis:
+        lines.append(f"  Recommended diagnosis: {r.recommended_diagnosis} "
+                     "(use this unless the student's explanation proves a different root cause).")
+    if r.question_ladder:
+        ladder = " | ".join(f"L{level}: {text}" for level, text in r.question_ladder.items())
+        lines.append("  Question ladder (start at Level 0 or 1; use Level 2/3 only after failed attempts): "
+                     + ladder)
+    secret = []
+    if r.best_move_san:
+        secret.append(f"better was {r.best_move_san}" +
+                      (f" (line: {' '.join(r.best_line)})" if r.best_line else ""))
+    if r.best_line_motifs:
+        secret.append("what the student missed: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in r.best_line_motifs))
+    if r.punishment_line:
+        secret.append(f"the punishment of {r.san} is: {' '.join(r.punishment_line)}")
+    if r.motifs:
+        secret.append("motifs in the punishment: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in r.motifs))
+    if r.opening_theory_brief:
+        secret.append(r.opening_theory_brief)
+    if r.saving_resource:
+        secret.append(r.saving_resource)
+    if r.likely_wrong_answer:
+        secret.append(f"most likely student guess: {r.likely_wrong_answer}")
+    if r.aspirational:
+        secret.append(f"aspirational instinct: at ~{r.aspirational['elo']} Elo most players choose "
+                      f"{r.aspirational['move']} ({r.aspirational['probability']:.0%}) — the instinct "
+                      "the student is growing toward; share it AFTER the moment is resolved")
+    if r.explanation_primitives:
+        secret.append("reveal-phase explanation primitives: " + "; ".join(
+            f"{k}={v}" for k, v in r.explanation_primitives.items() if v))
+    if secret:
+        lines.append("  WITHHELD ANSWER (do NOT reveal until the student attempts; "
+                     "verify attempts with evaluate_student_answer): " + " | ".join(secret))
+    if r.suggested_categories:
+        lines.append(f"  Suggested diagnosis category: {' or '.join(r.suggested_categories)} "
+                     "(use it unless the conversation reveals a different root cause).")
+    return lines
 
 
 def _terminal_eval_cp(board: chess.Board):
@@ -361,9 +370,15 @@ def detect_student_color(headers, config):
     return None
 
 
-def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: int = 4):
+def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: int = 4,
+                eval_time: float = None, with_maia: bool = True, enrich: bool = True):
     """Full review of the first game in `pgn_text`. Returns a GameReview, or
-    None if no game with moves could be parsed."""
+    None if no game with moves could be parsed.
+
+    Batch fast-scan knobs (defaults reproduce single-game behavior exactly):
+    `eval_time` overrides config.review_eval_time; `with_maia=False` skips Maia
+    entirely (the CPU-bound part); `enrich=False` skips agenda selection, deep
+    enrichment, and online lookups, returning scan-level records only."""
     pgn_io = io.StringIO(pgn_text)
     game = chess.pgn.read_game(pgn_io)
     if game is None:
@@ -384,15 +399,18 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     white_elo = _header_elo(headers, "WhiteElo", getattr(config, "user_elo", 1200))
     black_elo = _header_elo(headers, "BlackElo", getattr(config, "user_elo", 1200))
 
-    tracing.trace(f"review: scanning {total} plies (Stockfish quick eval + Maia prediction "
-                  "per move; engine-level traces suppressed during the scan)")
+    scan_eval_time = float(eval_time) if eval_time is not None else float(
+        getattr(config, "review_eval_time", 0.5))
+    tracing.trace(f"review: scanning {total} plies (Stockfish quick eval"
+                  + (" + Maia prediction" if with_maia else "")
+                  + " per move; engine-level traces suppressed during the scan)")
     for ply, node in enumerate(nodes):
         move = node.move
         fen_before = board.fen()
 
-        eval_time = float(getattr(config, "review_eval_time", 0.5))
+        eval_time_ply = scan_eval_time
         if prev_eval_cp is None:
-            eval_before_cp, best_uci = _eval_with_best(engines, board, eval_time)
+            eval_before_cp, best_uci = _eval_with_best(engines, board, eval_time_ply)
         else:
             eval_before_cp, best_uci = prev_eval_cp, prev_best_uci
 
@@ -414,7 +432,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
 
         board.push(move)
         fen_after = board.fen()
-        eval_after_cp, next_best = _eval_with_best(engines, board, eval_time)
+        eval_after_cp, next_best = _eval_with_best(engines, board, eval_time_ply)
 
         before_m = eval_before_cp if mover_white else -eval_before_cp
         after_m = eval_after_cp if mover_white else -eval_after_cp
@@ -428,8 +446,10 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         maia_top, maia_played_prob, was_maia_top, avoided = [], None, False, None
         mover_elo = white_elo if mover_white else black_elo
         oppo_elo = black_elo if mover_white else white_elo
-        with tracing.suspended():
-            maia = engines.maia_predict(fen_before, elo_self=mover_elo, elo_oppo=oppo_elo)
+        maia = None
+        if with_maia:
+            with tracing.suspended():
+                maia = engines.maia_predict(fen_before, elo_self=mover_elo, elo_oppo=oppo_elo)
         best_move_human_prob = None
         human_win_prob = None
         if maia:
@@ -445,7 +465,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             was_maia_top = natural_uci == uci
             if not was_maia_top and drop < 5 and natural_prob >= 0.35:
                 avoided = _check_avoided_natural_mistake(
-                    engines, fen_before, mover_white, before_m, natural_uci, natural_prob, san, eval_time)
+                    engines, fen_before, mover_white, before_m, natural_uci, natural_prob, san, eval_time_ply)
 
         is_only = False
         if is_best and not is_forced and abs(before_m) < 400:
@@ -475,6 +495,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             best_move_san=_uci_to_san(fen_before, best_uci),
             is_capture=is_capture, time_spent=time_spent, clock_remaining=clock_remaining,
             time_flag=time_flag_for(quality, time_spent, clock_remaining, is_forced),
+            punisher_uci=next_best,
             maia_top=maia_top, maia_played_prob=maia_played_prob,
             was_maia_top=was_maia_top, avoided_natural_mistake=avoided,
             brilliancy_note=brilliancy, error_typicality=typicality,
@@ -488,6 +509,8 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     review = GameReview(headers=headers, records=records, student_color=student_color,
                         agenda_plies=[], game=game, extra_games_ignored=extra,
                         white_elo=white_elo, black_elo=black_elo)
+    if not enrich:
+        return review
     online = bool(getattr(config, "use_online_databases", True))
     forced_plies = []
     if online:
@@ -1162,6 +1185,11 @@ def suggest_error_categories(record: MoveRecord) -> list:
     elif (any(k.endswith("fork") for k in punish_kinds)
           or punish_kinds & {"pin", "skewer", "discovered_check", "discovered_attack",
                              "double_check", "removal_of_defender"}):
+        suggestions.append("ignored_threat")
+    elif record.punishment_line and record.punishment_line[0].endswith(("+", "#")):
+        # The refutation is an immediate forcing check: whatever else the move
+        # was trying to do (e.g. grab material), the root error was ignoring a
+        # direct threat — sharper than the is_capture -> bad_trade fallback.
         suggestions.append("ignored_threat")
 
     if record.time_flag in ("hope_chess", "time_scramble"):

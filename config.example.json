@@ -8,5 +8,6 @@
     "dark_terminal": false,
     "trace": false,
     "review_eval_time": 0.5,
-    "use_online_databases": true
+    "use_online_databases": true,
+    "batch_eval_time": 0.4
 }

@@ -45,27 +45,69 @@ def _score_to_str(score: chess.engine.PovScore) -> str:
     return f"{white.score(mate_score=MATE_CP) / 100.0:+.2f}"
 
 
-from app.notation import legal_san_mentions as _legal_san_mentions
+from app.notation import legal_san_mentions as _legal_san_mentions, san_mentions as _san_mentions
 
 
 def _valid_diagnosis_override(reason: str, recommended: str, chosen: str) -> bool:
+    """An override reason must contain actual evidence, not just restate the
+    category names or meta-talk about overriding. Arguing AGAINST the
+    recommended category ("this was not a bad trade because...") is the
+    natural — and valid — way to justify an override."""
     if not reason:
         return False
     text = reason.strip().casefold()
     if len(text) < 24:
         return False
-    boilerplate = (
-        "matches backend recommendation",
-        "backend recommendation",
-        "same as recommended",
-        "override",
-        "n/a",
-    )
-    if any(phrase in text for phrase in boilerplate):
-        return False
-    if recommended.replace("_", " ") in text and chosen.replace("_", " ") not in text:
-        return False
-    return True
+    residue = text
+    for phrase in (recommended.replace("_", " "), chosen.replace("_", " "),
+                   recommended.casefold(), chosen.casefold(),
+                   "matches backend recommendation", "backend recommendation",
+                   "recommended category", "same as recommended",
+                   "overriding", "override", "n/a"):
+        residue = residue.replace(phrase, " ")
+    return len(residue.split()) >= 5
+
+
+_BARE_SQUARE_RE = re.compile(r"[a-h][1-8]")
+
+
+def _ungrounded_diagnosis_moves(record, explanation: str) -> list:
+    """SAN tokens in a diagnosis explanation that match no verified truth:
+    not legal in the position before or after the mistake (or as an opponent
+    threat from the before-position), and absent from the verified
+    best/punishment lines. Bare squares like 'b4' are skipped — they usually
+    name a square, not a move."""
+    tokens = [t for t in _san_mentions(explanation)
+              if not _BARE_SQUARE_RE.fullmatch(t.rstrip("+#"))]
+    if not tokens:
+        return []
+    verified = {san.rstrip("+#") for san in
+                ([record.san, record.best_move_san]
+                 + list(record.best_line or []) + list(record.punishment_line or []))
+                if san}
+    boards = []
+    for fen in (record.fen_before, record.fen_after):
+        try:
+            boards.append(chess.Board(fen))
+        except ValueError:
+            pass
+    if boards:
+        # The opponent's standing threat: the before-position with the turn
+        # flipped ("you needed to stop Qg4" must not be flagged).
+        threat_board = boards[0].copy(stack=False)
+        threat_board.turn = not threat_board.turn
+        threat_board.ep_square = None
+        boards.append(threat_board)
+
+    def parses(board, san):
+        try:
+            board.parse_san(san.rstrip("+#"))
+            return True
+        except (ValueError, AssertionError):
+            return False
+
+    return [t for t in tokens
+            if t.rstrip("+#") not in verified and not any(parses(b, t) for b in boards)]
 
 
 def _move_label(board: chess.Board, san: str) -> str:
@@ -81,6 +123,7 @@ class CoachTools:
         self.config = config
         self.on_progress = on_progress  # optional callable(done, total) for review progress
         self.state.lesson_metadata = load_lesson_metadata(getattr(config, "lesson_file", None))
+        self._diagnosis_rejections = {}  # fen -> count of ungrounded-explanation rejections
 
     # ------------------------------------------------------------------
     # ANALYSIS
@@ -564,6 +607,27 @@ class CoachTools:
                         "chosen_category": category,
                         "lesson_objective": getattr(record, "lesson_objective", None)}
 
+        if record:
+            ungrounded = _ungrounded_diagnosis_moves(record, error_explanation)
+            if ungrounded:
+                self._diagnosis_rejections[fen] = self._diagnosis_rejections.get(fen, 0) + 1
+                if self._diagnosis_rejections[fen] >= 2:
+                    # Don't let a stubborn fabrication stall the lesson: log a
+                    # backend-built explanation instead of the invented one.
+                    error_explanation = (
+                        f"The student played {record.san}; the verified punishment is "
+                        f"{' '.join(record.punishment_line[:4])}." if record.punishment_line
+                        else f"The student played {record.san} instead of {record.best_move_san}.")
+                else:
+                    return {"error": f"error_explanation names {', '.join(ungrounded)} — not a legal move "
+                                     "in this position and not part of any verified line. NEVER invent "
+                                     "tactical sequences: rebuild the explanation using ONLY the verified "
+                                     "data below, then resubmit.",
+                            "played_move": record.san,
+                            "best_move": record.best_move_san,
+                            "verified_punishment_line": record.punishment_line or None,
+                            "verified_best_line": record.best_line or None}
+
         diagnosis = {
             "fen": fen,
             "error_category": category,
@@ -603,17 +667,26 @@ class CoachTools:
         if idx is None:
             return
         meta = dict(self.state.lesson_metadata or {})
-        if self.state.current_game_id:
-            meta["last_game_id"] = self.state.current_game_id
         if status == "diagnosis_logged":
             if idx + 1 >= len(agenda):
                 status = "lesson_complete"   # finished the final moment
-                meta["last_agenda_index"] = idx
+                next_idx = idx
             else:
-                meta["last_agenda_index"] = idx + 1
+                next_idx = idx + 1
         else:
-            meta["last_agenda_index"] = idx
-        meta["lesson_status"] = status
+            next_idx = idx
+        # Batch lessons use their own slot: running /batch must never clobber
+        # an unfinished single-game lesson, and vice versa.
+        batch_id = getattr(self.state.review, "batch_id", None)
+        if batch_id:
+            meta["batch_id"] = batch_id
+            meta["batch_agenda_index"] = next_idx
+            meta["batch_lesson_status"] = status
+        else:
+            if self.state.current_game_id:
+                meta["last_game_id"] = self.state.current_game_id
+            meta["last_agenda_index"] = next_idx
+            meta["lesson_status"] = status
         self.state.lesson_metadata = meta
         save_lesson_metadata(self.config.lesson_file, meta)
 
