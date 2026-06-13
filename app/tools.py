@@ -13,7 +13,7 @@ from app.memory import load_lesson_metadata, save_lesson_metadata
 from app.motifs import detect_motifs_in_line
 from app.pawn_story import analyze_pawn_structure_evolution
 from app.render import render_board_token
-from app.review import review_game, attach_board_tokens, cp_to_win_pct, MATE_CP
+from app.review import review_game, attach_board_tokens, cp_to_win_pct, MATE_CP, _wdl_risk_profile
 from app.ui import console
 
 # The closed mistake taxonomy. Diagnoses outside this list are rejected so the
@@ -218,6 +218,15 @@ class CoachTools:
         if maia:
             maia_summary = {"top_human_moves": maia["top_moves"],
                             "win_probability_for_side_to_move": maia["win_probability_for_side_to_move"]}
+            d, l = maia.get("draw_probability"), maia.get("loss_probability")
+            if d is not None:
+                w = maia["win_probability_for_side_to_move"] or 0.0
+                profile, guidance = _wdl_risk_profile(w, d, l or 0.0)
+                maia_summary["win_draw_loss_for_side_to_move"] = {
+                    "win": round(w, 3), "draw": round(d, 3), "loss": round(l or 0.0, 3)}
+                maia_summary["risk_profile"] = profile
+                if guidance:
+                    maia_summary["risk_guidance"] = guidance
 
         return {
             "top_stockfish_lines": top_lines,
