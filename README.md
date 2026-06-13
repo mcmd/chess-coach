@@ -90,6 +90,8 @@ Models behave like good test-takers: they guess confidently rather than admit un
 
 ```
 /load_pgn <path>   Load + review a PGN file (engine review, lesson agenda, auto-resume)
+/batch <path>      Scan a multi-game PGN (10-50 games) for recurring mistake patterns
+                   (/batch alone reloads the last report)
 /move <san>        Play a move (e.g. /move Nf3)
 /next  /prev       Step forward / back through the loaded game
 /goto <n>[b]       Jump to before White's (or Black's) move n
@@ -102,6 +104,52 @@ Models behave like good test-takers: they guess confidently rather than admit un
 ```
 
 You can also paste a PGN directly, or just talk.
+
+## Talking to Your Coach
+
+Beyond the slash commands, you drive the coach in plain language — it has backend tools for review, position analysis, openings, endgames, sparring, and your dossier, and it decides which to call. There's no special syntax; ask the way you would ask a human coach. Every example below is backed by a real backend tool, so the answers are engine-grounded, not invented.
+
+**Review a game**
+- `Review this Lichess game: 2dtDqQgRy2OD` — fetch, engine-review, and start the lesson
+- `Here's my game:` then paste the PGN (or `/load_pgn game.pgn`)
+- `Pull this one from chessgames.com: <id or url>`
+- `What were my critical mistakes?` / `Give me your insights`
+
+**Answer the coach during a review.** It teaches one critical moment at a time and asks you first — reply naturally:
+- `Black is threatening exd4` — a threat read
+- `I'd play Rad1` / `Ne4` — a candidate move
+- `Because it brings my last rook into play and defends e4` — the *why*, after you've found the move
+
+You earn the answer by attempting: it unlocks when you are right, or after two tries.
+
+**Ask about risk & drawing chances** (from the human-move model, for the side to move)
+- `How risky is this position — am I playing for a win or a draw?`
+- `What are my practical drawing chances here?`
+- `Is this drawish, or should I keep pushing?`
+
+**Understand a position or test an idea**
+- `Is anything hanging here?` / `Why is my knight on a5 bad?`
+- `What is the threat if I do nothing?`
+- `What if I had played Rfe1 instead?` — the coach verifies the line on the engine before answering
+
+**Pawn-structure story**
+- `How did my pawn structure evolve during the game?`
+
+**Openings & endgames**
+- `What is the main theory in this position?` / `What do strong players play here?`
+- `Is this endgame winning, or a theoretical draw?` — Syzygy tablebase, ≤7 pieces
+
+**Spar against a human-like opponent**
+- `/spar`, then play your moves (`/move e4`, or just say your move); `/nospar` to stop
+- The coach's replies are sampled from the human-move model at your Elo; a blunder pauses the game for a mini-lesson
+
+**Work on your recurring weaknesses (dossier)**
+- `What do I keep getting wrong?`
+- `/review` — quiz yourself on a position from a past mistake
+- `/memorize` — save this session's diagnoses to your long-term dossier
+- `/batch games.pgn` — scan 10–50 of your games for recurring patterns and train on them
+
+Tip: run with `--trace` to watch exactly which tools the coach calls for each answer.
 
 ## Setup
 
