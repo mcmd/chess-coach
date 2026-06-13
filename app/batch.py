@@ -295,6 +295,8 @@ def _backfill_maia(record: MoveRecord, engines, elo: int) -> None:
         return
     record.maia_top = maia["top_moves"]
     record.human_win_prob = maia.get("win_probability_for_side_to_move")
+    record.human_draw_prob = maia.get("draw_probability")
+    record.human_loss_prob = maia.get("loss_probability")
     prob = maia["raw_probs"].get(record.uci)
     record.maia_played_prob = round(float(prob), 3) if prob is not None else None
     natural_uci = max(maia["raw_probs"], key=maia["raw_probs"].get)

@@ -97,6 +97,8 @@ class MoveRecord:
     best_move_human_prob: float = None      # findability: % of peers who play the engine-best move
     phase: str = None                       # opening / middlegame / endgame at the time of the move
     human_win_prob: float = None            # Maia: how often peers actually score from here (mover POV)
+    human_draw_prob: float = None           # Maia WDL draw share, mover POV (maia3 only)
+    human_loss_prob: float = None           # Maia WDL loss share, mover POV (maia3 only)
     likely_wrong_answer: str = None         # the guess the student will most likely offer, pre-refuted
     aspirational: dict = None               # what stronger players choose here ({elo, move, probability})
     book_share: float = None                # share of master games playing this move (it IS theory)
@@ -287,6 +289,28 @@ def _opening_alignment_facts(student_records: list) -> str:
             "do not merge them): " + "; ".join(parts) + ".")
 
 
+def _wdl_risk_profile(win: float, draw: float, loss: float) -> tuple:
+    """Translate a Maia WDL spread (mover POV, fractions) into a coaching risk
+    verdict. The backend decides the verdict; the coach narrates it. Returns
+    (label, guidance); 'balanced' means no notable skew worth a digest line.
+
+    Calibrated to real maia3 output, which (trained on decisive online games) has
+    structurally LOW draw in live positions and high draw only in genuinely held
+    ones. So we flag only clear skews and deliberately do NOT try to detect
+    'sharpness' — a tactical 50/3/47 and a calm 50/3/47 are indistinguishable in
+    the value head, so a balanced spread stays 'balanced'."""
+    if loss - win >= 0.25:
+        return ("must-hold", "you are under real pressure (loss chances clearly exceed winning ones) "
+                             "— prioritise solid defence over ambition")
+    if win - loss >= 0.25 and win >= 0.55:
+        return ("winning", "you hold the better practical chances — convert with low-risk technique "
+                           "rather than sharp complications")
+    if draw >= 0.50:
+        return ("drawish", "drawish at this level (a draw is the most likely result) — don't force "
+                           "it; press only with safe, incremental improvements")
+    return ("balanced", "")
+
+
 def moment_digest_lines(i: int, r: MoveRecord) -> list:
     """The digest block for one agenda moment — shared by single-game reviews
     and batch training reports so the coaching protocol sees identical data."""
@@ -335,6 +359,12 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
                          + ("HARDER to play than the eval suggests; teach technique, not the number."
                             if human_pct < engine_pct else
                             "easier in practice than the eval suggests."))
+    if r.human_draw_prob is not None and r.human_win_prob is not None:
+        w, d, l = r.human_win_prob, r.human_draw_prob, (r.human_loss_prob or 0.0)
+        profile, guidance = _wdl_risk_profile(w, d, l)
+        if profile != "balanced":
+            lines.append(f"  Risk profile (Maia WDL, mover POV {w * 100:.0f}/{d * 100:.0f}/{l * 100:.0f}): "
+                         f"{profile} — {guidance}.")
     if r.time_spent is not None:
         flag = f" (flag: {r.time_flag})" if r.time_flag else ""
         lines.append(f"  Time: spent {int(r.time_spent)}s, {int(r.clock_remaining)}s remaining{flag}.")
@@ -494,8 +524,11 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
                                             history_uci=history_before, tier="scan")
         best_move_human_prob = None
         human_win_prob = None
+        human_draw_prob = human_loss_prob = None
         if maia:
             human_win_prob = maia.get("win_probability_for_side_to_move")
+            human_draw_prob = maia.get("draw_probability")
+            human_loss_prob = maia.get("loss_probability")
             maia_top = maia["top_moves"]
             prob = maia["raw_probs"].get(uci)
             maia_played_prob = round(float(prob), 3) if prob is not None else None
@@ -543,6 +576,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             brilliancy_note=brilliancy, error_typicality=typicality,
             best_move_human_prob=best_move_human_prob,
             phase=phase, human_win_prob=human_win_prob,
+            human_draw_prob=human_draw_prob, human_loss_prob=human_loss_prob,
         ))
         prev_eval_cp, prev_best_uci = eval_after_cp, next_best
         if on_progress:

@@ -305,6 +305,49 @@ def test_practical_difficulty_divergence_noted():
     assert "HARDER to play" in review.digest()
 
 
+def test_wdl_risk_profile_categories():
+    from app.review import _wdl_risk_profile
+    assert _wdl_risk_profile(0.60, 0.10, 0.30)[0] == "winning"
+    assert _wdl_risk_profile(0.20, 0.10, 0.70)[0] == "must-hold"
+    assert _wdl_risk_profile(0.25, 0.55, 0.20)[0] == "drawish"
+    # A balanced low-draw spread (e.g. the start position, ~51/3/46) must NOT be
+    # flagged as sharp — sharpness isn't in maia3's value head.
+    assert _wdl_risk_profile(0.51, 0.03, 0.46)[0] == "balanced"
+    # Winning chances but draw-dominant (e.g. K+P vs K, ~39/61/1) reads as drawish,
+    # not "winning".
+    assert _wdl_risk_profile(0.39, 0.60, 0.01)[0] == "drawish"
+
+
+def test_wdl_risk_profile_surfaced_in_digest():
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(
+        evals=evals,
+        maia={fens[4]: {"h5f7": 0.45}},
+        maia_wdl={fens[4]: (0.20, 0.60, 0.20)},  # drawish, mover POV
+    )
+    review = review_game(PGN, engines, _Cfg())
+    rec = review.records[4]
+    assert rec.human_draw_prob == 0.60 and rec.human_loss_prob == 0.20
+    digest = review.digest()
+    assert "Risk profile" in digest
+    assert "drawish" in digest
+
+
+def test_wdl_absent_for_maia2_style_prediction():
+    # maia2 (no WDL) → no draw/loss fields → no Risk profile line.
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(evals=evals, maia={fens[4]: {"h5f7": 0.45}})  # no maia_wdl
+    review = review_game(PGN, engines, _Cfg())
+    assert review.records[4].human_draw_prob is None
+    assert "Risk profile" not in review.digest()
+
+
 def test_likely_wrong_answer_anticipated_with_refutation():
     import chess as _chess
     fens = _fens_of(PGN)
