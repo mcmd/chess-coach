@@ -1278,13 +1278,24 @@ def _aspirational_instinct(r: MoveRecord, engines, review: GameReview) -> None:
         r.aspirational = {"elo": target_elo, **asp["top_moves"][0]}
 
 
-# Within-game trajectory: EXPERIMENTAL, off by default (see config.trajectory_enabled).
-# Live probing showed the raw "skill band" signal is confounded — many sound moves
-# are simply more popular at lower ratings (e.g. the Berlin's ...Nf6 reads 'low'),
-# and near-zero-probability moves get classified on tail noise. So we (a) ignore
-# moves below a probability floor and (b) only count a 'low' ply toward a collapse
-# if it ALSO lost eval — i.e. a weaker-band move that actually cost something.
-# Thresholds still need calibration against real reviews.
+# Within-game trajectory: EXPERIMENTAL, off by default (config.trajectory_enabled=False),
+# and CALIBRATED & REJECTED (2026-06-14) — kept inert, do not enable.
+#
+# Calibration via scripts/calibrate_trajectory.py on four real Lichess games showed
+# the per-move "skill band" method is structurally broken, not mis-tuned. A student's
+# bad move is either bad-at-all-levels (too rare -> below the prob floor -> reads
+# 'level') or typical-for-their-level (their-ELO prob highest -> reads 'level'); only
+# moves *differentially* more popular at a lower band read 'low', and those are the
+# sound-but-unpopular moves (Berlin ...Nf6 confound) or tail noise. In the cleanest
+# one-sided collapse tested, every game-losing move read 'level' and was excluded,
+# while a sound move was flagged on a 0.2pp noise difference. The eval-loss gate below
+# only protects on the *losing* side (floored win%); on the *winning* side there is
+# headroom to "lose" win% on harmless moves, so it leaks. Full evidence + the four
+# game tables: design/maia3_integration_design_20260613.md §8.4 and §15 FR-3.
+#
+# The mitigations below (probability floor + eval-loss gate) were the last tuning
+# attempt; they cannot fix the structural confound. Left in place only so the disabled
+# code path matches the documented experiment.
 TRAJECTORY_ELO_GAP = 300      # sweep anchors at student_elo +/- this
 TRAJECTORY_MIN_RUN = 3        # consecutive collapse plies to flag a stretch
 TRAJECTORY_MIN_PLIES = 8      # need this many post-opening student plies to bother
