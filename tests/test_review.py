@@ -348,6 +348,79 @@ def test_wdl_absent_for_maia2_style_prediction():
     assert "Risk profile" not in review.digest()
 
 
+# --- within-game trajectory (Maia ELO sweep) ---
+
+def _student_rec(i, fen, uci, drop=5.0):
+    from app.review import MoveRecord
+    return MoveRecord(ply=i, number=i + 1, color="white", san="x", uci=uci,
+                      fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=0,
+                      drop_pct=drop, quality="inaccuracy", phase="middlegame")
+
+
+def _trajectory_review(drop=5.0):
+    from app.review import GameReview
+    START = chess.STARTING_FEN
+    recs = [_student_rec(i, START, "e2e4", drop=drop) for i in range(8)]
+    return GameReview(headers={}, records=recs, student_color="white",
+                      agenda_plies=[], white_elo=1500, black_elo=1500), START
+
+
+def _low_band_engines(START):
+    return FakeEngines(maia_by_elo={
+        (START, 1500): {"e2e4": 0.10},
+        (START, 1200): {"e2e4": 0.40},   # weaker band finds the move likelier -> "low"
+        (START, 1800): {"e2e4": 0.05},
+    })
+
+
+def test_trajectory_skill_band_helper():
+    from app.review import _skill_band
+    assert _skill_band(0.40, 0.10, 0.05) == "low"
+    assert _skill_band(0.10, 0.50, 0.20) == "level"
+    assert _skill_band(0.05, 0.10, 0.40) == "high"
+    assert _skill_band(0.0, 0.0, 0.0) == "level"
+    assert _skill_band(0.03, 0.02, 0.01) == "level"   # below the probability floor
+
+
+def test_trajectory_flags_below_level_collapse():
+    from app.review import _analyze_trajectory
+    review, START = _trajectory_review(drop=5.0)   # below-band AND losing eval
+    _analyze_trajectory(review, _low_band_engines(START))
+    assert review.trajectory is not None
+    segs = review.trajectory["segments"]
+    assert len(segs) == 1 and segs[0]["plies"] == 8
+    assert review.trajectory["approx_below_elo"] == 1200
+    assert "WITHIN-GAME TRAJECTORY" in review.digest()
+
+
+def test_trajectory_ignores_below_level_moves_that_keep_eval():
+    # 'low' band but no eval loss (e.g. a sound move that's just popular at lower
+    # ratings) must NOT be flagged as a collapse.
+    from app.review import _analyze_trajectory
+    review, START = _trajectory_review(drop=0.0)
+    _analyze_trajectory(review, _low_band_engines(START))
+    assert review.trajectory is None
+
+
+def test_trajectory_silent_when_on_level():
+    from app.review import _analyze_trajectory
+    review, START = _trajectory_review()
+    engines = FakeEngines(maia_by_elo={
+        (START, 1500): {"e2e4": 0.50},   # student's own level fits best -> "level"
+        (START, 1200): {"e2e4": 0.20},
+        (START, 1800): {"e2e4": 0.30},
+    })
+    _analyze_trajectory(review, engines)
+    assert review.trajectory is None
+
+
+def test_trajectory_skipped_without_maia():
+    from app.review import _analyze_trajectory
+    review, _ = _trajectory_review()
+    _analyze_trajectory(review, FakeEngines())  # no human model
+    assert review.trajectory is None
+
+
 def test_likely_wrong_answer_anticipated_with_refutation():
     import chess as _chess
     fens = _fens_of(PGN)

@@ -38,6 +38,8 @@ class AppConfig:
     maia3_device: str = "cpu"
     maia_history_plies: int = 12      # max game-history plies fed to maia3
     spar_temperature: float = 0.0     # maia3 sparring move-sampling temperature (0 = argmax)
+    trajectory_enabled: bool = False  # EXPERIMENTAL within-game skill-collapse detection
+                                      # (off until calibrated on live reviews — see review.py)
 
     # Engine quality knobs. Broad scans are cheaper; agenda/threat/practicality
     # analysis is where extra time most directly improves coaching quality.
@@ -161,6 +163,7 @@ Examples:
         maia3_device=app_config.get("maia3_device", "cpu"),
         maia_history_plies=int(engine_value("maia_history_plies", 12)),
         spar_temperature=float(app_config.get("spar_temperature", 0.0)),
+        trajectory_enabled=bool(app_config.get("trajectory_enabled", False)),
         review_eval_time=float(engine_value("review_eval_time", 1.0)),
         agenda_best_depth=int(engine_value("agenda_best_depth", 20)),
         agenda_best_time=float(engine_value("agenda_best_time", 6.0)),

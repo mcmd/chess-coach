@@ -144,6 +144,7 @@ class GameReview:
     opening_eco: str = None
     opening_deviation: dict = None   # where the game left established theory
     tablebase_entry: dict = None     # where the game entered provable endgame territory
+    trajectory: dict = None          # within-game skill-collapse segments (Maia ELO sweep)
 
     def record_at(self, ply: int):
         return self.records[ply] if 0 <= ply < len(self.records) else None
@@ -236,6 +237,19 @@ class GameReview:
                          "recognize these explicitly during the review):")
             for r, text in praised:
                 lines.append(f"  {r.move_label}: {text}")
+
+        if self.trajectory and self.trajectory.get("segments"):
+            t = self.trajectory
+            lines.append("")
+            lines.append(f"WITHIN-GAME TRAJECTORY (Maia skill estimate vs the student's ~{t['student_elo']} level):")
+            for s in t["segments"]:
+                lines.append(
+                    f"  Moves {s['start_move']}-{s['end_move']} ({s['plies']} of the student's moves) "
+                    f"read like ~{t['approx_below_elo']}-level play — a stretch BELOW the student's band "
+                    f"(avg {s['avg_win_pct_lost']:.0f} win% lost per move). Coach the META-PATTERN of this "
+                    "stretch (what changed: time pressure, a won/lost turning point, rising complexity) "
+                    "using the time/eval facts in the moments — NOT individual moves already covered, and "
+                    "NEVER speculate about feelings the data does not show.")
 
         lines.append("")
         lines.append("Annotated moves (?? blunder, ? mistake, ?! inaccuracy, ! only-move):")
@@ -602,6 +616,11 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     review.agenda_plies = _select_agenda(records, student_color, agenda_size, forced_plies)
     _enrich_agenda(review, engines, online)
     _apply_opening_moment(review)
+    if with_maia and getattr(config, "trajectory_enabled", True):
+        try:
+            _analyze_trajectory(review, engines)
+        except Exception:
+            pass  # trajectory is a bonus signal; never break a review
     return review
 
 
@@ -1257,6 +1276,93 @@ def _aspirational_instinct(r: MoveRecord, engines, review: GameReview) -> None:
                                history_uci=(r.history_uci or None), tier="deep")
     if asp and asp["top_moves"]:
         r.aspirational = {"elo": target_elo, **asp["top_moves"][0]}
+
+
+# Within-game trajectory: EXPERIMENTAL, off by default (see config.trajectory_enabled).
+# Live probing showed the raw "skill band" signal is confounded — many sound moves
+# are simply more popular at lower ratings (e.g. the Berlin's ...Nf6 reads 'low'),
+# and near-zero-probability moves get classified on tail noise. So we (a) ignore
+# moves below a probability floor and (b) only count a 'low' ply toward a collapse
+# if it ALSO lost eval — i.e. a weaker-band move that actually cost something.
+# Thresholds still need calibration against real reviews.
+TRAJECTORY_ELO_GAP = 300      # sweep anchors at student_elo +/- this
+TRAJECTORY_MIN_RUN = 3        # consecutive collapse plies to flag a stretch
+TRAJECTORY_MIN_PLIES = 8      # need this many post-opening student plies to bother
+TRAJECTORY_MIN_PROB = 0.05    # below this, the move is too rare to attribute a band
+TRAJECTORY_PLY_MIN_DROP = 3.0 # a collapse ply must lose at least this much win%
+
+
+def _skill_band(p_lo: float, p_mid: float, p_hi: float) -> str:
+    """Which ELO anchor best explains the played move: 'low' / 'level' / 'high'.
+    'low' means a weaker band finds the move strictly more likely than the
+    student's own level. NOTE: this reflects rating-POPULARITY, not quality —
+    callers must combine it with an eval-loss check before calling it a mistake."""
+    best = max(p_lo, p_mid, p_hi)
+    if best < TRAJECTORY_MIN_PROB:
+        return "level"                      # too rare at any level to attribute a band
+    if p_lo == best and p_lo > p_mid:
+        return "low"
+    if p_hi == best and p_hi > p_mid:
+        return "high"
+    return "level"
+
+
+def _analyze_trajectory(review: GameReview, engines) -> None:
+    """Estimate, per student middlegame/endgame move, whether it looks like a
+    weaker / on-level / stronger player's choice (Maia ELO sweep), then flag
+    sustained stretches that read BELOW the student's band — a within-game
+    'collapse' signal a positional model cannot give. Sets review.trajectory or
+    leaves it None. Needs a human model + a known student Elo away from Maia's
+    range edges; benefits from (but does not require) history."""
+    if not getattr(engines, "maia", None) or review.student_color is None:
+        return
+    student_elo = review.white_elo if review.student_color == "white" else review.black_elo
+    if not student_elo:
+        return
+    oppo_elo = (review.black_elo if review.student_color == "white" else review.white_elo) or student_elo
+    lo = max(1100, student_elo - TRAJECTORY_ELO_GAP)
+    hi = min(1900, student_elo + TRAJECTORY_ELO_GAP)
+    if lo >= student_elo or hi <= student_elo:
+        return  # student Elo at the edge of Maia's range — the sweep isn't meaningful
+
+    student_plies = [r for r in review.records
+                     if r.color == review.student_color and r.phase != "opening"]
+    if len(student_plies) < TRAJECTORY_MIN_PLIES:
+        return
+
+    def p_at(r, elo):
+        with tracing.suspended():
+            pred = engines.maia_predict(r.fen_before, elo_self=elo, elo_oppo=oppo_elo,
+                                        history_uci=(r.history_uci or None), tier="scan")
+        return pred["raw_probs"].get(r.uci, 0.0) if pred else 0.0
+
+    # A "collapse ply" must look like a weaker band's move AND have actually cost
+    # win% — this filters out sound-but-lower-popular moves (e.g. the Berlin ...Nf6).
+    collapse = []
+    for r in student_plies:
+        p_mid = r.maia_played_prob if r.maia_played_prob is not None else p_at(r, student_elo)
+        is_collapse = (_skill_band(p_at(r, lo), p_mid, p_at(r, hi)) == "low"
+                       and r.drop_pct >= TRAJECTORY_PLY_MIN_DROP)
+        collapse.append((r, is_collapse))
+
+    segments, i, n = [], 0, len(collapse)
+    while i < n:
+        if not collapse[i][1]:
+            i += 1
+            continue
+        j = i
+        while j < n and collapse[j][1]:
+            j += 1
+        run = [r for r, _ in collapse[i:j]]
+        if len(run) >= TRAJECTORY_MIN_RUN:
+            segments.append({
+                "start_move": run[0].number, "end_move": run[-1].number, "plies": len(run),
+                "avg_win_pct_lost": round(sum(r.drop_pct for r in run) / len(run), 1),
+            })
+        i = j
+
+    if segments:
+        review.trajectory = {"student_elo": student_elo, "approx_below_elo": lo, "segments": segments}
 
 
 def position_facts(board: chess.Board) -> str:
