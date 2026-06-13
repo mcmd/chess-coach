@@ -15,12 +15,13 @@ class FakeEngines:
     """
 
     def __init__(self, evals=None, bests=None, multipv=None, maia=None,
-                 maia_win=None, maia_by_elo=None, threats=None):
+                 maia_win=None, maia_by_elo=None, threats=None, maia_wdl=None):
         self.evals = evals or {}
         self.bests = bests or {}
         self.multipv = multipv or {}
         self.maia_data = maia or {}
         self.maia_win = maia_win or {}        # fen -> win probability
+        self.maia_wdl = maia_wdl or {}        # fen -> (win, draw, loss) fractions (maia3-style)
         self.maia_by_elo = maia_by_elo or {}  # (fen, elo_self) -> probs
         self.threats_data = threats or {}     # fen -> threat_probe result list
         self.stockfish = object()  # truthy: "engine available"
@@ -54,7 +55,7 @@ class FakeEngines:
     def threat_probe(self, board, multipv=2):
         return self.threats_data.get(board.fen(), [])
 
-    def maia_predict(self, fen, elo_self=None, elo_oppo=None):
+    def maia_predict(self, fen, elo_self=None, elo_oppo=None, history_uci=None, tier="deep"):
         self.maia_calls += 1
         probs = None
         if elo_self is not None and (fen, elo_self) in self.maia_by_elo:
@@ -65,11 +66,32 @@ class FakeEngines:
             return None
         board = chess.Board(fen)
         top = sorted(probs.items(), key=lambda kv: -kv[1])[:3]
+        wdl = self.maia_wdl.get(fen)
         return {
             "top_moves": [{"move": board.san(chess.Move.from_uci(u)), "probability": p} for u, p in top],
-            "win_probability_for_side_to_move": self.maia_win.get(fen, 0.5),
+            "win_probability_for_side_to_move": (wdl[0] if wdl else self.maia_win.get(fen, 0.5)),
             "raw_probs": dict(probs),
+            "draw_probability": (wdl[1] if wdl else None),
+            "loss_probability": (wdl[2] if wdl else None),
+            "used_history": bool(history_uci),
+            "model_name": "fake",
         }
+
+    def human_predict(self, fen, elo_self=None, elo_oppo=None, history_uci=None, tier="deep"):
+        from app.human_model import HumanPrediction, top_moves_san
+        d = self.maia_predict(fen, elo_self=elo_self, elo_oppo=elo_oppo,
+                              history_uci=history_uci, tier=tier)
+        if d is None:
+            return None
+        return HumanPrediction(
+            raw_probs=d["raw_probs"],
+            win_probability=d["win_probability_for_side_to_move"],
+            draw_probability=d["draw_probability"],
+            loss_probability=d["loss_probability"],
+            top_moves=top_moves_san(d["raw_probs"], chess.Board(fen)),
+            used_history=d["used_history"],
+            model_name=d["model_name"],
+        )
 
     def clear_cache(self):
         pass

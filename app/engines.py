@@ -25,9 +25,9 @@ class EngineManager:
     def __init__(self, config):
         self.config = config
         self.stockfish = None
-        self.maia = None
-        self.maia_prepared = None
-        self.maia_error = None
+        self.human_models = {}      # tier ("deep"/"scan") -> HumanModel
+        self.human_fallback = None  # HumanModel (maia2) used when a tier is missing
+        self.maia_error = None      # user-facing load-warning summary (None if a model loaded)
 
     def start(self):
         try:
@@ -39,13 +39,74 @@ class EngineManager:
                 f"Could not start Stockfish at '{self.config.stockfish_path}': {e}"
             )
 
-        try:
-            from maia2 import model, inference
-            self.maia = model.from_pretrained(type="rapid", device="cpu")
-            self.maia_prepared = inference.prepare()
-        except Exception as e:
-            self.maia = None
-            self.maia_error = str(e)
+        self._start_human_models()
+
+    # --- HUMAN MODEL (maia2 / maia3) LIFECYCLE & POLICY ---
+
+    def _make_human_model(self, spec: str, cache: dict):
+        """Build (or reuse a cached) HumanModel for a spec. `"maia2"` selects the
+        legacy net; anything else is a maia3 preset/repo. Tiers that name the same
+        spec share one loaded instance."""
+        if spec in cache:
+            return cache[spec]
+        from app.human_model import Maia2Model, Maia3Model
+        if spec == "maia2":
+            model = Maia2Model(device=getattr(self.config, "maia3_device", "cpu"))
+        else:
+            model = Maia3Model(
+                spec,
+                cache_dir=getattr(self.config, "maia3_cache_dir", None),
+                device=getattr(self.config, "maia3_device", "cpu"),
+                history_plies=getattr(self.config, "maia_history_plies", 12),
+            )
+        cache[spec] = model
+        return model
+
+    def _start_human_models(self):
+        """Load the configured human-move models. `maia_version`: "2" forces maia2
+        for every tier; "3" loads maia3 tiers with no fallback; "auto" (default)
+        loads maia3 tiers, plus a maia2 fallback only if a tier fails to load."""
+        version = getattr(self.config, "maia_version", "auto")
+        if version == "2":
+            deep_spec = scan_spec = "maia2"
+        else:
+            deep_spec = getattr(self.config, "maia3_deep_model", "maia3-79m")
+            scan_spec = getattr(self.config, "maia3_scan_model", "maia3-79m")
+
+        cache, errors = {}, []
+        for tier, spec in (("deep", deep_spec), ("scan", scan_spec)):
+            try:
+                self.human_models[tier] = self._make_human_model(spec, cache)
+                trace(f"human model: {tier} tier -> {spec}")
+            except Exception as e:
+                errors.append(f"{tier} ({spec}): {e}")
+
+        # Only pay for the maia2 fallback when a maia3 tier actually failed to
+        # load. A tier that loaded never falls back at runtime (predict errors
+        # return None, they don't cascade), so loading maia2 in the happy path
+        # just wastes RAM and startup time.
+        if version == "auto" and len(self.human_models) < 2:
+            try:
+                self.human_fallback = self._make_human_model("maia2", cache)
+            except Exception as e:
+                errors.append(f"fallback (maia2): {e}")
+
+        if not self.human_models and not self.human_fallback:
+            self.maia_error = "; ".join(errors) or "no human model available"
+        elif errors:
+            trace("human model load warnings: " + "; ".join(errors))
+
+    def _resolve_tier(self, tier: str):
+        """Pick the model for a tier, degrading deep->scan->fallback->None."""
+        return (self.human_models.get(tier)
+                or self.human_models.get("deep")
+                or self.human_models.get("scan")
+                or self.human_fallback)
+
+    @property
+    def maia(self):
+        """Back-compat truthiness: is any human-move model available?"""
+        return self._resolve_tier("deep")
 
     # --- STOCKFISH ---
 
@@ -110,30 +171,42 @@ class EngineManager:
                                     "threat_line": " ".join(line)})
         return threats
 
-    # --- MAIA-2 (human move prediction) ---
+    # --- HUMAN MOVE PREDICTION (maia2 / maia3) ---
 
-    def maia_predict(self, fen: str, elo_self: int = None, elo_oppo: int = None):
-        """Maia-2 prediction. Returns {top_moves: [{move, probability}], win_probability..., raw_probs}
-        or None if Maia is unavailable."""
-        if not self.maia:
+    def human_predict(self, fen: str, *, elo_self: int = None, elo_oppo: int = None,
+                      history_uci: list = None, tier: str = "deep"):
+        """Run the human model for `tier` and return a `HumanPrediction` (rich
+        object: full distribution + WDL when available), or None if no model is
+        available or the position has no prediction. `history_uci` (the moves
+        reaching `fen`) is used by maia3 and ignored by maia2."""
+        model = self._resolve_tier(tier)
+        if model is None:
             return None
-        from maia2 import inference
         elo_self = int(elo_self or self.config.user_elo)
         elo_oppo = int(elo_oppo or self.config.user_elo)
         try:
-            move_probs, win_prob = inference.inference_each(
-                self.maia, self.maia_prepared, fen, elo_self=elo_self, elo_oppo=elo_oppo
-            )
+            pred = model.predict(fen, elo_self=elo_self, elo_oppo=elo_oppo, history_uci=history_uci)
         except Exception:
             return None
-        if not move_probs:
+        if pred is None or not pred.raw_probs:
             return None
-        trace(f"maia-2 predict(elo {elo_self} vs {elo_oppo}) -> top={max(move_probs, key=move_probs.get)} "
-              f"({move_probs[max(move_probs, key=move_probs.get)]:.0%})")
+        top_uci = max(pred.raw_probs, key=pred.raw_probs.get)
+        trace(f"{pred.model_name} predict(elo {elo_self} vs {elo_oppo}, tier={tier}, "
+              f"hist={'y' if pred.used_history else 'n'}) -> top={top_uci} ({pred.raw_probs[top_uci]:.0%})")
+        return pred
 
+    def maia_predict(self, fen: str, elo_self: int = None, elo_oppo: int = None,
+                     history_uci: list = None, tier: str = "deep"):
+        """Legacy contract over `human_predict`: returns a dict with the original
+        keys (top_moves / win_probability_for_side_to_move / raw_probs) plus the
+        additive WDL fields, or None. Existing callers need no changes."""
+        pred = self.human_predict(fen, elo_self=elo_self, elo_oppo=elo_oppo,
+                                  history_uci=history_uci, tier=tier)
+        if pred is None:
+            return None
         board = chess.Board(fen)
         top = []
-        for uci, prob in sorted(move_probs.items(), key=lambda kv: kv[1], reverse=True)[:3]:
+        for uci, prob in sorted(pred.raw_probs.items(), key=lambda kv: kv[1], reverse=True)[:3]:
             try:
                 mv = chess.Move.from_uci(uci)
             except ValueError:
@@ -142,8 +215,15 @@ class EngineManager:
                 top.append({"move": board.san(mv), "probability": round(float(prob), 3)})
         return {
             "top_moves": top,
-            "win_probability_for_side_to_move": round(float(win_prob), 3) if win_prob is not None else None,
-            "raw_probs": {u: float(p) for u, p in move_probs.items()},
+            "win_probability_for_side_to_move": round(float(pred.win_probability), 3)
+                if pred.win_probability is not None else None,
+            "raw_probs": {u: float(p) for u, p in pred.raw_probs.items()},
+            "draw_probability": round(float(pred.draw_probability), 3)
+                if pred.draw_probability is not None else None,
+            "loss_probability": round(float(pred.loss_probability), 3)
+                if pred.loss_probability is not None else None,
+            "used_history": pred.used_history,
+            "model_name": pred.model_name,
         }
 
     # --- LIFECYCLE ---
