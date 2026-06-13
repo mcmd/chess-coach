@@ -7,6 +7,9 @@
     "player_name": "mcmd",
     "dark_terminal": true,
     "trace": true,
+    "board_light_color": "#eeeed2",
+    "board_dark_color": "#769656",
+    "board_scale": 1,
     "engine": {
         "review_eval_time": 1.0,
         "agenda_best_depth": 20,

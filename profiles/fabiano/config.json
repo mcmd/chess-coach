@@ -4,6 +4,9 @@
     "stockfish_path": "C:\\Users\\Shadow\\Downloads\\stockfish\\stockfish-windows-x86-64-avx2.exe",
     "gemini_model": "gemini-3.1-pro-preview",
     "profiles_dir": "./profiles",
+    "board_light_color": "#eeeed2",
+    "board_dark_color": "#769656",
+    "board_scale": 2,
     "engine": {
         "review_eval_time": 1.0,
         "agenda_best_depth": 20,

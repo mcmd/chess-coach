@@ -55,6 +55,9 @@ def main():
     client = genai.Client(api_key=config.api_key)
 
     app_state = SessionState()
+    app_state.board_light_color = config.board_light_color
+    app_state.board_dark_color = config.board_dark_color
+    app_state.board_scale = config.board_scale
     timeline = TimelineManager(app_state)
 
     engines = EngineManager(config)

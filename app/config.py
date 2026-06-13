@@ -21,6 +21,12 @@ class AppConfig:
     trace: bool = False      # show tool calls and engine invocations
     use_online_databases: bool = True  # opening explorer + tablebase enrichment of reviews
 
+    # Board diagram theme. Square colours are hex strings; board_scale sets how
+    # many character cells each square spans (2*scale wide, scale tall).
+    board_light_color: str = "#eeeed2"
+    board_dark_color: str = "#769656"
+    board_scale: int = 2
+
     # Engine quality knobs. Broad scans are cheaper; agenda/threat/practicality
     # analysis is where extra time most directly improves coaching quality.
     review_eval_time: float = 1.0
@@ -133,6 +139,9 @@ Examples:
         player_name=app_config.get("player_name"),
         trace=args.trace or app_config.get("trace", False),
         use_online_databases=bool(app_config.get("use_online_databases", True)),
+        board_light_color=app_config.get("board_light_color", "#eeeed2"),
+        board_dark_color=app_config.get("board_dark_color", "#769656"),
+        board_scale=int(app_config.get("board_scale", 2)),
         review_eval_time=float(engine_value("review_eval_time", 1.0)),
         agenda_best_depth=int(engine_value("agenda_best_depth", 20)),
         agenda_best_time=float(engine_value("agenda_best_time", 6.0)),

@@ -139,10 +139,42 @@ def normalize_move_styling(text: str) -> str:
 
 def substitute_board_tokens(text: str, visuals: dict) -> tuple[str, int]:
     """Replace known board tokens with their diagrams; scrub any leftover
-    (invented) tokens instead of showing them raw. Returns (text, n_scrubbed)."""
+    (invented) tokens instead of showing them raw. Returns (text, n_scrubbed).
+
+    Retained for callers that need a flat-text expansion (and its regression
+    tests); the live CLI now renders via _split_board_segments so coloured board
+    markup is printed through the Rich console rather than Markdown."""
     for token, visual in visuals.items():
         text = text.replace(token, f"\n{visual}\n")
     return _UNRESOLVED_TOKEN_RE.subn("\n*(diagram unavailable — the coach referenced a board it never generated)*\n", text)
+
+
+_DIAGRAM_UNAVAILABLE = "*(diagram unavailable — the coach referenced a board it never generated)*"
+
+
+def _split_board_segments(text: str, visuals: dict) -> tuple[list[tuple[str, str]], int]:
+    """Split prose around board tokens so each can be rendered with the right
+    engine: ('text', markdown) prose goes through Rich Markdown; ('board', markup)
+    coloured diagrams are printed as Rich console markup. Unknown (model-invented)
+    tokens are scrubbed to a plain notice. Returns (segments, n_scrubbed)."""
+    segments: list[tuple[str, str]] = []
+    scrubbed = 0
+    last = 0
+    for m in _UNRESOLVED_TOKEN_RE.finditer(text):
+        pre = text[last:m.start()]
+        if pre:
+            segments.append(("text", pre))
+        token = m.group(0).strip("`")
+        if token in visuals:
+            segments.append(("board", visuals[token]))
+        else:
+            segments.append(("text", f"\n{_DIAGRAM_UNAVAILABLE}\n"))
+            scrubbed += 1
+        last = m.end()
+    tail = text[last:]
+    if tail:
+        segments.append(("text", tail))
+    return segments, scrubbed
 
 
 def _render(full_text: str, state) -> None:
@@ -154,10 +186,16 @@ def _render(full_text: str, state) -> None:
     output_text = re.sub(r"^(?:(?:Output|Done|End|Yes|I will output now)\.\s*)+", "", output_text, flags=re.IGNORECASE).strip()
 
     output_text = normalize_move_styling(output_text)
-    output_text, scrubbed = substitute_board_tokens(output_text, state.board_visuals)
+    segments, scrubbed = _split_board_segments(output_text, state.board_visuals)
     if scrubbed:
         console.print(f"[dim red]({scrubbed} invented board token(s) scrubbed from the response)[/dim red]")
 
-    if output_text:
+    if any(kind == "board" or payload.strip() for kind, payload in segments):
         console.print("\n[bold purple]Coach:[/bold purple]")
-        console.print(Markdown(output_text))
+        for kind, payload in segments:
+            if kind == "board":
+                console.print()
+                console.print(payload)
+                console.print()
+            elif payload.strip():
+                console.print(Markdown(payload))
