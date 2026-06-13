@@ -212,7 +212,9 @@ class CoachTools:
         motifs = detect_motifs_in_line(board, best_pv_san) if best_pv_san else []
 
         maia_summary = None
-        maia = self.engines.maia_predict(board.fen())
+        base_hist = self._history_for_fen(fen)
+        hist = (base_hist + [m.uci() for m in board.move_stack]) if base_hist is not None else None
+        maia = self.engines.maia_predict(board.fen(), history_uci=hist, tier="deep")
         if maia:
             maia_summary = {"top_human_moves": maia["top_moves"],
                             "win_probability_for_side_to_move": maia["win_probability_for_side_to_move"]}
@@ -345,7 +347,7 @@ class CoachTools:
         }
         if tablebase_verdict:
             result["tablebase_verdict"] = tablebase_verdict
-        maia = self.engines.maia_predict(fen)
+        maia = self.engines.maia_predict(fen, history_uci=self._history_for_fen(fen), tier="deep")
         if maia:
             prob = maia["raw_probs"].get(move.uci())
             if prob is not None and prob >= 0.15:
@@ -383,6 +385,16 @@ class CoachTools:
         if not self.state.review:
             return None
         return next((r for r in self.state.review.agenda if r.fen_before == fen), None)
+
+    def _history_for_fen(self, fen: str):
+        """Best-effort UCI move history reaching `fen`, for history-aware maia3
+        prediction. Returns None (→ positional fallback) when the line is unknown."""
+        rec = self._agenda_record_for_fen(fen)
+        if rec is not None and getattr(rec, "history_uci", None):
+            return list(rec.history_uci)
+        if self.state.board.move_stack and self.state.board.fen() == fen:
+            return [m.uci() for m in self.state.board.move_stack]
+        return None
 
     def _hint_facts(self, board: chess.Board, best_move: chess.Move) -> dict:
         """Verified facts about the withheld best move, so hints are never invented."""
@@ -522,7 +534,10 @@ class CoachTools:
                     "message": "The game is over — no reply to play."}
 
         san = None
-        maia = self.engines.maia_predict(board.fen())
+        # Feed the live game's history so the sparring opponent plays in character
+        # across the game rather than position-by-position.
+        spar_hist = [m.uci() for m in board.move_stack] if board.move_stack else None
+        maia = self.engines.maia_predict(board.fen(), history_uci=spar_hist, tier="deep")
         if maia and maia["top_moves"]:
             moves = maia["top_moves"]
             weights = [m["probability"] for m in moves]

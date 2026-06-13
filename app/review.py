@@ -82,6 +82,7 @@ class MoveRecord:
     clock_remaining: float = None
     time_flag: str = None
     punisher_uci: str = None     # engine's best reply to the played move (free from the scan)
+    history_uci: list = field(default_factory=list)  # UCI moves reaching fen_before (history-aware maia3)
     # Agenda enrichment (populated only for critical moments):
     is_agenda: bool = False
     best_line: list = field(default_factory=list)
@@ -443,6 +444,10 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     for ply, node in enumerate(nodes):
         move = node.move
         fen_before = board.fen()
+        # Game line reaching this position — fed to maia3 for history-aware
+        # prediction. Only built when we actually run Maia (the batch scan skips
+        # it to keep its JSON cache lean).
+        history_before = [m.uci() for m in board.move_stack] if with_maia else None
 
         eval_time_ply = scan_eval_time
         if prev_eval_cp is None:
@@ -485,7 +490,8 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         maia = None
         if with_maia:
             with tracing.suspended():
-                maia = engines.maia_predict(fen_before, elo_self=mover_elo, elo_oppo=oppo_elo)
+                maia = engines.maia_predict(fen_before, elo_self=mover_elo, elo_oppo=oppo_elo,
+                                            history_uci=history_before, tier="scan")
         best_move_human_prob = None
         human_win_prob = None
         if maia:
@@ -531,7 +537,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             best_move_san=_uci_to_san(fen_before, best_uci),
             is_capture=is_capture, time_spent=time_spent, clock_remaining=clock_remaining,
             time_flag=time_flag_for(quality, time_spent, clock_remaining, is_forced),
-            punisher_uci=next_best,
+            punisher_uci=next_best, history_uci=history_before or [],
             maia_top=maia_top, maia_played_prob=maia_played_prob,
             was_maia_top=was_maia_top, avoided_natural_mistake=avoided,
             brilliancy_note=brilliancy, error_typicality=typicality,
@@ -895,7 +901,10 @@ def _assess_practicality(r: MoveRecord, engines, review: GameReview, deep_after_
                                - infos[1]["score"].pov(pov).score(mate_score=MATE_CP))
                     prob = None
                     mover_elo = (review.white_elo if mover_white else review.black_elo)
-                    maia = engines.maia_predict(reply_board.fen(), elo_self=mover_elo, elo_oppo=mover_elo)
+                    reply_hist = (list(r.history_uci) + [r.uci, reply_board.move_stack[-1].uci()]
+                                  if r.history_uci else None)
+                    maia = engines.maia_predict(reply_board.fen(), elo_self=mover_elo,
+                                                elo_oppo=mover_elo, history_uci=reply_hist, tier="deep")
                     if maia:
                         prob = maia["raw_probs"].get(pv[0].uci())
                     saving = {"san": reply_board.san(pv[0]), "gap": gap, "prob": prob}
@@ -1210,7 +1219,8 @@ def _aspirational_instinct(r: MoveRecord, engines, review: GameReview) -> None:
     target_elo = min(mover_elo + 350, 1900)
     if target_elo <= mover_elo + 50:
         return
-    asp = engines.maia_predict(r.fen_before, elo_self=target_elo, elo_oppo=target_elo)
+    asp = engines.maia_predict(r.fen_before, elo_self=target_elo, elo_oppo=target_elo,
+                               history_uci=(r.history_uci or None), tier="deep")
     if asp and asp["top_moves"]:
         r.aspirational = {"elo": target_elo, **asp["top_moves"][0]}
 
