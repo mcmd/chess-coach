@@ -144,7 +144,7 @@ class GameReview:
     opening_eco: str = None
     opening_deviation: dict = None   # where the game left established theory
     tablebase_entry: dict = None     # where the game entered provable endgame territory
-    trajectory: dict = None          # within-game skill-collapse segments (Maia ELO sweep)
+    slides: list = None              # within-game eval-only one-sided slide segments
 
     def record_at(self, ply: int):
         return self.records[ply] if 0 <= ply < len(self.records) else None
@@ -238,18 +238,18 @@ class GameReview:
             for r, text in praised:
                 lines.append(f"  {r.move_label}: {text}")
 
-        if self.trajectory and self.trajectory.get("segments"):
-            t = self.trajectory
+        if self.slides:
             lines.append("")
-            lines.append(f"WITHIN-GAME TRAJECTORY (Maia skill estimate vs the student's ~{t['student_elo']} level):")
-            for s in t["segments"]:
+            lines.append("WITHIN-GAME SLIDE (cumulative loss, no single blunder):")
+            for s in self.slides:
                 lines.append(
-                    f"  Moves {s['start_move']}-{s['end_move']} ({s['plies']} of the student's moves) "
-                    f"read like ~{t['approx_below_elo']}-level play — a stretch BELOW the student's band "
-                    f"(avg {s['avg_win_pct_lost']:.0f} win% lost per move). Coach the META-PATTERN of this "
-                    "stretch (what changed: time pressure, a won/lost turning point, rising complexity) "
-                    "using the time/eval facts in the moments — NOT individual moves already covered, and "
-                    "NEVER speculate about feelings the data does not show.")
+                    f"  Moves {s['start_move']}-{s['end_move']} ({s['plies']} of the student's moves): "
+                    f"winning chances fell from {s['start_winpct']:.0f}% to {s['end_winpct']:.0f}% "
+                    f"(net {s['net_loss']:.0f}% lost; no single move lost more than {s['max_single']:.0f}%). "
+                    "The damage was CUMULATIVE drift, not one mistake — coach the META-PATTERN "
+                    "(consolidating an advantage, staying alert after the critical moment, handling "
+                    "rising complexity) using the eval/time facts in the moments. State only what the "
+                    "evals show; never mind-read.")
 
         lines.append("")
         lines.append("Annotated moves (?? blunder, ? mistake, ?! inaccuracy, ! only-move):")
@@ -599,6 +599,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     review = GameReview(headers=headers, records=records, student_color=student_color,
                         agenda_plies=[], game=game, extra_games_ignored=extra,
                         white_elo=white_elo, black_elo=black_elo)
+    _detect_slides(review)   # eval-only; cheap and safe in scan and full review
     if not enrich:
         return review
     online = bool(getattr(config, "use_online_databases", True))
@@ -616,11 +617,6 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     review.agenda_plies = _select_agenda(records, student_color, agenda_size, forced_plies)
     _enrich_agenda(review, engines, online)
     _apply_opening_moment(review)
-    if with_maia and getattr(config, "trajectory_enabled", True):
-        try:
-            _analyze_trajectory(review, engines)
-        except Exception:
-            pass  # trajectory is a bonus signal; never break a review
     return review
 
 
@@ -1278,102 +1274,75 @@ def _aspirational_instinct(r: MoveRecord, engines, review: GameReview) -> None:
         r.aspirational = {"elo": target_elo, **asp["top_moves"][0]}
 
 
-# Within-game trajectory: EXPERIMENTAL, off by default (config.trajectory_enabled=False),
-# and CALIBRATED & REJECTED (2026-06-14) — kept inert, do not enable.
+# Within-game SLIDE detection: EVAL-ONLY (no Maia). This replaces the rejected
+# Phase 4 maia "skill band" trajectory (calibrated & rejected 2026-06-14 — see
+# design/maia3_integration_design_20260613.md §8.4 / §15 FR-3). That method tried
+# to spot "moves that look like a weaker player's", and was structurally confounded
+# (bad moves are rare at all bands -> read 'level' -> missed). The eval stream is the
+# signal that actually survived: a "slide" is a stretch of several mediocre moves
+# that together hand the game away with NO single blunder — exactly the pattern the
+# move-by-move agenda misses (each move alone isn't agenda-worthy).
 #
-# Calibration via scripts/calibrate_trajectory.py on four real Lichess games showed
-# the per-move "skill band" method is structurally broken, not mis-tuned. A student's
-# bad move is either bad-at-all-levels (too rare -> below the prob floor -> reads
-# 'level') or typical-for-their-level (their-ELO prob highest -> reads 'level'); only
-# moves *differentially* more popular at a lower band read 'low', and those are the
-# sound-but-unpopular moves (Berlin ...Nf6 confound) or tail noise. In the cleanest
-# one-sided collapse tested, every game-losing move read 'level' and was excluded,
-# while a sound move was flagged on a 0.2pp noise difference. The eval-loss gate below
-# only protects on the *losing* side (floored win%); on the *winning* side there is
-# headroom to "lose" win% on harmless moves, so it leaks. Full evidence + the four
-# game tables: design/maia3_integration_design_20260613.md §8.4 and §15 FR-3.
-#
-# The mitigations below (probability floor + eval-loss gate) were the last tuning
-# attempt; they cannot fix the structural confound. Left in place only so the disabled
-# code path matches the documented experiment.
-TRAJECTORY_ELO_GAP = 300      # sweep anchors at student_elo +/- this
-TRAJECTORY_MIN_RUN = 3        # consecutive collapse plies to flag a stretch
-TRAJECTORY_MIN_PLIES = 8      # need this many post-opening student plies to bother
-TRAJECTORY_MIN_PROB = 0.05    # below this, the move is too rare to attribute a band
-TRAJECTORY_PLY_MIN_DROP = 3.0 # a collapse ply must lose at least this much win%
+# Validated on 1,700+ analysed Lichess games across two players (~1500 and ~2000):
+# genuine gradual slides occur in ~16-18% of games, and the win%-space thresholds
+# below are rating-stable (a 500-Elo gap moved the rate by ~2 points). The win%
+# frame is self-normalizing, so "lose 25 net win% over 3+ moves" means the same
+# thing at every level. Detector + corpus bench: scripts/scan_eval_slides.py.
+SLIDE_PLY_DROP_MIN = 3.0       # a student move "loses" if it sheds >= this much win%
+SLIDE_MIN_RUN = 3              # consecutive losing student moves to form a run
+SLIDE_MIN_START_WINPCT = 30.0  # the run must START from a non-floored position (had chances)
+SLIDE_NET_LOSS_MIN = 25.0      # net (start->end) win% lost across the run
+SLIDE_CLIFF_FRACTION = 0.70    # if one move is >= this share of the NET loss it's a single
+                               # blunder (the agenda already covers it), not a gradual slide
 
 
-def _skill_band(p_lo: float, p_mid: float, p_hi: float) -> str:
-    """Which ELO anchor best explains the played move: 'low' / 'level' / 'high'.
-    'low' means a weaker band finds the move strictly more likely than the
-    student's own level. NOTE: this reflects rating-POPULARITY, not quality —
-    callers must combine it with an eval-loss check before calling it a mistake."""
-    best = max(p_lo, p_mid, p_hi)
-    if best < TRAJECTORY_MIN_PROB:
-        return "level"                      # too rare at any level to attribute a band
-    if p_lo == best and p_lo > p_mid:
-        return "low"
-    if p_hi == best and p_hi > p_mid:
-        return "high"
-    return "level"
+def _detect_slides(review: GameReview) -> None:
+    """Flag sustained one-sided eval slides in the student's play: >= SLIDE_MIN_RUN
+    consecutive moves each losing win%, starting from a non-floored position, shedding
+    a large NET amount, with no single dominating blunder. Eval-only — reads the
+    win%-space already on each MoveRecord, needs no engine. Sets review.slides or
+    leaves it None.
 
-
-def _analyze_trajectory(review: GameReview, engines) -> None:
-    """Estimate, per student middlegame/endgame move, whether it looks like a
-    weaker / on-level / stronger player's choice (Maia ELO sweep), then flag
-    sustained stretches that read BELOW the student's band — a within-game
-    'collapse' signal a positional model cannot give. Sets review.trajectory or
-    leaves it None. Needs a human model + a known student Elo away from Maia's
-    range edges; benefits from (but does not require) history."""
-    if not getattr(engines, "maia", None) or review.student_color is None:
+    NET (start win% before the run minus end win% after it) is the key measure, not
+    the sum of per-move drops: summing inflates mutual-blunder churn where the
+    opponent keeps handing win% back. A real slide is a NET one-sided collapse."""
+    sc = review.student_color
+    if sc is None:
         return
-    student_elo = review.white_elo if review.student_color == "white" else review.black_elo
-    if not student_elo:
-        return
-    oppo_elo = (review.black_elo if review.student_color == "white" else review.white_elo) or student_elo
-    lo = max(1100, student_elo - TRAJECTORY_ELO_GAP)
-    hi = min(1900, student_elo + TRAJECTORY_ELO_GAP)
-    if lo >= student_elo or hi <= student_elo:
-        return  # student Elo at the edge of Maia's range — the sweep isn't meaningful
+    student_white = sc == "white"
+    rows = []   # (record, winpct_before, winpct_after, drop)
+    for r in review.records:
+        if r.color != sc or r.phase == "opening":
+            continue
+        if r.eval_before_cp is None or r.eval_after_cp is None:
+            continue
+        cb = r.eval_before_cp if student_white else -r.eval_before_cp
+        ca = r.eval_after_cp if student_white else -r.eval_after_cp
+        rows.append((r, cp_to_win_pct(cb), cp_to_win_pct(ca), r.drop_pct))
 
-    student_plies = [r for r in review.records
-                     if r.color == review.student_color and r.phase != "opening"]
-    if len(student_plies) < TRAJECTORY_MIN_PLIES:
-        return
-
-    def p_at(r, elo):
-        with tracing.suspended():
-            pred = engines.maia_predict(r.fen_before, elo_self=elo, elo_oppo=oppo_elo,
-                                        history_uci=(r.history_uci or None), tier="scan")
-        return pred["raw_probs"].get(r.uci, 0.0) if pred else 0.0
-
-    # A "collapse ply" must look like a weaker band's move AND have actually cost
-    # win% — this filters out sound-but-lower-popular moves (e.g. the Berlin ...Nf6).
-    collapse = []
-    for r in student_plies:
-        p_mid = r.maia_played_prob if r.maia_played_prob is not None else p_at(r, student_elo)
-        is_collapse = (_skill_band(p_at(r, lo), p_mid, p_at(r, hi)) == "low"
-                       and r.drop_pct >= TRAJECTORY_PLY_MIN_DROP)
-        collapse.append((r, is_collapse))
-
-    segments, i, n = [], 0, len(collapse)
+    segments, i, n = [], 0, len(rows)
     while i < n:
-        if not collapse[i][1]:
+        if rows[i][3] < SLIDE_PLY_DROP_MIN or rows[i][1] < SLIDE_MIN_START_WINPCT:
             i += 1
             continue
         j = i
-        while j < n and collapse[j][1]:
+        while j < n and rows[j][3] >= SLIDE_PLY_DROP_MIN:
             j += 1
-        run = [r for r, _ in collapse[i:j]]
-        if len(run) >= TRAJECTORY_MIN_RUN:
+        seg = rows[i:j]
+        net = seg[0][1] - seg[-1][2]
+        max_single = max(x[3] for x in seg)
+        if (len(seg) >= SLIDE_MIN_RUN and net >= SLIDE_NET_LOSS_MIN
+                and max_single < SLIDE_CLIFF_FRACTION * net):
             segments.append({
-                "start_move": run[0].number, "end_move": run[-1].number, "plies": len(run),
-                "avg_win_pct_lost": round(sum(r.drop_pct for r in run) / len(run), 1),
+                "start_move": seg[0][0].number, "end_move": seg[-1][0].number,
+                "plies": len(seg), "start_winpct": round(seg[0][1], 1),
+                "end_winpct": round(seg[-1][2], 1), "net_loss": round(net, 1),
+                "max_single": round(max_single, 1),
             })
         i = j
 
     if segments:
-        review.trajectory = {"student_elo": student_elo, "approx_below_elo": lo, "segments": segments}
+        review.slides = segments
 
 
 def position_facts(board: chess.Board) -> str:

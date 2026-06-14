@@ -348,77 +348,79 @@ def test_wdl_absent_for_maia2_style_prediction():
     assert "Risk profile" not in review.digest()
 
 
-# --- within-game trajectory (Maia ELO sweep) ---
+# --- within-game slide detection (eval-only) ---
 
-def _student_rec(i, fen, uci, drop=5.0):
-    from app.review import MoveRecord
-    return MoveRecord(ply=i, number=i + 1, color="white", san="x", uci=uci,
-                      fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=0,
-                      drop_pct=drop, quality="inaccuracy", phase="middlegame")
-
-
-def _trajectory_review(drop=5.0):
-    from app.review import GameReview
-    START = chess.STARTING_FEN
-    recs = [_student_rec(i, START, "e2e4", drop=drop) for i in range(8)]
-    return GameReview(headers={}, records=recs, student_color="white",
-                      agenda_plies=[], white_elo=1500, black_elo=1500), START
-
-
-def _low_band_engines(START):
-    return FakeEngines(maia_by_elo={
-        (START, 1500): {"e2e4": 0.10},
-        (START, 1200): {"e2e4": 0.40},   # weaker band finds the move likelier -> "low"
-        (START, 1800): {"e2e4": 0.05},
-    })
+def _slide_review(cps, color="white"):
+    """Build a GameReview whose student plays consecutive middlegame moves with the
+    given WHITE-relative (cp_before, cp_after) evals. drop_pct is computed in the
+    student's perspective, exactly as review_game does."""
+    from app.review import GameReview, MoveRecord, cp_to_win_pct
+    student_white = color == "white"
+    recs = []
+    for i, (cb, ca) in enumerate(cps):
+        mb = cb if student_white else -cb
+        ma = ca if student_white else -ca
+        drop = round(max(0.0, cp_to_win_pct(mb) - cp_to_win_pct(ma)), 1)
+        recs.append(MoveRecord(ply=2 * i, number=i + 10, color=color, san="x", uci="e2e4",
+                               fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                               eval_before_cp=cb, eval_after_cp=ca, drop_pct=drop,
+                               quality="inaccuracy", phase="middlegame"))
+    return GameReview(headers={}, records=recs, student_color=color,
+                      agenda_plies=[], white_elo=1500, black_elo=1500)
 
 
-def test_trajectory_skill_band_helper():
-    from app.review import _skill_band
-    assert _skill_band(0.40, 0.10, 0.05) == "low"
-    assert _skill_band(0.10, 0.50, 0.20) == "level"
-    assert _skill_band(0.05, 0.10, 0.40) == "high"
-    assert _skill_band(0.0, 0.0, 0.0) == "level"
-    assert _skill_band(0.03, 0.02, 0.01) == "level"   # below the probability floor
+def test_slide_detects_gradual_collapse():
+    from app.review import _detect_slides
+    # winning -> losing across 5 moves, each shedding ~8 win%, no single cliff.
+    review = _slide_review([(300, 200), (200, 100), (100, 0), (0, -100), (-100, -200)])
+    _detect_slides(review)
+    assert review.slides is not None
+    s = review.slides[0]
+    assert s["plies"] == 5 and s["net_loss"] >= 25
+    assert "WITHIN-GAME SLIDE" in review.digest()
 
 
-def test_trajectory_flags_below_level_collapse():
-    from app.review import _analyze_trajectory
-    review, START = _trajectory_review(drop=5.0)   # below-band AND losing eval
-    _analyze_trajectory(review, _low_band_engines(START))
-    assert review.trajectory is not None
-    segs = review.trajectory["segments"]
-    assert len(segs) == 1 and segs[0]["plies"] == 8
-    assert review.trajectory["approx_below_elo"] == 1200
-    assert "WITHIN-GAME TRAJECTORY" in review.digest()
+def test_slide_silent_on_single_cliff():
+    # one move sheds ~35 win%, the rest only a few -> a blunder the agenda already
+    # covers, NOT a gradual slide (max single >= 70% of the net loss).
+    from app.review import _detect_slides
+    review = _slide_review([(200, -200), (-200, -250), (-250, -300)])
+    _detect_slides(review)
+    assert review.slides is None
 
 
-def test_trajectory_ignores_below_level_moves_that_keep_eval():
-    # 'low' band but no eval loss (e.g. a sound move that's just popular at lower
-    # ratings) must NOT be flagged as a collapse.
-    from app.review import _analyze_trajectory
-    review, START = _trajectory_review(drop=0.0)
-    _analyze_trajectory(review, _low_band_engines(START))
-    assert review.trajectory is None
+def test_slide_silent_when_net_small():
+    # three losing moves but tiny NET loss -> below the net threshold.
+    from app.review import _detect_slides
+    review = _slide_review([(50, 10), (10, -30), (-30, -70)])
+    _detect_slides(review)
+    assert review.slides is None
 
 
-def test_trajectory_silent_when_on_level():
-    from app.review import _analyze_trajectory
-    review, START = _trajectory_review()
-    engines = FakeEngines(maia_by_elo={
-        (START, 1500): {"e2e4": 0.50},   # student's own level fits best -> "level"
-        (START, 1200): {"e2e4": 0.20},
-        (START, 1800): {"e2e4": 0.30},
-    })
-    _analyze_trajectory(review, engines)
-    assert review.trajectory is None
+def test_slide_silent_from_floored_start():
+    # already lost when the run starts (win% < 30) -> mop-up, not a collapse.
+    from app.review import _detect_slides
+    review = _slide_review([(-300, -400), (-400, -500), (-500, -600)])
+    _detect_slides(review)
+    assert review.slides is None
 
 
-def test_trajectory_skipped_without_maia():
-    from app.review import _analyze_trajectory
-    review, _ = _trajectory_review()
-    _analyze_trajectory(review, FakeEngines())  # no human model
-    assert review.trajectory is None
+def test_slide_needs_min_run():
+    # only two consecutive losing moves -> below MIN_RUN even with a big net loss.
+    from app.review import _detect_slides
+    review = _slide_review([(300, 100), (100, -100)])
+    _detect_slides(review)
+    assert review.slides is None
+
+
+def test_slide_works_for_black_student():
+    # same gradual collapse, student is Black: eval is white-relative, so a Black
+    # slide is white-eval RISING. Confirms the perspective handling.
+    from app.review import _detect_slides
+    review = _slide_review([(-300, -200), (-200, -100), (-100, 0), (0, 100), (100, 200)],
+                           color="black")
+    _detect_slides(review)
+    assert review.slides is not None and review.slides[0]["plies"] == 5
 
 
 def test_likely_wrong_answer_anticipated_with_refutation():

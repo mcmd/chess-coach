@@ -195,6 +195,13 @@ The suite (160+ tests) runs in a few seconds with no engines and no network — 
 
 If you intentionally change the concept extractor, regenerate the snapshot baseline: `python -m tests.test_concepts_snapshot --save`.
 
-`scripts/smoke_maia2.py` is a manual Maia-2 smoke test (loads the real model).
+### Manual scripts (`scripts/`)
+
+These are developer/research tools, **not** part of the pytest suite (they load real models or hit the network). Run them from the repo root with the project venv, e.g. `python scripts/<name>.py`.
+
+| Script | What it does |
+|---|---|
+| `smoke_maia2.py` | Manual Maia-2 smoke test — loads the real rapid model and runs a single prediction from the start position. Quick check that the human-move model is installed and working. |
+| `scan_eval_slides.py` | Eval-only "within-game slide" corpus scanner (no model, no tokens). Downloads a player's analysed Lichess games (`--user <name>`, cached locally) and classifies each game's archetype — gradual slide / single cliff / chaos / clean — purely from the `[%eval]` annotations, reporting the base rate of sustained one-sided slides and dumping candidate games. Used to validate the `/review` slide detector (`app/review.py::_detect_slides`). Example: `python scripts/scan_eval_slides.py --user msnid --max 3000`. |
 
 See `GEMINI.md` for the module map and architectural invariants.
