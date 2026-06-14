@@ -19,6 +19,6 @@
         "threat_multipv": 3,
         "practicality_depth": 16,
         "practicality_time": 3.0,
-        "batch_eval_time": 0.4
+        "batch_eval_time": 0.6
     }
 }

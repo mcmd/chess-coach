@@ -895,6 +895,16 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
             pv = infos[0].get("pv") or []
             r.best_line = _pv_to_san(board_before, pv[:8])
             r.best_line_motifs = detect_motifs_in_line(board_before, r.best_line)
+            # The deep multipv PV is more authoritative than the shallow scan eval
+            # that first set best_move_san. When they disagree on the FIRST move,
+            # the explanation (best_line + its motifs) describes the deep line while
+            # the "answer" still names the shallow move — which produced tactically
+            # FALSE coaching (e.g. teaching 22.Nb3 as a 'discovered check' when the
+            # check only appears after the line's real first move 22.Rd1). Reconcile
+            # the answer to the deep PV so the move taught and the move explained are
+            # the same. Done before the lesson primitives / diagnosis read best_move.
+            if r.best_line:
+                r.best_move_san = r.best_line[0]
         except Exception:
             pass
 

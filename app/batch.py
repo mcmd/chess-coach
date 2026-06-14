@@ -128,30 +128,53 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
     Each scan is a JSON-safe dict with full scan-level MoveRecords."""
     max_games = int(getattr(config, "batch_max_games", 50))
     games, truncated = split_games(pgn_text, max_games)
-    scan_eval_time = float(getattr(config, "batch_eval_time", 0.4))
+    scan_eval_time = float(getattr(config, "batch_eval_time", 0.6))
     scans, skipped = [], 0
-    for i, game in enumerate(games, 1):
+    n = len(games)
+
+    # Plan the work before scanning so the progress bar (and its ETA) can span the
+    # WHOLE PGN instead of resetting per game: resolve student/cache for each game
+    # once, and total the plies that will actually be scanned. Cached and skipped
+    # games emit no per-ply progress, so they are excluded from the grand total.
+    plan, grand_total = [], 0
+    for game in games:
         headers = dict(game.headers)
         student_color = detect_student_color(headers, config)
-        if getattr(config, "player_name", None) and student_color is None:
-            skipped += 1
-            if on_status:
-                on_status(f"game {i}/{len(games)}: skipped (student not in headers)")
-            continue
         ucis = " ".join(m.uci() for m in game.mainline_moves())
         key = game_key_for(headers, ucis)
-        cached = _load_cached_scan(cache_dir, key)
+        skip = bool(getattr(config, "player_name", None)) and student_color is None
+        cached = None if skip else _load_cached_scan(cache_dir, key)
+        n_plies = 0 if (skip or cached is not None) else (ucis.count(" ") + 1 if ucis else 0)
+        grand_total += n_plies
+        plan.append((game, headers, key, skip, cached, n_plies))
+
+    # review_game reports (ply, game_total); remap onto the batch-wide total so the
+    # one bar advances monotonically and never resets between games.
+    base = 0
+
+    def batch_progress(done, _game_total):
+        if on_progress:
+            on_progress(base + done, grand_total or 1)
+
+    for i, (game, headers, key, skip, cached, n_plies) in enumerate(plan, 1):
+        if skip:
+            skipped += 1
+            if on_status:
+                on_status(f"game {i}/{n}: skipped (student not in headers)")
+            continue
         if cached is not None:
             scans.append(cached)
             if on_status:
-                on_status(f"game {i}/{len(games)}: cached ({key})")
+                on_status(f"game {i}/{n}: cached ({key})")
             continue
         if on_status:
-            on_status(f"game {i}/{len(games)}: scanning ({key})")
-        review = review_game(str(game), engines, config, on_progress=on_progress,
+            on_status(f"game {i}/{n}: scanning ({key})")
+        review = review_game(str(game), engines, config,
+                             on_progress=(batch_progress if on_progress else None),
                              eval_time=scan_eval_time, with_maia=False, enrich=False)
         if review is None:
             skipped += 1
+            base += n_plies
             continue
         scan = {
             "game_key": key,
@@ -164,6 +187,7 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
         }
         _save_scan(cache_dir, key, scan)
         scans.append(scan)
+        base += n_plies
     return scans, skipped, truncated
 
 

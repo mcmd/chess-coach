@@ -9,6 +9,14 @@ from google.genai import types
 # keep it bounded so old sessions don't drown new ones.
 MAX_HISTORY_MESSAGES = 80
 
+# Hysteresis for the persisted slide_trend "above_baseline" flag. The per-batch
+# detector raises it at >= 1.5x the corpus base rate (app.batch.SLIDE_ABOVE_BASELINE);
+# persisting that raw bool would let a player hovering near the line flip the
+# user-facing "ABOVE typical" message on and off between batches on eval noise
+# alone. Turn the flag ON at the detector's upper threshold, OFF only once the rate
+# falls below this lower multiple of baseline, and hold it in the dead-band. (issue #4)
+SLIDE_ABOVE_BASELINE_OFF = 1.2
+
 
 def _atomic_write_json(path: str, data) -> None:
     """Write-then-rename so a crash mid-write can't corrupt the file."""
@@ -208,7 +216,18 @@ def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
     sig = batch_summary.get("slide_signature")
     if sig:
         rate = sig.get("rate")
+        baseline = sig.get("baseline")
         prev_rate = prev_slide.get("rate")
+        # Hysteresis on the "ABOVE typical" flag (see SLIDE_ABOVE_BASELINE_OFF):
+        # ON at the detector's upper threshold, OFF only below the lower bound,
+        # held in between so the message doesn't oscillate on eval noise.
+        prev_above = prev_slide.get("above_baseline", False)
+        if sig.get("above_baseline"):
+            above = True
+        elif baseline and rate is not None and rate < baseline * SLIDE_ABOVE_BASELINE_OFF:
+            above = False
+        else:
+            above = prev_above
         status = "active"
         if prev_rate and rate is not None and rate <= prev_rate * 0.6:
             status = "improving"
@@ -217,7 +236,7 @@ def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
             "games": sig.get("games_total"),
             "rate": rate,
             "previous_rate": prev_rate,
-            "above_baseline": sig.get("above_baseline", False),
+            "above_baseline": above,
             "markers": sig.get("markers", []),
             "status": status,
             "first_seen": prev_slide.get("first_seen", today) if prev_slide else today,

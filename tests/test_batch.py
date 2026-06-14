@@ -446,6 +446,50 @@ def test_batch_digest_renders_cross_game_slide_block():
     assert "3/10" in out and "AHEAD" in out
 
 
+def test_enrich_reconciles_best_move_to_deep_pv(stub_config):
+    """Bug #3: when the shallow scan best_move disagrees with the deep PV's first
+    move, the explanation follows the deep line — so the taught move must too."""
+    from app.review import _enrich_agenda, GameReview
+    fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"   # after 1.e4 e5
+    after = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPPKPPP/RNBQ1BNR b kq - 1 2"  # 2.Ke2 (a blunder)
+    r = MoveRecord(ply=2, number=2, color="white", san="Ke2", uci="e1e2",
+                   fen_before=fen, fen_after=after,
+                   eval_before_cp=80, eval_after_cp=-400, drop_pct=35.0,
+                   quality="blunder", best_move_san="Nf3")   # shallow scan said Nf3
+    review = GameReview(headers={}, records=[r], student_color="white",
+                        agenda_plies=[0], white_elo=1150, black_elo=1150)
+    engines = FakeEngines(multipv={fen: [("d2d4", 90)]})     # deep PV prefers d4
+    _enrich_agenda(review, engines, online=False)
+    assert r.best_line[0] == "d4"
+    assert r.best_move_san == "d4"   # reconciled away from the shallow "Nf3"
+
+
+def test_slide_above_baseline_hysteresis(stub_config):
+    """Bug #4: the persisted 'ABOVE typical' flag turns ON at 1.5x baseline, OFF
+    only below 1.2x, and holds in the dead-band (no flip-flop on eval noise)."""
+    f = stub_config.dossier_file
+    update_dossier_with_batch(f, _slide_summary("b1", 0.30))   # >= 0.255 -> ON
+    assert load_dossier(f)["slide_trend"]["above_baseline"] is True
+    update_dossier_with_batch(f, _slide_summary("b2", 0.22))   # dead-band -> HOLD ON
+    assert load_dossier(f)["slide_trend"]["above_baseline"] is True
+    update_dossier_with_batch(f, _slide_summary("b3", 0.18))   # < 0.204 -> OFF
+    assert load_dossier(f)["slide_trend"]["above_baseline"] is False
+
+
+def test_batch_progress_spans_whole_pgn(stub_config, tmp_path):
+    """FR #7: one progress total for the whole PGN; done is monotonic (no per-game
+    reset) and ends at the grand total."""
+    pgn, engines = _fixture()   # 3 fresh games, each scanned
+    calls = []
+    scan_games(pgn, engines, stub_config, str(tmp_path / "b"),
+               on_progress=lambda d, t: calls.append((d, t)))
+    totals = {t for _, t in calls}
+    assert len(totals) == 1                 # a single batch-wide total
+    dones = [d for d, _ in calls]
+    assert dones == sorted(dones)           # monotonic across game boundaries
+    assert dones[-1] == totals.pop()        # finishes at 100%
+
+
 def test_severity_label_thresholds():
     from app.batch import _severity_label
     assert _severity_label(33) == "a blunder"
