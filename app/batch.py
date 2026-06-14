@@ -27,11 +27,22 @@ from app.review import (GameReview, MoveRecord, review_game, _enrich_agenda,
                         detect_student_color, moment_digest_lines)
 
 # Bump when MoveRecord scan fields or classification change incompatibly.
-SCAN_VERSION = 1
+# v2: scans now carry review.slides (eval-only within-game slides + co-markers).
+SCAN_VERSION = 2
 
 # A cluster is only a "pattern" with enough evidence to be a fact, not noise.
 MIN_PATTERN_MOMENTS = 3
 MIN_PATTERN_GAMES = 2
+
+# Cross-game slide habit (eval-only): aggregate review.slides across the batch.
+MIN_SLIDE_GAMES = 2            # surface the habit only with >= this many slide games
+SLIDE_BASELINE_RATE = 0.17    # corpus base rate of gradual slides (scan_eval_slides.py)
+SLIDE_ABOVE_BASELINE = 1.5    # flag "above typical" when the player's rate >= this x baseline
+# A situational co-marker (ahead / queens-on / time pressure) is asserted as a
+# pattern only with enough slides AND a clear majority sharing it — else it stays
+# raw data. Same "refuse weak claims" discipline that sank the Phase-4 method.
+SLIDE_MARKER_MIN_GAMES = 3
+SLIDE_MARKER_FRACTION = 0.6
 
 PATTERN_TITLES = {
     "defend_against_direct_threat": "Playing on while a forcing threat hangs over the position",
@@ -148,6 +159,7 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
             "scan_version": SCAN_VERSION,
             "scanned_with": {"eval_time": scan_eval_time, "with_maia": False},
             "records": [asdict(r) for r in review.records],
+            "slides": review.slides or [],   # eval-only within-game slides (+ co-markers)
         }
         _save_scan(cache_dir, key, scan)
         scans.append(scan)
@@ -193,8 +205,13 @@ class BatchPattern:
     count: int
     games_seen: int
     total_drop: float
-    moments: list            # all member moments: {game_key, move_label, san, drop_pct, fen_before}
+    moments: list            # all member moments: {game_key, move_label, san, drop_pct, fen_before, in_slide}
     representatives: list = field(default_factory=list)  # enriched MoveRecords (deep pass)
+    # Knowledge-gap vs execution axis: how many of this cluster's moments fell
+    # INSIDE a within-game slide. Mostly-inside => discipline/execution leak (coach
+    # the meta-skill); mostly-outside => knowledge gap (teach the pattern).
+    in_slide_count: int = 0
+    axis: str = None         # "execution" | "knowledge" | "mixed" | None
 
 
 def _student_mistakes(scan: dict):
@@ -206,9 +223,18 @@ def _student_mistakes(scan: dict):
             yield d
 
 
+def _move_in_slides(move_number: int, slides: list) -> bool:
+    """Whether a student move (by fullmove number) falls inside any of the game's
+    within-game slide segments."""
+    return any(s["start_move"] <= move_number <= s["end_move"] for s in (slides or []))
+
+
 def aggregate_patterns(scans: list) -> list:
     """Group student mistakes by (light objective, phase); keep clusters with
-    enough cross-game evidence; rank by count then total win% lost."""
+    enough cross-game evidence; rank by count then total win% lost. Each moment is
+    tagged in_slide (did it fall inside a within-game slide?), and each pattern gets
+    a knowledge-vs-execution axis from how many of its moments did."""
+    slides_by_game = {s["game_key"]: s.get("slides") or [] for s in scans}
     clusters = {}
     for scan in scans:
         for d in _student_mistakes(scan):
@@ -221,6 +247,8 @@ def aggregate_patterns(scans: list) -> list:
                                      "san": rec.san,
                                      "drop_pct": rec.drop_pct,
                                      "fen_before": rec.fen_before,
+                                     "in_slide": _move_in_slides(rec.number,
+                                                                 slides_by_game.get(scan["game_key"])),
                                      "record": d})
             entry["games"].add(scan["game_key"])
             entry["drop"] += rec.drop_pct
@@ -231,15 +259,69 @@ def aggregate_patterns(scans: list) -> list:
         title = PATTERN_TITLES.get(objective, objective.replace("_", " "))
         if phase and phase != "?":
             title = f"{title} ({phase})"
+        in_slide = sum(1 for m in entry["moments"] if m["in_slide"])
+        frac = in_slide / len(entry["moments"])
+        axis = "execution" if frac >= 0.6 else ("knowledge" if frac <= 0.4 else "mixed")
         patterns.append(BatchPattern(
             pattern_id=f"{objective}:{phase}", objective=objective, phase=phase,
             title=title, habit=PATTERN_HABITS.get(objective, ""),
             count=len(entry["moments"]), games_seen=len(entry["games"]),
             total_drop=round(entry["drop"], 1),
             moments=sorted(entry["moments"], key=lambda m: -m["drop_pct"]),
+            in_slide_count=in_slide, axis=axis,
         ))
     patterns.sort(key=lambda p: (-p.count, -p.total_drop))
     return patterns
+
+
+def aggregate_slides(scans: list) -> dict:
+    """Aggregate the eval-only within-game slides across the batch into a cross-game
+    'slide habit' signature, or None if it doesn't clear the min-count gate.
+
+    Reports the player's slide rate against the validated ~17% corpus baseline, and
+    surfaces a situational co-marker (ahead / queens-on / time-pressure) only when it
+    is shared by a clear majority of a meaningful number of slides — otherwise the
+    markers stay raw counts. Factual co-occurrence only; the prompt narrates no cause."""
+    games_total = len(scans)
+    worst_per_game, all_segs = [], []
+    for s in scans:
+        segs = s.get("slides") or []
+        if not segs:
+            continue
+        all_segs.extend(segs)
+        worst = max(segs, key=lambda x: x["net_loss"])
+        worst_per_game.append({"game_key": s["game_key"], **worst})
+    n = len(worst_per_game)
+    if n < MIN_SLIDE_GAMES:
+        return None
+
+    rate = round(n / games_total, 2) if games_total else None
+    total = len(all_segs)
+    ahead = sum(1 for x in all_segs if x.get("onset") == "ahead")
+    queens = sum(1 for x in all_segs if x.get("queens_on"))
+    clk_known = [x for x in all_segs if x.get("clock_low") is not None]
+    clk_low = sum(1 for x in clk_known if x.get("clock_low"))
+
+    markers = []
+    if n >= SLIDE_MARKER_MIN_GAMES:
+        if total and ahead / total >= SLIDE_MARKER_FRACTION:
+            markers.append("when AHEAD (consolidating a winning position)")
+        if total and queens / total >= SLIDE_MARKER_FRACTION:
+            markers.append("with QUEENS still on (under sustained attacking pressure)")
+        if clk_known and clk_low / len(clk_known) >= SLIDE_MARKER_FRACTION:
+            markers.append("on a LOW CLOCK (time pressure)")
+
+    return {
+        "slide_games": n,
+        "games_total": games_total,
+        "rate": rate,
+        "baseline": SLIDE_BASELINE_RATE,
+        "above_baseline": rate is not None and rate >= SLIDE_BASELINE_RATE * SLIDE_ABOVE_BASELINE,
+        "markers": markers,
+        "marker_counts": {"ahead": ahead, "queens_on": queens,
+                          "clock_low": clk_low, "clock_known": len(clk_known), "total": total},
+        "examples": sorted(worst_per_game, key=lambda x: -x["net_loss"])[:5],
+    }
 
 
 def select_representatives(pattern: BatchPattern, per_pattern: int) -> list:
@@ -334,6 +416,7 @@ class BatchReview:
     agenda_plies: list = field(default_factory=list)
     rep_pattern_idx: list = field(default_factory=list)  # records[i] belongs to patterns[rep_pattern_idx[i]]
     rep_sources: list = field(default_factory=list)      # records[i] came from this game: {game_key, white, black}
+    slide_signature: dict = None    # cross-game slide habit (eval-only), or None below the gate
     student_color: str = None       # mixed across games; per-record color is authoritative
     white_elo: int = None           # student elo (used by enrichment helpers)
     black_elo: int = None
@@ -345,6 +428,31 @@ class BatchReview:
     @property
     def agenda(self):
         return [self.records[p] for p in self.agenda_plies]
+
+    def _slide_signature_lines(self) -> list:
+        """The CROSS-GAME SLIDE PATTERN block (eval-only). Empty when the habit is
+        below the min-count gate."""
+        sig = self.slide_signature
+        if not sig:
+            return []
+        n, total = sig["slide_games"], sig["games_total"]
+        pct = f"{sig['rate']:.0%}" if sig.get("rate") is not None else "?"
+        out = ["", "CROSS-GAME SLIDE PATTERN (eval-only; cumulative one-sided losses, no single blunder):"]
+        head = (f"The student had a sustained within-game slide in {n}/{total} games (~{pct}, "
+                f"vs ~{sig['baseline']:.0%} typical")
+        head += "; well ABOVE typical)." if sig.get("above_baseline") else ")."
+        out.append(head)
+        if sig.get("markers"):
+            out.append("These slides cluster " + "; ".join(sig["markers"]) + ".")
+        ex = ", ".join(f"game {e['game_key']} moves {e['start_move']}-{e['end_move']} "
+                       f"(-{e['net_loss']:.0f}% over {e['plies']})" for e in sig.get("examples", [])[:3])
+        if ex:
+            out.append(f"Worst examples: {ex}.")
+        out.append("Coach this as a META-SKILL (consolidating advantages, re-scanning when the "
+                   "position turns, holding focus through rising complexity) — it is a factual win% "
+                   "pattern across games, NEVER a claim about the student's psychology. State only what "
+                   "the evals and the co-markers show; do not mind-read.")
+        return out
 
     def digest(self) -> str:
         lines = [f"=== BATCH TRAINING REPORT (backend-verified across {self.games_analyzed} games) ==="]
@@ -358,6 +466,7 @@ class BatchReview:
         lines.append(f"Student mistake moments found (>=10 win% lost): {self.moments_found}.")
         if self.strengths:
             lines.append("Verified strengths (give this credit explicitly): " + "; ".join(self.strengths) + ".")
+        lines.extend(self._slide_signature_lines())
         if not self.patterns:
             lines.append("No recurring patterns found (a pattern needs 3+ moments across 2+ games). "
                          "The student's mistakes do not cluster — praise the consistency and "
@@ -370,6 +479,14 @@ class BatchReview:
             examples = ", ".join(f"game {m['game_key']}: {m['move_label']}" for m in p.moments[:3])
             lines.append(f"[Pattern {n}] {p.title} — {p.count} moments across {p.games_seen} games "
                          f"({p.total_drop:.0f} win% lost in total). Examples: {examples}.")
+            if p.axis == "execution":
+                lines.append(f"  Axis: EXECUTION/DISCIPLINE — {p.in_slide_count}/{p.count} of these "
+                             "happened DURING a within-game slide, so this is a focus/process leak under "
+                             "drift, not a knowledge gap. Coach the meta-skill (re-scan when the position "
+                             "turns), not just the motif.")
+            elif p.axis == "knowledge":
+                lines.append("  Axis: KNOWLEDGE GAP — these occur as isolated mistakes, not during "
+                             "slides. Teach the pattern directly.")
             if p.habit:
                 lines.append(f"  Habit to build: {p.habit}")
         lines.append("")
@@ -415,6 +532,7 @@ def run_batch_review(pgn_text: str, engines, config, on_progress=None, on_status
         return {"error": "No reviewable games found in the PGN "
                          "(check that player_name matches a header in at least one game)."}
     patterns = aggregate_patterns(scans)
+    slide_signature = aggregate_slides(scans)
     moments_found = sum(1 for s in scans for _ in _student_mistakes(s))
 
     top_n = int(getattr(config, "batch_top_patterns", 3))
@@ -428,6 +546,7 @@ def run_batch_review(pgn_text: str, engines, config, on_progress=None, on_status
         games_analyzed=len(scans), games_skipped=skipped, truncated=truncated,
         moments_found=moments_found, patterns=patterns,
         strengths=compute_strengths(scans),
+        slide_signature=slide_signature,
         white_elo=getattr(config, "user_elo", 1200),
         black_elo=getattr(config, "user_elo", 1200),
     )
@@ -468,6 +587,7 @@ def _save_report(cache_dir: str, batch: BatchReview) -> None:
         "games_analyzed": batch.games_analyzed, "games_skipped": batch.games_skipped,
         "truncated": batch.truncated, "moments_found": batch.moments_found,
         "strengths": batch.strengths,
+        "slide_signature": batch.slide_signature,
         "rep_pattern_idx": batch.rep_pattern_idx,
         "rep_sources": batch.rep_sources,
         "records": [asdict(r) for r in batch.records],
@@ -475,6 +595,7 @@ def _save_report(cache_dir: str, batch: BatchReview) -> None:
             "pattern_id": p.pattern_id, "objective": p.objective, "phase": p.phase,
             "title": p.title, "habit": p.habit, "count": p.count,
             "games_seen": p.games_seen, "total_drop": p.total_drop,
+            "in_slide_count": p.in_slide_count, "axis": p.axis,
             "moments": [{k: v for k, v in m.items() if k != "record"} for m in p.moments],
         } for p in batch.patterns],
     }
@@ -515,6 +636,7 @@ def load_latest_batch(config):
         truncated=data.get("truncated", False),
         moments_found=data.get("moments_found", 0),
         patterns=patterns, strengths=data.get("strengths", []),
+        slide_signature=data.get("slide_signature"),
         records=[_record_from_dict(d) for d in data.get("records", [])],
         rep_pattern_idx=data.get("rep_pattern_idx", []),
         rep_sources=data.get("rep_sources", []),
@@ -533,9 +655,10 @@ def batch_dossier_summary(batch: BatchReview) -> dict:
     return {
         "batch_id": batch.batch_id,
         "games": batch.games_analyzed,
+        "slide_signature": batch.slide_signature,
         "patterns": [{
             "id": p.pattern_id, "title": p.title, "count": p.count,
-            "games_seen": p.games_seen, "habit": p.habit,
+            "games_seen": p.games_seen, "habit": p.habit, "axis": p.axis,
             "rate": round(p.count / batch.games_analyzed, 2) if batch.games_analyzed else None,
             "representative_positions": [{
                 "fen": r.fen_before, "move_label": r.move_label,

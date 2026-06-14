@@ -423,6 +423,37 @@ def test_slide_works_for_black_student():
     assert review.slides is not None and review.slides[0]["plies"] == 5
 
 
+def test_slide_co_markers_from_starting_position():
+    # the helper uses the starting FEN (queens on) and no clock -> queens_on True,
+    # clock_low unknown (None); a winning onset reads "ahead".
+    from app.review import _detect_slides
+    review = _slide_review([(300, 200), (200, 100), (100, 0), (0, -100), (-100, -200)])
+    _detect_slides(review)
+    s = review.slides[0]
+    assert s["onset"] == "ahead"
+    assert s["queens_on"] is True
+    assert s["clock_low"] is None
+
+
+def test_slide_co_markers_queenless_and_low_clock():
+    # queenless endgame with a low clock -> queens_on False, clock_low True.
+    from app.review import _detect_slides, GameReview, MoveRecord, cp_to_win_pct
+    qless = "8/5k2/8/8/8/8/5K2/R7 w - - 0 1"
+    recs = []
+    for i, (cb, ca) in enumerate([(300, 200), (200, 100), (100, 0), (0, -100), (-100, -200)]):
+        drop = round(max(0.0, cp_to_win_pct(cb) - cp_to_win_pct(ca)), 1)
+        recs.append(MoveRecord(ply=2 * i, number=i + 10, color="white", san="Ra2", uci="a1a2",
+                               fen_before=qless, fen_after=qless,
+                               eval_before_cp=cb, eval_after_cp=ca, drop_pct=drop,
+                               quality="inaccuracy", phase="middlegame", clock_remaining=30.0))
+    review = GameReview(headers={}, records=recs, student_color="white",
+                        agenda_plies=[], white_elo=1500, black_elo=1500)
+    _detect_slides(review)
+    s = review.slides[0]
+    assert s["queens_on"] is False
+    assert s["clock_low"] is True
+
+
 def test_likely_wrong_answer_anticipated_with_refutation():
     import chess as _chess
     fens = _fens_of(PGN)

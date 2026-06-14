@@ -1296,6 +1296,26 @@ SLIDE_CLIFF_FRACTION = 0.70    # if one move is >= this share of the NET loss it
                                # blunder (the agenda already covers it), not a gradual slide
 
 
+def _slide_onset_state(start_winpct: float) -> str:
+    """Classify the student's standing when a slide began (start win% is gated
+    >= SLIDE_MIN_START_WINPCT, so the floor is ~30)."""
+    if start_winpct >= 55:
+        return "ahead"
+    if start_winpct < 45:
+        return "worse"
+    return "level"
+
+
+def _slide_queens_on(fen: str) -> bool:
+    """Whether queens were still on the board at slide onset (a coarse proxy for
+    'sharp, attack-laden' vs 'simplified' positions)."""
+    try:
+        b = chess.Board(fen)
+    except ValueError:
+        return False
+    return bool(b.pieces(chess.QUEEN, chess.WHITE) or b.pieces(chess.QUEEN, chess.BLACK))
+
+
 def _detect_slides(review: GameReview) -> None:
     """Flag sustained one-sided eval slides in the student's play: >= SLIDE_MIN_RUN
     consecutive moves each losing win%, starting from a non-floored position, shedding
@@ -1333,11 +1353,22 @@ def _detect_slides(review: GameReview) -> None:
         max_single = max(x[3] for x in seg)
         if (len(seg) >= SLIDE_MIN_RUN and net >= SLIDE_NET_LOSS_MIN
                 and max_single < SLIDE_CLIFF_FRACTION * net):
+            onset = seg[0][0]
+            start_wp = seg[0][1]
             segments.append({
-                "start_move": seg[0][0].number, "end_move": seg[-1][0].number,
-                "plies": len(seg), "start_winpct": round(seg[0][1], 1),
+                "start_move": onset.number, "end_move": seg[-1][0].number,
+                "plies": len(seg), "start_winpct": round(start_wp, 1),
                 "end_winpct": round(seg[-1][2], 1), "net_loss": round(net, 1),
                 "max_single": round(max_single, 1),
+                # Co-markers: factual co-occurrence captured at slide onset, so the
+                # cross-game batch aggregate can describe WHEN slides happen (ahead /
+                # queens on / time pressure) — never a causal/psychological claim.
+                "onset": _slide_onset_state(start_wp),
+                "queens_on": _slide_queens_on(onset.fen_before),
+                # clock < 60s if the PGN carried clocks, else None (unknown — never
+                # counted against the player in the aggregate).
+                "clock_low": (onset.clock_remaining < 60)
+                             if onset.clock_remaining is not None else None,
             })
         i = j
 

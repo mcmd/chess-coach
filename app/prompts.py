@@ -5,7 +5,9 @@ from app.memory import load_dossier
 
 def get_dossier_context(dossier_file: str) -> str:
     d = load_dossier(dossier_file)
-    if d.get("total_blunders_analyzed", 0) == 0 and not d.get("recurring_patterns"):
+    slide = d.get("slide_trend") or {}
+    if (d.get("total_blunders_analyzed", 0) == 0 and not d.get("recurring_patterns")
+            and slide.get("status") not in ("active", "improving")):
         return "No historical data available yet. This is your first session."
     if d.get("total_blunders_analyzed", 0):
         sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
@@ -35,6 +37,19 @@ def get_dossier_context(dossier_file: str) -> str:
             pat_lines.append(line + ")")
         context += ("\nConfirmed recurring patterns from batch analysis (connect live mistakes "
                     "to these when they genuinely match):\n- " + "\n- ".join(pat_lines))
+    if slide.get("status") in ("active", "improving"):
+        n, games = slide.get("slide_games"), slide.get("games")
+        rate = f"{slide['rate']:.0%}" if slide.get("rate") is not None else "?"
+        line = (f"Cross-game slide habit: sustained one-sided slides in {n}/{games} recent games "
+                f"(~{rate}, vs ~17% typical")
+        line += "; ABOVE typical" if slide.get("above_baseline") else ""
+        line += ")"
+        if slide.get("markers"):
+            line += " — most often " + "; ".join(slide["markers"])
+        if slide.get("status") == "improving":
+            line += ". IMPROVING since the previous batch — praise this progress honestly"
+        context += ("\n" + line + ". Coach the meta-skill of not drifting once the position turns; "
+                    "it is a factual eval pattern, never a psychological claim.")
     return context
 
 
@@ -93,6 +108,7 @@ Conduct the session strictly in {language}.
 - **Normalize natural errors (Maia):** if the played mistake matches Maia's top human prediction, say so — "most players your rating choose exactly this" — BEFORE dissecting it. It is honest context, not coddling.
 - **Calibrate the lesson to typicality:** a mistake most peers make is a knowledge gap — teach the pattern. A mistake peers rarely make is a process slip — coach the habit (board scan, clock use) and skip the lecture. A brilliancy few peers find deserves your strongest, most specific praise.
 - **Within-game slide (eval):** if the digest has a `WITHIN-GAME SLIDE` block, treat the flagged stretch as a META-pattern, not new individual mistakes. The student lost ground through CUMULATIVE drift — several mediocre moves, NO single blunder the agenda already covers — so the lesson is about process, not one move: consolidating a won position, staying alert after the critical moment, or handling rising complexity. Use only the eval/time facts in the moments; it is a factual win% slide, never a claim about the student's feelings — do not mind-read.
+- **Cross-game slide habit (batch):** if a batch digest has a `CROSS-GAME SLIDE PATTERN` block, it means the slide above recurs across games. Present it as a process habit and use the backend's co-markers (ahead / queens-on / time pressure) and its rate-vs-typical only as STATED — never infer a psychological cause. When a recurring mistake pattern is tagged `Axis: EXECUTION/DISCIPLINE`, the leak is drift/focus during slides, so coach the meta-skill (re-scan when the position turns); when tagged `Axis: KNOWLEDGE GAP`, teach the underlying pattern directly. Verdict in, narration out.
 - **Risk & drawing chances (Maia WDL):** the risk verdict is backend-supplied — either the `Risk profile` line in a review moment, or the `risk_profile` / `win_draw_loss_for_side_to_move` fields returned by `analyze_position`. Use it to frame practical stakes: *drawish* = don't force it, press only safely; *must-hold* = you're worse, defend; *winning* = convert with low risk. If the student ASKS how risky a position is or about drawing chances, call `analyze_position` and answer from its WDL. Lead with the qualitative verdict; you MAY cite the given W/D/L numbers but NEVER invent or estimate them. Don't volunteer risk talk on balanced positions unprompted (most positions are balanced — that is expected, not an omission).
 - **Anti-bluffing:** if you cannot explain WHY a move is bad in human terms, say so explicitly rather than inventing a reason.
 - **Practical vs forced:** when the digest marks a moment "PRACTICAL, not forced", say so PROACTIVELY at the start of the moment — the game move was not refuted, it just demanded precision few humans have. Teach "avoid unnecessary sharpness", never a phantom forced loss; if the student asks "but couldn't I just play X?", the saving resource in the withheld block is your honest answer.

@@ -58,6 +58,7 @@ _DOSSIER_DEFAULT = {
     "typicality_history": [],
     "recurring_patterns": [],   # confirmed cross-game patterns from batch analysis
     "batch_trends": [],         # one entry per batch run: top patterns with counts
+    "slide_trend": {},          # cross-game within-game-slide habit (active/improving/stale)
 }
 
 _LESSON_DEFAULT = {
@@ -102,6 +103,7 @@ def load_dossier(dossier_file: str) -> dict:
     dossier["typicality_history"] = []
     dossier["recurring_patterns"] = []
     dossier["batch_trends"] = []
+    dossier["slide_trend"] = {}
     if os.path.exists(dossier_file):
         try:
             with open(dossier_file, "r", encoding="utf-8") as f:
@@ -198,4 +200,34 @@ def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
         "top_patterns": [[p["id"], p["count"]] for p in batch_summary.get("patterns", [])],
     })
     dossier["batch_trends"] = dossier["batch_trends"][-12:]
+
+    # Cross-game slide habit: one evolving entry with the same honest lifecycle as
+    # recurring_patterns — a falling rate reads 'improving', two slide-free batches
+    # in a row go 'stale' (no permanent accusations).
+    prev_slide = dossier.get("slide_trend") or {}
+    sig = batch_summary.get("slide_signature")
+    if sig:
+        rate = sig.get("rate")
+        prev_rate = prev_slide.get("rate")
+        status = "active"
+        if prev_rate and rate is not None and rate <= prev_rate * 0.6:
+            status = "improving"
+        dossier["slide_trend"] = {
+            "slide_games": sig.get("slide_games"),
+            "games": sig.get("games_total"),
+            "rate": rate,
+            "previous_rate": prev_rate,
+            "above_baseline": sig.get("above_baseline", False),
+            "markers": sig.get("markers", []),
+            "status": status,
+            "first_seen": prev_slide.get("first_seen", today) if prev_slide else today,
+            "last_seen": today,
+            "missed_batches": 0,
+        }
+    elif prev_slide:
+        prev_slide["missed_batches"] = prev_slide.get("missed_batches", 0) + 1
+        if prev_slide["missed_batches"] >= 2:
+            prev_slide["status"] = "stale"
+        dossier["slide_trend"] = prev_slide
+
     _atomic_write_json(dossier_file, dossier)

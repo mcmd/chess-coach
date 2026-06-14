@@ -7,9 +7,11 @@ import os
 import chess
 import chess.pgn
 
-from app.batch import (BatchPattern, aggregate_patterns, batches_dir, game_key_for,
-                       load_latest_batch, run_batch_review, scan_games,
-                       select_representatives, split_games, _light_objective)
+from dataclasses import asdict
+
+from app.batch import (BatchPattern, BatchReview, aggregate_patterns, aggregate_slides,
+                       batches_dir, game_key_for, load_latest_batch, run_batch_review,
+                       scan_games, select_representatives, split_games, _light_objective)
 from app.memory import load_dossier, update_dossier_with_batch
 from app.review import MoveRecord, review_game
 from app.state import SessionState, TimelineManager
@@ -291,6 +293,148 @@ def test_dossier_context_surfaces_batch_patterns(stub_config):
     assert "Confirmed recurring patterns" in ctx and "T (14 moments across 5 games" in ctx
     update_dossier_with_batch(stub_config.dossier_file, _summary("b2", 0.5))
     assert "IMPROVING" in get_dossier_context(stub_config.dossier_file)
+
+
+def _slide_summary(batch_id, rate, present=True):
+    sig = None
+    if present:
+        sig = {"slide_games": round(rate * 10), "games_total": 10, "rate": rate,
+               "baseline": 0.17, "above_baseline": rate >= 0.255, "markers": []}
+    return {"batch_id": batch_id, "games": 10, "patterns": [], "slide_signature": sig}
+
+
+def test_dossier_slide_trend_lifecycle(stub_config):
+    f = stub_config.dossier_file
+    update_dossier_with_batch(f, _slide_summary("b1", 0.4))
+    t = load_dossier(f)["slide_trend"]
+    assert t["status"] == "active" and t["rate"] == 0.4 and t["previous_rate"] is None
+
+    update_dossier_with_batch(f, _slide_summary("b2", 0.2))  # rate fell >40%
+    t = load_dossier(f)["slide_trend"]
+    assert t["status"] == "improving" and t["previous_rate"] == 0.4
+
+    update_dossier_with_batch(f, _slide_summary("b3", 0, present=False))
+    update_dossier_with_batch(f, _slide_summary("b4", 0, present=False))
+    assert load_dossier(f)["slide_trend"]["status"] == "stale"
+
+
+def test_dossier_context_surfaces_slide_habit_alone(stub_config):
+    # a slide habit with no clustered patterns and no single-game history must still
+    # surface (it used to be suppressed by the "no historical data" guard).
+    from app.prompts import get_dossier_context
+    update_dossier_with_batch(stub_config.dossier_file, _slide_summary("b1", 0.4))
+    ctx = get_dossier_context(stub_config.dossier_file)
+    assert "Cross-game slide habit" in ctx and "4/10" in ctx
+
+
+# --- cross-game slide habit (eval-only) ---
+
+def _seg(net=30.0, onset="ahead", queens_on=True, clock_low=None,
+         start=20, end=26, plies=4, max_single=10.0):
+    return {"start_move": start, "end_move": end, "plies": plies,
+            "start_winpct": 80.0, "end_winpct": 50.0, "net_loss": net,
+            "max_single": max_single, "onset": onset, "queens_on": queens_on,
+            "clock_low": clock_low}
+
+
+def _slide_scan(key, slides, records=None):
+    return {"game_key": key, "student_color": "white",
+            "records": records or [], "slides": slides}
+
+
+def test_aggregate_slides_below_gate_returns_none():
+    # only one game has a slide -> below MIN_SLIDE_GAMES.
+    scans = [_slide_scan("g1", [_seg()]), _slide_scan("g2", [])]
+    assert aggregate_slides(scans) is None
+
+
+def test_aggregate_slides_above_gate_reports_rate_and_no_markers_yet():
+    scans = [_slide_scan("g1", [_seg()]), _slide_scan("g2", [_seg()]), _slide_scan("g3", [])]
+    sig = aggregate_slides(scans)
+    assert sig["slide_games"] == 2 and sig["games_total"] == 3
+    assert sig["rate"] == 0.67 and sig["above_baseline"] is True
+    # 2 slide games < SLIDE_MARKER_MIN_GAMES -> situational markers withheld.
+    assert sig["markers"] == []
+
+
+def test_aggregate_slides_surfaces_majority_co_markers():
+    scans = [_slide_scan(f"g{i}", [_seg(onset="ahead", queens_on=True)]) for i in range(3)]
+    sig = aggregate_slides(scans)
+    assert any("AHEAD" in m for m in sig["markers"])
+    assert any("QUEENS" in m for m in sig["markers"])
+
+
+def test_aggregate_slides_withholds_split_co_marker():
+    # 3 slide games but onset split -> no 2/3 majority -> no 'ahead' marker.
+    scans = [_slide_scan("g1", [_seg(onset="ahead")]),
+             _slide_scan("g2", [_seg(onset="worse")]),
+             _slide_scan("g3", [_seg(onset="level")])]
+    sig = aggregate_slides(scans)
+    assert not any("AHEAD" in m for m in sig["markers"])
+
+
+def test_aggregate_slides_clock_marker_ignores_unknown_clocks():
+    # known clocks = 2 (both low), the None is excluded from the denominator.
+    scans = [_slide_scan("g1", [_seg(clock_low=True, onset="level")]),
+             _slide_scan("g2", [_seg(clock_low=True, onset="level")]),
+             _slide_scan("g3", [_seg(clock_low=None, onset="level")])]
+    sig = aggregate_slides(scans)
+    assert any("LOW CLOCK" in m for m in sig["markers"])
+
+
+def _mistake_scan(key, move_number, slides):
+    r = MoveRecord(ply=2 * move_number, number=move_number, color="white", san="Bxh7",
+                   uci="c2h7", fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                   eval_before_cp=0, eval_after_cp=-300, drop_pct=20.0,
+                   quality="blunder", phase="middlegame", is_capture=True)
+    return {"game_key": key, "student_color": "white",
+            "records": [asdict(r)], "slides": slides}
+
+
+def test_pattern_axis_execution_when_mistakes_inside_slides():
+    # 3 games, each mistake at move 25 sits inside a 20-30 slide -> execution leak.
+    scans = [_mistake_scan(f"g{i}", 25, [_seg(start=20, end=30)]) for i in range(3)]
+    patterns = aggregate_patterns(scans)
+    assert patterns and patterns[0].axis == "execution"
+    assert patterns[0].in_slide_count == 3
+
+
+def test_pattern_axis_knowledge_when_mistakes_outside_slides():
+    scans = [_mistake_scan(f"g{i}", 25, []) for i in range(3)]
+    patterns = aggregate_patterns(scans)
+    assert patterns and patterns[0].axis == "knowledge"
+    assert patterns[0].in_slide_count == 0
+
+
+def test_batch_digest_renders_cross_game_slide_block():
+    batch = BatchReview(
+        batch_id="x", created="2026-06-14", games_analyzed=10, games_skipped=0,
+        truncated=False, moments_found=0, patterns=[], strengths=[],
+        slide_signature={"slide_games": 3, "games_total": 10, "rate": 0.3,
+                         "baseline": 0.17, "above_baseline": True,
+                         "markers": ["when AHEAD (consolidating a winning position)"],
+                         "examples": [{"game_key": "g1", "start_move": 20, "end_move": 26,
+                                       "net_loss": 40.0, "plies": 4}]})
+    out = batch.digest()
+    assert "CROSS-GAME SLIDE PATTERN" in out
+    assert "3/10" in out and "AHEAD" in out
+
+
+def test_slide_signature_survives_save_and_reload(stub_config):
+    pgn, engines = _fixture()
+    batch = run_batch_review(pgn, engines, stub_config)
+    # inject a signature and a pattern axis, persist, reload.
+    from app.batch import _save_report
+    batch.slide_signature = {"slide_games": 2, "games_total": 3, "rate": 0.67,
+                             "baseline": 0.17, "above_baseline": True,
+                             "markers": [], "examples": []}
+    batch.patterns[0].axis = "execution"
+    batch.patterns[0].in_slide_count = 2
+    _save_report(batches_dir(stub_config), batch)
+    loaded = load_latest_batch(stub_config)
+    assert loaded.slide_signature["slide_games"] == 2
+    assert loaded.patterns[0].axis == "execution"
+    assert loaded.patterns[0].in_slide_count == 2
 
 
 # --- /batch command ---
