@@ -219,6 +219,32 @@ def test_run_batch_review_end_to_end(stub_config):
     assert any(batch.batch_id in f for f in reports)
 
 
+def test_batch_reps_get_rating_laddered_aspirational(stub_config):
+    """Regression (Phase 5, §8.6): batch representatives flow through
+    _enrich_agenda, so the aspirational 'one band up' instinct is computed at
+    user_elo + 350 and surfaces in the batch digest. Locks the reuse so a future
+    refactor of the batch deep pass can't silently drop it."""
+    pgn, engines = _fixture()
+    target = stub_config.user_elo + 350  # _aspirational_instinct's mover_elo + 350
+    # Give each rep's fen_before a maia distribution at the aspirational band so
+    # the instinct resolves to a concrete move.
+    for moves, opp in _GAMES:
+        g = chess.pgn.read_game(io.StringIO(
+            f'[White "mcmd"]\n[Black "{opp}"]\n\n{moves} 0-1'))
+        board = g.board()
+        for i, node in enumerate(g.mainline()):
+            if i == 2:  # before pushing White's 2nd move: the blunder's fen_before
+                legal = next(iter(board.legal_moves)).uci()
+                engines.maia_by_elo[(board.fen(), target)] = {legal: 0.6}
+                break
+            board.push(node.move)
+    batch = run_batch_review(pgn, engines, stub_config)
+    assert any(r.aspirational and r.aspirational["elo"] == target for r in batch.records)
+    digest = batch.digest()
+    assert "aspirational instinct" in digest
+    assert f"~{target} Elo" in digest
+
+
 def test_saved_report_reloads_without_rescanning(stub_config):
     pgn, engines = _fixture()
     batch = run_batch_review(pgn, engines, stub_config)
@@ -418,6 +444,78 @@ def test_batch_digest_renders_cross_game_slide_block():
     out = batch.digest()
     assert "CROSS-GAME SLIDE PATTERN" in out
     assert "3/10" in out and "AHEAD" in out
+
+
+def test_severity_label_thresholds():
+    from app.batch import _severity_label
+    assert _severity_label(33) == "a blunder"
+    assert _severity_label(25) == "a mistake"
+    assert _severity_label(15) == "an inaccuracy"
+    assert _severity_label(5) == "a minor slip"
+
+
+def _pat(pid, obj, phase, title, count, games, drop, moments):
+    return BatchPattern(pattern_id=pid, objective=obj, phase=phase, title=title,
+                        habit="build the habit", count=count, games_seen=games,
+                        total_drop=drop, moments=moments, in_slide_count=0, axis="knowledge")
+
+
+def test_digest_dual_ranking_severity_and_same_habit():
+    """FR #5: lead with frequency AND impact, severity in plain words, demote the
+    cumulative win% sum, and name a habit spanning two phases as one weakness."""
+    p1 = _pat("priority_selection:middlegame", "priority_selection", "middlegame",
+              "Urgent priority (middlegame)", 14, 8, 210.0,
+              [{"game_key": "g1", "move_label": "22. Re1"}])
+    p2 = _pat("left_piece_en_prise:middlegame", "left_piece_en_prise", "middlegame",
+              "Piece en prise (middlegame)", 11, 7, 367.0,
+              [{"game_key": "g2", "move_label": "18... Rad8"}])
+    p3 = _pat("priority_selection:opening", "priority_selection", "opening",
+              "Urgent priority (opening)", 6, 4, 113.0,
+              [{"game_key": "g3", "move_label": "7... Bg4"}])
+    batch = BatchReview(batch_id="t", created="2026-06-15", games_analyzed=14,
+                        games_skipped=0, truncated=False, moments_found=31,
+                        patterns=[p1, p2, p3], strengths=[])
+    digest = batch.digest()
+    # frequency leader is P1 (14 moments); damage leader is P2 (367, blunder-sized)
+    assert "Most FREQUENT: Pattern 1" in digest
+    assert "Most DAMAGING: Pattern 2" in digest
+    assert "averages a blunder" in digest          # 367/11 = 33.4
+    # games-affected lead + demoted cumulative
+    assert "appears in 8 of 14 games" in digest
+    assert "raw cumulative 210 win%" in digest
+    # P1 and P3 share an objective -> framed as one weakness across phases
+    assert "SAME HABIT, TWO PHASES" in digest
+    assert "Pattern 1 and Pattern 3" in digest
+
+
+def test_digest_renders_lichess_link_and_orientation():
+    """FR #6: teaching-position header shows the Lichess link; the per-moment
+    orientation states the move number and the opponent's last move."""
+    r = MoveRecord(ply=42, number=22, color="white", san="Re1", uci="f1e1",
+                   fen_before="2r4r/p1Bk3p/4bp2/8/4P1p1/P7/P1RNnPPP/5R1K w - - 3 22",
+                   fen_after="2r4r/p1Bk3p/4bp2/8/4P1p1/P7/P1RN1PPP/4R2K b - - 4 22",
+                   eval_before_cp=120, eval_after_cp=-200, drop_pct=30.0,
+                   quality="blunder", prev_move_san="Kd7")
+    p = _pat("x:middlegame", "x", "middlegame", "T", 3, 2, 60.0,
+             [{"game_key": "qqJUqmuk", "move_label": "22. Re1"}])
+    batch = BatchReview(batch_id="t", created="2026-06-15", games_analyzed=2,
+                        games_skipped=0, truncated=False, moments_found=3,
+                        patterns=[p], strengths=[], records=[r], rep_pattern_idx=[0],
+                        rep_sources=[{"game_key": "qqJUqmuk", "white": "mcmd",
+                                      "black": "antakyadurum",
+                                      "site": "https://lichess.org/qqJUqmuk"}])
+    digest = batch.digest()
+    assert "https://lichess.org/qqJUqmuk" in digest
+    assert "this is move 22 of the game" in digest
+    assert "the opponent has just played 21... Kd7" in digest
+
+
+def test_scan_captures_opponent_previous_move(stub_config):
+    """FR #6: review_game records prev_move_san (the move into fen_before)."""
+    pgn, engines = _fixture()
+    review = review_game(pgn, engines, stub_config, with_maia=False, enrich=False)
+    assert review.records[0].prev_move_san is None      # first move has no predecessor
+    assert review.records[2].prev_move_san == review.records[1].san  # g4 follows e5
 
 
 def test_slide_signature_survives_save_and_reload(stub_config):

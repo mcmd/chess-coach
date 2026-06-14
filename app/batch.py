@@ -28,7 +28,8 @@ from app.review import (GameReview, MoveRecord, review_game, _enrich_agenda,
 
 # Bump when MoveRecord scan fields or classification change incompatibly.
 # v2: scans now carry review.slides (eval-only within-game slides + co-markers).
-SCAN_VERSION = 2
+# v3: MoveRecord.prev_move_san (opponent's move into fen_before, for orientation).
+SCAN_VERSION = 3
 
 # A cluster is only a "pattern" with enough evidence to be a fact, not noise.
 MIN_PATTERN_MOMENTS = 3
@@ -399,6 +400,20 @@ def _backfill_maia(record: MoveRecord, engines, elo: int) -> None:
             record.error_typicality = "atypical_for_level"
 
 
+def _severity_label(avg_drop: float) -> str:
+    """Map an average win% drop to the move-quality word the student already
+    knows (same thresholds as review.classify_move: blunder >=30, mistake >=20,
+    inaccuracy >=10). Lets the summary describe a pattern's COST in plain terms
+    instead of an unbounded cumulative win% sum."""
+    if avg_drop >= 30:
+        return "a blunder"
+    if avg_drop >= 20:
+        return "a mistake"
+    if avg_drop >= 10:
+        return "an inaccuracy"
+    return "a minor slip"
+
+
 @dataclass
 class BatchReview:
     """Duck-typed as a GameReview so state.review = batch works with every
@@ -475,10 +490,28 @@ class BatchReview:
         lines.append("")
         lines.append("RECURRING PATTERNS (deterministic clustering of verified mistakes — "
                      "the counts are facts; never invent additional patterns):")
+        total_cost = sum(p.total_drop for p in self.patterns) or 1.0
+        rank = {id(p): n for n, p in enumerate(self.patterns, 1)}
+        most_frequent = max(self.patterns, key=lambda p: p.count)
+        most_damaging = max(self.patterns, key=lambda p: p.total_drop)
+        md_avg = most_damaging.total_drop / most_damaging.count if most_damaging.count else 0.0
+        lines.append("  TWO WAYS TO READ THESE — how OFTEN a leak happens vs how much it COSTS. "
+                     "They can disagree (a rarer habit can bleed more), so present BOTH and let the "
+                     "student choose; never imply frequency alone means priority:")
+        lines.append(f"    - Most FREQUENT: Pattern {rank[id(most_frequent)]} "
+                     f"({most_frequent.count} moments).")
+        lines.append(f"    - Most DAMAGING: Pattern {rank[id(most_damaging)]} "
+                     f"(~{most_damaging.total_drop / total_cost:.0%} of the win% bled across these "
+                     f"patterns; averages {_severity_label(md_avg)} (~{md_avg:.0f} win%) per slip).")
         for n, p in enumerate(self.patterns, 1):
+            avg = p.total_drop / p.count if p.count else 0.0
             examples = ", ".join(f"game {m['game_key']}: {m['move_label']}" for m in p.moments[:3])
-            lines.append(f"[Pattern {n}] {p.title} — {p.count} moments across {p.games_seen} games "
-                         f"({p.total_drop:.0f} win% lost in total). Examples: {examples}.")
+            lines.append(
+                f"[Pattern {n}] {p.title} — appears in {p.games_seen} of {self.games_analyzed} "
+                f"games ({p.count} moments). Averages {_severity_label(avg)} (~{avg:.0f} win%) per "
+                f"slip; ~{p.total_drop / total_cost:.0%} of the win% bled across these patterns "
+                f"(raw cumulative {p.total_drop:.0f} win% — a sum over all {p.count} moments, not "
+                f"a percentage). Examples: {examples}.")
             if p.axis == "execution":
                 lines.append(f"  Axis: EXECUTION/DISCIPLINE — {p.in_slide_count}/{p.count} of these "
                              "happened DURING a within-game slide, so this is a focus/process leak under "
@@ -489,10 +522,24 @@ class BatchReview:
                              "slides. Teach the pattern directly.")
             if p.habit:
                 lines.append(f"  Habit to build: {p.habit}")
+        # Same underlying habit shown in more than one phase (e.g. priority_selection
+        # in both opening and middlegame): name it so the student sees one weakness.
+        by_obj = {}
+        for n, p in enumerate(self.patterns, 1):
+            by_obj.setdefault(p.objective, []).append((n, p))
+        for obj, group in by_obj.items():
+            if len(group) > 1:
+                ns = " and ".join(f"Pattern {n}" for n, _ in group)
+                tot_m = sum(p.count for _, p in group)
+                games = {m["game_key"] for _, p in group for m in p.moments}
+                lines.append(f"  SAME HABIT, TWO PHASES: {ns} are the same underlying weakness "
+                             f"({obj.replace('_', ' ')}) in different game phases — together {tot_m} "
+                             f"moments across {len(games)} games. Frame them as one habit, not two.")
         lines.append("")
         lines.append("TRAINING PLAN PROTOCOL: present the patterns above as a training plan in "
-                     "your own words (with the counts — they are the evidence). Recommend starting "
-                     "with Pattern 1, the largest verified leak, but let the student choose. Do NOT "
+                     "your own words (with the counts and the frequency-vs-impact split — they are "
+                     "the evidence). Name BOTH the most frequent and the most damaging leak and let "
+                     "the student choose which to train first; do not default to frequency. Do NOT "
                      "begin teaching a position until the student picks a pattern.")
         lines.append("")
         lines.append("TEACHING POSITIONS (deep-verified; teach the chosen pattern's positions ONE "
@@ -502,10 +549,14 @@ class BatchReview:
             src = self.rep_sources[i - 1] if i - 1 < len(self.rep_sources) else {}
             origin = src.get("game_key", "?")
             players = f"{src.get('white', '?')} vs {src.get('black', '?')}"
-            lines.append(f"-- Pattern {pat_n}, position from game {origin} ({players}) --")
+            site = src.get("site", "") or ""
+            link = f", {site}" if "lichess.org" in site else ""
+            lines.append(f"-- Pattern {pat_n}, position from game {origin} ({players}{link}) --")
             lines.extend(moment_digest_lines(i, r))
         lines.append("")
-        lines.append("Coaching protocol: for each position, set the scene at the FEN BEFORE the move, "
+        lines.append("Coaching protocol: for each position, set the scene at the FEN BEFORE the move "
+                     "(name the game from its Orientation line — the move number, the opponent's last "
+                     "move, and the Lichess link if present, so the student can pull the board up), "
                      "ask the Initial question EXACTLY first, use the hint ladder only after an attempt, "
                      "grade answers with evaluate_student_answer, ask the student WHY the move works, then teach using "
                      "the reveal-phase explanation primitives. Log each diagnosed mistake once with "
@@ -561,7 +612,8 @@ def run_batch_review(pgn_text: str, engines, config, on_progress=None, on_status
             h = headers_by_key.get(moment["game_key"], {})
             batch.rep_sources.append({"game_key": moment["game_key"],
                                       "white": h.get("White", "?"),
-                                      "black": h.get("Black", "?")})
+                                      "black": h.get("Black", "?"),
+                                      "site": h.get("Site", "")})
     batch.agenda_plies = list(range(len(batch.records)))
     if batch.records:
         if on_status:

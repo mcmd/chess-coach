@@ -83,6 +83,7 @@ class MoveRecord:
     time_flag: str = None
     punisher_uci: str = None     # engine's best reply to the played move (free from the scan)
     history_uci: list = field(default_factory=list)  # UCI moves reaching fen_before (history-aware maia3)
+    prev_move_san: str = None    # the opponent's move that led into fen_before (game orientation)
     # Agenda enrichment (populated only for critical moments):
     is_agenda: bool = False
     best_line: list = field(default_factory=list)
@@ -333,6 +334,15 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
     wa = cp_to_win_pct(r.eval_after_cp if r.color == "white" else -r.eval_after_cp)
     lines.append(f"[Moment {i}] {r.move_label} by {r.color} — {r.quality} "
                  f"(win% {wb:.0f} -> {wa:.0f}; eval {r.eval_before_cp / 100.0:+.2f} -> {r.eval_after_cp / 100.0:+.2f}).")
+    orient = f"  Orientation: this is move {r.number} of the game"
+    if r.prev_move_san:
+        # The opponent's move is one ply earlier: a Black reply precedes a White
+        # move of the same number; a White move precedes a Black move +1.
+        if r.color == "white":
+            orient += f"; the opponent has just played {r.number - 1}... {r.prev_move_san}"
+        else:
+            orient += f"; the opponent has just played {r.number}. {r.prev_move_san}"
+    lines.append(orient + " (state this when setting the scene).")
     lines.append(f"  FEN before the move: {r.fen_before}")
     if r.board_token:
         lines.append(f"  Board diagram token for this position: {r.board_token} "
@@ -477,6 +487,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     total = len(nodes)
     prev_eval_cp = None
     prev_best_uci = None
+    prev_move_san = None  # SAN of the move leading into the current position (orientation)
     white_elo = _header_elo(headers, "WhiteElo", getattr(config, "user_elo", 1200))
     black_elo = _header_elo(headers, "BlackElo", getattr(config, "user_elo", 1200))
 
@@ -585,6 +596,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             is_capture=is_capture, time_spent=time_spent, clock_remaining=clock_remaining,
             time_flag=time_flag_for(quality, time_spent, clock_remaining, is_forced),
             punisher_uci=next_best, history_uci=history_before or [],
+            prev_move_san=prev_move_san,
             maia_top=maia_top, maia_played_prob=maia_played_prob,
             was_maia_top=was_maia_top, avoided_natural_mistake=avoided,
             brilliancy_note=brilliancy, error_typicality=typicality,
@@ -593,6 +605,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             human_draw_prob=human_draw_prob, human_loss_prob=human_loss_prob,
         ))
         prev_eval_cp, prev_best_uci = eval_after_cp, next_best
+        prev_move_san = san  # next iteration's "opponent's last move"
         if on_progress:
             on_progress(ply + 1, total)
 
