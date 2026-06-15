@@ -36,6 +36,8 @@ class AppConfig:
     maia3_scan_model: str = "maia3-79m"
     maia3_cache_dir: str = None
     maia3_device: str = "cpu"
+    maia3_offline: bool = False       # once the checkpoint is cached, set true to load
+                                      # from the local HF cache only (no startup phone-home)
     maia_history_plies: int = 12      # max game-history plies fed to maia3
     spar_temperature: float = 0.0     # maia3 sparring move-sampling temperature (0 = argmax)
 

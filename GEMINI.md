@@ -13,7 +13,8 @@ coach.py             thin wiring: config -> state -> engines -> tools -> chat ->
 app/commands.py      slash-command / chat-input processing (CommandProcessor, testable)
 app/agent_loop.py    Gemini tool-execution loop + response rendering
 app/state.py         SessionState (single source of truth) + TimelineManager (board mutations)
-app/engines.py       EngineManager: Stockfish + Maia-2 processes AND all engine policy
+app/engines.py       EngineManager: Stockfish subprocess + in-process Maia (Maia-3 tiered
+                     deep/scan, Maia-2 fallback) AND all engine policy (tiers, limits, eval source)
 app/review.py        game review pipeline: per-move classification (win%-space eval swings),
                      lesson agenda selection, digest_for_llm
 app/concepts.py      pure chess features: SEE-based piece safety, pawn structure, outposts,
@@ -33,7 +34,16 @@ app/config.py        config.json + profiles + CLI args
   only truth; all mutations go through `TimelineManager`. The LLM's only state
   mutation paths are the `play_sparring_reply` / `execute_coach_move` tools.
 - **Engine policy lives in `EngineManager` only.** Never call
-  `engines.stockfish.analyse` from other modules; add a method instead.
+  `engines.stockfish.analyse` from other modules; add a method instead. This
+  includes Maia tiering: `maia_predict` picks the deep/scan model (Maia-3, with a
+  Maia-2 fallback) by `tier=`; callers never choose a model.
+- **The win% stream prefers the PGN's `[%eval]`.** `review_game`'s scan uses the
+  game's own deep annotations for eval/drop/slide detection when present (the ~17%
+  slide baseline was calibrated on Lichess evals — `scripts/scan_eval_slides.py`);
+  the local Stockfish search is the fallback and mainly supplies best-move/punisher.
+  `GameReview.eval_source` records `"pgn"` vs `"engine"`; slides read off the
+  fallback are flagged in the batch digest. Bump `batch.SCAN_VERSION` if scan-level
+  eval/record fields change incompatibly.
 - **Socratic withholding is backend-enforced**: `evaluate_student_answer` counts
   attempts per FEN and only includes the engine answer when `reveal_allowed`.
 - **`submit_diagnosis` accepts only the closed taxonomy** in

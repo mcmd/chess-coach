@@ -99,7 +99,8 @@ class Maia3Model:
     supports_wdl = True
 
     def __init__(self, spec: str, *, cache_dir: str | None = None,
-                 device: str = "cpu", history_plies: int = 12):
+                 device: str = "cpu", history_plies: int = 12,
+                 local_files_only: bool = False):
         import torch  # noqa: F401  (validates torch present at construction)
         from maia3.uci import parse_args, Maia3UCIEngine
         from maia3.dataset import tokenize_board, get_historical_tokens, get_legal_moves_mask
@@ -107,6 +108,10 @@ class Maia3Model:
         argv = ["--model", spec, "--device", device, "--temperature", "0"]
         if cache_dir:
             argv += ["--cache-dir", cache_dir]
+        if local_files_only:
+            # Use the local HF cache only — no per-boot Hugging Face phone-home
+            # (maia3 passes this straight to hf_hub_download(local_files_only=...)).
+            argv += ["--local-files-only"]
         cfg = parse_args(argv)
         # History accumulation mode on: predict() supplies the real prior positions.
         cfg.use_uci_history = True

@@ -58,6 +58,7 @@ class EngineManager:
                 cache_dir=getattr(self.config, "maia3_cache_dir", None),
                 device=getattr(self.config, "maia3_device", "cpu"),
                 history_plies=getattr(self.config, "maia_history_plies", 12),
+                local_files_only=getattr(self.config, "maia3_offline", False),
             )
         cache[spec] = model
         return model
