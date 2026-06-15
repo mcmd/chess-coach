@@ -562,6 +562,40 @@ def test_scan_captures_opponent_previous_move(stub_config):
     assert review.records[2].prev_move_san == review.records[1].san  # g4 follows e5
 
 
+def test_scan_prefers_pgn_eval_when_present(stub_config):
+    """#4: the win% stream comes from the PGN's [%eval] when annotated, not the
+    local engine — so slide/mistake detection matches the calibrated baseline."""
+    pgn = ('[White "mcmd"]\n[Black "opp"]\n\n'
+           '1. e4 { [%eval 0.3] } e5 { [%eval 0.2] } 2. Nf3 { [%eval 3.5] } *')
+    engines = FakeEngines()   # quick_eval returns cp=0 for every position
+    review = review_game(pgn, engines, stub_config, with_maia=False, enrich=False)
+    assert review.eval_source == "pgn"
+    assert review.records[2].eval_after_cp == 350   # from [%eval 3.5], not the fake's 0
+
+
+def test_scan_falls_back_to_engine_without_pgn_evals(stub_config):
+    pgn, engines = _fixture()   # the fool's-mate fixture carries no [%eval]
+    review = review_game(pgn, engines, stub_config, with_maia=False, enrich=False)
+    assert review.eval_source == "engine"
+
+
+def test_slide_digest_flags_engine_eval_reliability():
+    """#4: slides read off a local search (no [%eval]) get a reliability caveat."""
+    sig = {"slide_games": 2, "games_total": 10, "rate": 0.2, "baseline": 0.17,
+           "above_baseline": False, "markers": [], "engine_eval_slides": 1,
+           "examples": [{"game_key": "g1", "start_move": 16, "end_move": 20,
+                         "net_loss": 30.0, "plies": 4}]}
+    batch = BatchReview(batch_id="x", created="2026-06-15", games_analyzed=10,
+                        games_skipped=0, truncated=False, moments_found=0,
+                        patterns=[], strengths=[], slide_signature=sig)
+    assert "RELIABILITY CAVEAT" in batch.digest()
+    sig["engine_eval_slides"] = 0
+    batch2 = BatchReview(batch_id="x", created="2026-06-15", games_analyzed=10,
+                         games_skipped=0, truncated=False, moments_found=0,
+                         patterns=[], strengths=[], slide_signature=sig)
+    assert "RELIABILITY CAVEAT" not in batch2.digest()
+
+
 def test_slide_signature_survives_save_and_reload(stub_config):
     pgn, engines = _fixture()
     batch = run_batch_review(pgn, engines, stub_config)

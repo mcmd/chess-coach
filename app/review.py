@@ -146,6 +146,7 @@ class GameReview:
     opening_deviation: dict = None   # where the game left established theory
     tablebase_entry: dict = None     # where the game entered provable endgame territory
     slides: list = None              # within-game eval-only one-sided slide segments
+    eval_source: str = "engine"      # "pgn" (used the PGN's [%eval]) or "engine" (local search)
 
     def record_at(self, ply: int):
         return self.records[ply] if 0 <= ply < len(self.records) else None
@@ -488,6 +489,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     prev_eval_cp = None
     prev_best_uci = None
     prev_move_san = None  # SAN of the move leading into the current position (orientation)
+    pgn_eval_moves = 0    # moves whose eval came from the PGN's [%eval] (not local engine)
     white_elo = _header_elo(headers, "WhiteElo", getattr(config, "user_elo", 1200))
     black_elo = _header_elo(headers, "BlackElo", getattr(config, "user_elo", 1200))
 
@@ -507,6 +509,9 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         eval_time_ply = scan_eval_time
         if prev_eval_cp is None:
             eval_before_cp, best_uci = _eval_with_best(engines, board, eval_time_ply)
+            parent_eval = node.parent.eval() if node.parent else None
+            if parent_eval is not None:   # prefer the PGN's own eval here too
+                eval_before_cp = parent_eval.white().score(mate_score=MATE_CP)
         else:
             eval_before_cp, best_uci = prev_eval_cp, prev_best_uci
 
@@ -529,6 +534,16 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         board.push(move)
         fen_after = board.fen()
         eval_after_cp, next_best = _eval_with_best(engines, board, eval_time_ply)
+        # The win% stream that drives drop/quality and slide detection is far more
+        # reliable from the PGN's own deep [%eval] annotations than from a sub-second
+        # local search — and the slide baseline (~17%) was calibrated on exactly those
+        # Lichess evals (scripts/scan_eval_slides.py). Prefer them when present; the
+        # engine eval is the fallback for un-annotated PGNs (flagged via eval_source).
+        # Stockfish is still consulted for the BEST move / punisher (evals lack those).
+        node_eval = node.eval()
+        if node_eval is not None:
+            eval_after_cp = node_eval.white().score(mate_score=MATE_CP)
+            pgn_eval_moves += 1
 
         before_m = eval_before_cp if mover_white else -eval_before_cp
         after_m = eval_after_cp if mover_white else -eval_after_cp
@@ -609,9 +624,14 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         if on_progress:
             on_progress(ply + 1, total)
 
+    # "pgn" when the game shipped its own [%eval] (Lichess analysed) on essentially
+    # every move — the eval source the slide detector was calibrated on; "engine"
+    # when we fell back to the local sub-second search (less reliable; flagged in
+    # the slide output so the coach never overstates a fallback read).
+    eval_source = "pgn" if total and pgn_eval_moves >= 0.8 * total else "engine"
     review = GameReview(headers=headers, records=records, student_color=student_color,
                         agenda_plies=[], game=game, extra_games_ignored=extra,
-                        white_elo=white_elo, black_elo=black_elo)
+                        white_elo=white_elo, black_elo=black_elo, eval_source=eval_source)
     _detect_slides(review)   # eval-only; cheap and safe in scan and full review
     if not enrich:
         return review

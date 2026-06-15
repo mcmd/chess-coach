@@ -29,7 +29,9 @@ from app.review import (GameReview, MoveRecord, review_game, _enrich_agenda,
 # Bump when MoveRecord scan fields or classification change incompatibly.
 # v2: scans now carry review.slides (eval-only within-game slides + co-markers).
 # v3: MoveRecord.prev_move_san (opponent's move into fen_before, for orientation).
-SCAN_VERSION = 3
+# v4: scan prefers the PGN's [%eval] for the win% stream (eval values/drops change);
+#     scans record eval_source.
+SCAN_VERSION = 4
 
 # A cluster is only a "pattern" with enough evidence to be a fact, not noise.
 MIN_PATTERN_MOMENTS = 3
@@ -128,7 +130,7 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
     Each scan is a JSON-safe dict with full scan-level MoveRecords."""
     max_games = int(getattr(config, "batch_max_games", 50))
     games, truncated = split_games(pgn_text, max_games)
-    scan_eval_time = float(getattr(config, "batch_eval_time", 0.6))
+    scan_eval_time = float(getattr(config, "batch_eval_time", 0.4))
     scans, skipped = [], 0
     n = len(games)
 
@@ -182,6 +184,7 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
             "student_color": review.student_color,
             "scan_version": SCAN_VERSION,
             "scanned_with": {"eval_time": scan_eval_time, "with_maia": False},
+            "eval_source": review.eval_source,   # "pgn" ([%eval]) or "engine" (local search)
             "records": [asdict(r) for r in review.records],
             "slides": review.slides or [],   # eval-only within-game slides (+ co-markers)
         }
@@ -308,7 +311,7 @@ def aggregate_slides(scans: list) -> dict:
     is shared by a clear majority of a meaningful number of slides — otherwise the
     markers stay raw counts. Factual co-occurrence only; the prompt narrates no cause."""
     games_total = len(scans)
-    worst_per_game, all_segs = [], []
+    worst_per_game, all_segs, engine_eval_slides = [], [], 0
     for s in scans:
         segs = s.get("slides") or []
         if not segs:
@@ -316,6 +319,8 @@ def aggregate_slides(scans: list) -> dict:
         all_segs.extend(segs)
         worst = max(segs, key=lambda x: x["net_loss"])
         worst_per_game.append({"game_key": s["game_key"], **worst})
+        if s.get("eval_source", "engine") != "pgn":
+            engine_eval_slides += 1   # slide read off a local search, not Lichess evals
     n = len(worst_per_game)
     if n < MIN_SLIDE_GAMES:
         return None
@@ -345,6 +350,7 @@ def aggregate_slides(scans: list) -> dict:
         "markers": markers,
         "marker_counts": {"ahead": ahead, "queens_on": queens,
                           "clock_low": clk_low, "clock_known": len(clk_known), "total": total},
+        "engine_eval_slides": engine_eval_slides,
         "examples": sorted(worst_per_game, key=lambda x: -x["net_loss"])[:5],
     }
 
@@ -487,6 +493,11 @@ class BatchReview:
                        f"(-{e['net_loss']:.0f}% over {e['plies']})" for e in sig.get("examples", [])[:3])
         if ex:
             out.append(f"Worst examples: {ex}.")
+        if sig.get("engine_eval_slides"):
+            out.append(f"RELIABILITY CAVEAT: {sig['engine_eval_slides']} of these slide games had NO "
+                       "[%eval] annotations, so their win% came from a short LOCAL search, not deep "
+                       "analysis — that read is shakier. Present those tentatively (\"this looks like a "
+                       "slide\") rather than as established fact.")
         out.append("Coach this as a META-SKILL (consolidating advantages, re-scanning when the "
                    "position turns, holding focus through rising complexity) — it is a factual win% "
                    "pattern across games, NEVER a claim about the student's psychology. State only what "

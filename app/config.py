@@ -51,9 +51,10 @@ class AppConfig:
     threat_multipv: int = 3
     practicality_depth: int = 16
     practicality_time: float = 3.0
-    batch_eval_time: float = 0.6   # Stockfish seconds per position in the /batch fast scan
-                                   # (0.6 not 0.4: steadier win% evals reduce borderline
-                                   # slide-detection flips run-to-run; see issue #4)
+    batch_eval_time: float = 0.4   # Stockfish seconds per position in the /batch fast scan.
+                                   # Slide detection no longer leans on this: the scan prefers
+                                   # the PGN's own deep [%eval] when present (issue #4); the local
+                                   # search is a fallback and mainly feeds best-move/punisher.
     batch_max_games: int = 50      # cap on games per /batch run
     batch_top_patterns: int = 3    # patterns presented in the training plan
     batch_reps: int = 3            # deep-verified teaching positions per pattern
