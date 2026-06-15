@@ -8,6 +8,8 @@
     "dark_terminal": false,
     "trace": false,
     "use_online_databases": true,
+    "maia_version": "auto",
+    "maia3_offline": false,
     "engine": {
         "review_eval_time": 1.0,
         "agenda_best_depth": 20,

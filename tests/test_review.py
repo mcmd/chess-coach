@@ -305,6 +305,155 @@ def test_practical_difficulty_divergence_noted():
     assert "HARDER to play" in review.digest()
 
 
+def test_wdl_risk_profile_categories():
+    from app.review import _wdl_risk_profile
+    assert _wdl_risk_profile(0.60, 0.10, 0.30)[0] == "winning"
+    assert _wdl_risk_profile(0.20, 0.10, 0.70)[0] == "must-hold"
+    assert _wdl_risk_profile(0.25, 0.55, 0.20)[0] == "drawish"
+    # A balanced low-draw spread (e.g. the start position, ~51/3/46) must NOT be
+    # flagged as sharp — sharpness isn't in maia3's value head.
+    assert _wdl_risk_profile(0.51, 0.03, 0.46)[0] == "balanced"
+    # Winning chances but draw-dominant (e.g. K+P vs K, ~39/61/1) reads as drawish,
+    # not "winning".
+    assert _wdl_risk_profile(0.39, 0.60, 0.01)[0] == "drawish"
+
+
+def test_wdl_risk_profile_surfaced_in_digest():
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(
+        evals=evals,
+        maia={fens[4]: {"h5f7": 0.45}},
+        maia_wdl={fens[4]: (0.20, 0.60, 0.20)},  # drawish, mover POV
+    )
+    review = review_game(PGN, engines, _Cfg())
+    rec = review.records[4]
+    assert rec.human_draw_prob == 0.60 and rec.human_loss_prob == 0.20
+    digest = review.digest()
+    assert "Risk profile" in digest
+    assert "drawish" in digest
+
+
+def test_wdl_absent_for_maia2_style_prediction():
+    # maia2 (no WDL) → no draw/loss fields → no Risk profile line.
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(evals=evals, maia={fens[4]: {"h5f7": 0.45}})  # no maia_wdl
+    review = review_game(PGN, engines, _Cfg())
+    assert review.records[4].human_draw_prob is None
+    assert "Risk profile" not in review.digest()
+
+
+# --- within-game slide detection (eval-only) ---
+
+def _slide_review(cps, color="white"):
+    """Build a GameReview whose student plays consecutive middlegame moves with the
+    given WHITE-relative (cp_before, cp_after) evals. drop_pct is computed in the
+    student's perspective, exactly as review_game does."""
+    from app.review import GameReview, MoveRecord, cp_to_win_pct
+    student_white = color == "white"
+    recs = []
+    for i, (cb, ca) in enumerate(cps):
+        mb = cb if student_white else -cb
+        ma = ca if student_white else -ca
+        drop = round(max(0.0, cp_to_win_pct(mb) - cp_to_win_pct(ma)), 1)
+        recs.append(MoveRecord(ply=2 * i, number=i + 10, color=color, san="x", uci="e2e4",
+                               fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                               eval_before_cp=cb, eval_after_cp=ca, drop_pct=drop,
+                               quality="inaccuracy", phase="middlegame"))
+    return GameReview(headers={}, records=recs, student_color=color,
+                      agenda_plies=[], white_elo=1500, black_elo=1500)
+
+
+def test_slide_detects_gradual_collapse():
+    from app.review import _detect_slides
+    # winning -> losing across 5 moves, each shedding ~8 win%, no single cliff.
+    review = _slide_review([(300, 200), (200, 100), (100, 0), (0, -100), (-100, -200)])
+    _detect_slides(review)
+    assert review.slides is not None
+    s = review.slides[0]
+    assert s["plies"] == 5 and s["net_loss"] >= 25
+    assert "WITHIN-GAME SLIDE" in review.digest()
+
+
+def test_slide_silent_on_single_cliff():
+    # one move sheds ~35 win%, the rest only a few -> a blunder the agenda already
+    # covers, NOT a gradual slide (max single >= 70% of the net loss).
+    from app.review import _detect_slides
+    review = _slide_review([(200, -200), (-200, -250), (-250, -300)])
+    _detect_slides(review)
+    assert review.slides is None
+
+
+def test_slide_silent_when_net_small():
+    # three losing moves but tiny NET loss -> below the net threshold.
+    from app.review import _detect_slides
+    review = _slide_review([(50, 10), (10, -30), (-30, -70)])
+    _detect_slides(review)
+    assert review.slides is None
+
+
+def test_slide_silent_from_floored_start():
+    # already lost when the run starts (win% < 30) -> mop-up, not a collapse.
+    from app.review import _detect_slides
+    review = _slide_review([(-300, -400), (-400, -500), (-500, -600)])
+    _detect_slides(review)
+    assert review.slides is None
+
+
+def test_slide_needs_min_run():
+    # only two consecutive losing moves -> below MIN_RUN even with a big net loss.
+    from app.review import _detect_slides
+    review = _slide_review([(300, 100), (100, -100)])
+    _detect_slides(review)
+    assert review.slides is None
+
+
+def test_slide_works_for_black_student():
+    # same gradual collapse, student is Black: eval is white-relative, so a Black
+    # slide is white-eval RISING. Confirms the perspective handling.
+    from app.review import _detect_slides
+    review = _slide_review([(-300, -200), (-200, -100), (-100, 0), (0, 100), (100, 200)],
+                           color="black")
+    _detect_slides(review)
+    assert review.slides is not None and review.slides[0]["plies"] == 5
+
+
+def test_slide_co_markers_from_starting_position():
+    # the helper uses the starting FEN (queens on) and no clock -> queens_on True,
+    # clock_low unknown (None); a winning onset reads "ahead".
+    from app.review import _detect_slides
+    review = _slide_review([(300, 200), (200, 100), (100, 0), (0, -100), (-100, -200)])
+    _detect_slides(review)
+    s = review.slides[0]
+    assert s["onset"] == "ahead"
+    assert s["queens_on"] is True
+    assert s["clock_low"] is None
+
+
+def test_slide_co_markers_queenless_and_low_clock():
+    # queenless endgame with a low clock -> queens_on False, clock_low True.
+    from app.review import _detect_slides, GameReview, MoveRecord, cp_to_win_pct
+    qless = "8/5k2/8/8/8/8/5K2/R7 w - - 0 1"
+    recs = []
+    for i, (cb, ca) in enumerate([(300, 200), (200, 100), (100, 0), (0, -100), (-100, -200)]):
+        drop = round(max(0.0, cp_to_win_pct(cb) - cp_to_win_pct(ca)), 1)
+        recs.append(MoveRecord(ply=2 * i, number=i + 10, color="white", san="Ra2", uci="a1a2",
+                               fen_before=qless, fen_after=qless,
+                               eval_before_cp=cb, eval_after_cp=ca, drop_pct=drop,
+                               quality="inaccuracy", phase="middlegame", clock_remaining=30.0))
+    review = GameReview(headers={}, records=recs, student_color="white",
+                        agenda_plies=[], white_elo=1500, black_elo=1500)
+    _detect_slides(review)
+    s = review.slides[0]
+    assert s["queens_on"] is False
+    assert s["clock_low"] is True
+
+
 def test_likely_wrong_answer_anticipated_with_refutation():
     import chess as _chess
     fens = _fens_of(PGN)

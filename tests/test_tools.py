@@ -287,6 +287,25 @@ def test_analyze_position_returns_packet(stub_config):
     assert result["positional_and_safety_features"]["game_phase"] == "opening"
 
 
+def test_analyze_position_exposes_wdl_risk_profile(stub_config):
+    # maia3-style WDL (with draw/loss) → analyze_position should surface a queryable
+    # risk verdict so the coach can answer "how risky is this / drawing chances?".
+    engines = FakeEngines(maia={START: {"e2e4": 1.0}}, maia_wdl={START: (0.2, 0.6, 0.2)})
+    tools, _ = make_tools(stub_config, engines)
+    summary = tools.analyze_position(START)["human_tendency_at_student_elo"]
+    assert summary["risk_profile"] == "drawish"
+    assert summary["win_draw_loss_for_side_to_move"] == {"win": 0.2, "draw": 0.6, "loss": 0.2}
+
+
+def test_analyze_position_no_wdl_for_maia2_style(stub_config):
+    # maia2-style prediction (no draw/loss) → no risk fields, no crash.
+    engines = FakeEngines(maia={START: {"e2e4": 1.0}})
+    tools, _ = make_tools(stub_config, engines)
+    summary = tools.analyze_position(START)["human_tendency_at_student_elo"]
+    assert "risk_profile" not in summary
+    assert "win_probability_for_side_to_move" in summary
+
+
 def test_analyze_position_rejects_illegal_hypothetical(stub_config):
     tools, _ = make_tools(stub_config)
     result = tools.analyze_position(START, moves_to_apply=["e4", "Ke7"])

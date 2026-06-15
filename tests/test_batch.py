@@ -7,9 +7,11 @@ import os
 import chess
 import chess.pgn
 
-from app.batch import (BatchPattern, aggregate_patterns, batches_dir, game_key_for,
-                       load_latest_batch, run_batch_review, scan_games,
-                       select_representatives, split_games, _light_objective)
+from dataclasses import asdict
+
+from app.batch import (BatchPattern, BatchReview, aggregate_patterns, aggregate_slides,
+                       batches_dir, game_key_for, load_latest_batch, run_batch_review,
+                       scan_games, select_representatives, split_games, _light_objective)
 from app.memory import load_dossier, update_dossier_with_batch
 from app.review import MoveRecord, review_game
 from app.state import SessionState, TimelineManager
@@ -217,6 +219,32 @@ def test_run_batch_review_end_to_end(stub_config):
     assert any(batch.batch_id in f for f in reports)
 
 
+def test_batch_reps_get_rating_laddered_aspirational(stub_config):
+    """Regression (Phase 5, §8.6): batch representatives flow through
+    _enrich_agenda, so the aspirational 'one band up' instinct is computed at
+    user_elo + 350 and surfaces in the batch digest. Locks the reuse so a future
+    refactor of the batch deep pass can't silently drop it."""
+    pgn, engines = _fixture()
+    target = stub_config.user_elo + 350  # _aspirational_instinct's mover_elo + 350
+    # Give each rep's fen_before a maia distribution at the aspirational band so
+    # the instinct resolves to a concrete move.
+    for moves, opp in _GAMES:
+        g = chess.pgn.read_game(io.StringIO(
+            f'[White "mcmd"]\n[Black "{opp}"]\n\n{moves} 0-1'))
+        board = g.board()
+        for i, node in enumerate(g.mainline()):
+            if i == 2:  # before pushing White's 2nd move: the blunder's fen_before
+                legal = next(iter(board.legal_moves)).uci()
+                engines.maia_by_elo[(board.fen(), target)] = {legal: 0.6}
+                break
+            board.push(node.move)
+    batch = run_batch_review(pgn, engines, stub_config)
+    assert any(r.aspirational and r.aspirational["elo"] == target for r in batch.records)
+    digest = batch.digest()
+    assert "aspirational instinct" in digest
+    assert f"~{target} Elo" in digest
+
+
 def test_saved_report_reloads_without_rescanning(stub_config):
     pgn, engines = _fixture()
     batch = run_batch_review(pgn, engines, stub_config)
@@ -291,6 +319,298 @@ def test_dossier_context_surfaces_batch_patterns(stub_config):
     assert "Confirmed recurring patterns" in ctx and "T (14 moments across 5 games" in ctx
     update_dossier_with_batch(stub_config.dossier_file, _summary("b2", 0.5))
     assert "IMPROVING" in get_dossier_context(stub_config.dossier_file)
+
+
+def _slide_summary(batch_id, rate, present=True):
+    sig = None
+    if present:
+        sig = {"slide_games": round(rate * 10), "games_total": 10, "rate": rate,
+               "baseline": 0.17, "above_baseline": rate >= 0.255, "markers": []}
+    return {"batch_id": batch_id, "games": 10, "patterns": [], "slide_signature": sig}
+
+
+def test_dossier_slide_trend_lifecycle(stub_config):
+    f = stub_config.dossier_file
+    update_dossier_with_batch(f, _slide_summary("b1", 0.4))
+    t = load_dossier(f)["slide_trend"]
+    assert t["status"] == "active" and t["rate"] == 0.4 and t["previous_rate"] is None
+
+    update_dossier_with_batch(f, _slide_summary("b2", 0.2))  # rate fell >40%
+    t = load_dossier(f)["slide_trend"]
+    assert t["status"] == "improving" and t["previous_rate"] == 0.4
+
+    update_dossier_with_batch(f, _slide_summary("b3", 0, present=False))
+    update_dossier_with_batch(f, _slide_summary("b4", 0, present=False))
+    assert load_dossier(f)["slide_trend"]["status"] == "stale"
+
+
+def test_dossier_context_surfaces_slide_habit_alone(stub_config):
+    # a slide habit with no clustered patterns and no single-game history must still
+    # surface (it used to be suppressed by the "no historical data" guard).
+    from app.prompts import get_dossier_context
+    update_dossier_with_batch(stub_config.dossier_file, _slide_summary("b1", 0.4))
+    ctx = get_dossier_context(stub_config.dossier_file)
+    assert "Cross-game slide habit" in ctx and "4/10" in ctx
+
+
+# --- cross-game slide habit (eval-only) ---
+
+def _seg(net=30.0, onset="ahead", queens_on=True, clock_low=None,
+         start=20, end=26, plies=4, max_single=10.0):
+    return {"start_move": start, "end_move": end, "plies": plies,
+            "start_winpct": 80.0, "end_winpct": 50.0, "net_loss": net,
+            "max_single": max_single, "onset": onset, "queens_on": queens_on,
+            "clock_low": clock_low}
+
+
+def _slide_scan(key, slides, records=None):
+    return {"game_key": key, "student_color": "white",
+            "records": records or [], "slides": slides}
+
+
+def test_aggregate_slides_below_gate_returns_none():
+    # only one game has a slide -> below MIN_SLIDE_GAMES.
+    scans = [_slide_scan("g1", [_seg()]), _slide_scan("g2", [])]
+    assert aggregate_slides(scans) is None
+
+
+def test_aggregate_slides_above_gate_reports_rate_and_no_markers_yet():
+    scans = [_slide_scan("g1", [_seg()]), _slide_scan("g2", [_seg()]), _slide_scan("g3", [])]
+    sig = aggregate_slides(scans)
+    assert sig["slide_games"] == 2 and sig["games_total"] == 3
+    assert sig["rate"] == 0.67 and sig["above_baseline"] is True
+    # 2 slide games < SLIDE_MARKER_MIN_GAMES -> situational markers withheld.
+    assert sig["markers"] == []
+
+
+def test_aggregate_slides_surfaces_majority_co_markers():
+    scans = [_slide_scan(f"g{i}", [_seg(onset="ahead", queens_on=True)]) for i in range(3)]
+    sig = aggregate_slides(scans)
+    assert any("AHEAD" in m for m in sig["markers"])
+    assert any("QUEENS" in m for m in sig["markers"])
+
+
+def test_aggregate_slides_withholds_split_co_marker():
+    # 3 slide games but onset split -> no 2/3 majority -> no 'ahead' marker.
+    scans = [_slide_scan("g1", [_seg(onset="ahead")]),
+             _slide_scan("g2", [_seg(onset="worse")]),
+             _slide_scan("g3", [_seg(onset="level")])]
+    sig = aggregate_slides(scans)
+    assert not any("AHEAD" in m for m in sig["markers"])
+
+
+def test_aggregate_slides_clock_marker_ignores_unknown_clocks():
+    # known clocks = 2 (both low), the None is excluded from the denominator.
+    scans = [_slide_scan("g1", [_seg(clock_low=True, onset="level")]),
+             _slide_scan("g2", [_seg(clock_low=True, onset="level")]),
+             _slide_scan("g3", [_seg(clock_low=None, onset="level")])]
+    sig = aggregate_slides(scans)
+    assert any("LOW CLOCK" in m for m in sig["markers"])
+
+
+def _mistake_scan(key, move_number, slides):
+    r = MoveRecord(ply=2 * move_number, number=move_number, color="white", san="Bxh7",
+                   uci="c2h7", fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                   eval_before_cp=0, eval_after_cp=-300, drop_pct=20.0,
+                   quality="blunder", phase="middlegame", is_capture=True)
+    return {"game_key": key, "student_color": "white",
+            "records": [asdict(r)], "slides": slides}
+
+
+def test_pattern_axis_execution_when_mistakes_inside_slides():
+    # 3 games, each mistake at move 25 sits inside a 20-30 slide -> execution leak.
+    scans = [_mistake_scan(f"g{i}", 25, [_seg(start=20, end=30)]) for i in range(3)]
+    patterns = aggregate_patterns(scans)
+    assert patterns and patterns[0].axis == "execution"
+    assert patterns[0].in_slide_count == 3
+
+
+def test_pattern_axis_knowledge_when_mistakes_outside_slides():
+    scans = [_mistake_scan(f"g{i}", 25, []) for i in range(3)]
+    patterns = aggregate_patterns(scans)
+    assert patterns and patterns[0].axis == "knowledge"
+    assert patterns[0].in_slide_count == 0
+
+
+def test_batch_digest_renders_cross_game_slide_block():
+    batch = BatchReview(
+        batch_id="x", created="2026-06-14", games_analyzed=10, games_skipped=0,
+        truncated=False, moments_found=0, patterns=[], strengths=[],
+        slide_signature={"slide_games": 3, "games_total": 10, "rate": 0.3,
+                         "baseline": 0.17, "above_baseline": True,
+                         "markers": ["when AHEAD (consolidating a winning position)"],
+                         "examples": [{"game_key": "g1", "start_move": 20, "end_move": 26,
+                                       "net_loss": 40.0, "plies": 4}]})
+    out = batch.digest()
+    assert "CROSS-GAME SLIDE PATTERN" in out
+    assert "3/10" in out and "AHEAD" in out
+
+
+def test_enrich_reconciles_best_move_to_deep_pv(stub_config):
+    """Bug #3: when the shallow scan best_move disagrees with the deep PV's first
+    move, the explanation follows the deep line — so the taught move must too."""
+    from app.review import _enrich_agenda, GameReview
+    fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"   # after 1.e4 e5
+    after = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPPKPPP/RNBQ1BNR b kq - 1 2"  # 2.Ke2 (a blunder)
+    r = MoveRecord(ply=2, number=2, color="white", san="Ke2", uci="e1e2",
+                   fen_before=fen, fen_after=after,
+                   eval_before_cp=80, eval_after_cp=-400, drop_pct=35.0,
+                   quality="blunder", best_move_san="Nf3")   # shallow scan said Nf3
+    review = GameReview(headers={}, records=[r], student_color="white",
+                        agenda_plies=[0], white_elo=1150, black_elo=1150)
+    engines = FakeEngines(multipv={fen: [("d2d4", 90)]})     # deep PV prefers d4
+    _enrich_agenda(review, engines, online=False)
+    assert r.best_line[0] == "d4"
+    assert r.best_move_san == "d4"   # reconciled away from the shallow "Nf3"
+
+
+def test_slide_above_baseline_hysteresis(stub_config):
+    """Bug #4: the persisted 'ABOVE typical' flag turns ON at 1.5x baseline, OFF
+    only below 1.2x, and holds in the dead-band (no flip-flop on eval noise)."""
+    f = stub_config.dossier_file
+    update_dossier_with_batch(f, _slide_summary("b1", 0.30))   # >= 0.255 -> ON
+    assert load_dossier(f)["slide_trend"]["above_baseline"] is True
+    update_dossier_with_batch(f, _slide_summary("b2", 0.22))   # dead-band -> HOLD ON
+    assert load_dossier(f)["slide_trend"]["above_baseline"] is True
+    update_dossier_with_batch(f, _slide_summary("b3", 0.18))   # < 0.204 -> OFF
+    assert load_dossier(f)["slide_trend"]["above_baseline"] is False
+
+
+def test_batch_progress_spans_whole_pgn(stub_config, tmp_path):
+    """FR #7: one progress total for the whole PGN; done is monotonic (no per-game
+    reset) and ends at the grand total."""
+    pgn, engines = _fixture()   # 3 fresh games, each scanned
+    calls = []
+    scan_games(pgn, engines, stub_config, str(tmp_path / "b"),
+               on_progress=lambda d, t: calls.append((d, t)))
+    totals = {t for _, t in calls}
+    assert len(totals) == 1                 # a single batch-wide total
+    dones = [d for d, _ in calls]
+    assert dones == sorted(dones)           # monotonic across game boundaries
+    assert dones[-1] == totals.pop()        # finishes at 100%
+
+
+def test_severity_label_thresholds():
+    from app.batch import _severity_label
+    assert _severity_label(33) == "a blunder"
+    assert _severity_label(25) == "a mistake"
+    assert _severity_label(15) == "an inaccuracy"
+    assert _severity_label(5) == "a minor slip"
+
+
+def _pat(pid, obj, phase, title, count, games, drop, moments):
+    return BatchPattern(pattern_id=pid, objective=obj, phase=phase, title=title,
+                        habit="build the habit", count=count, games_seen=games,
+                        total_drop=drop, moments=moments, in_slide_count=0, axis="knowledge")
+
+
+def test_digest_dual_ranking_severity_and_same_habit():
+    """FR #5: lead with frequency AND impact, severity in plain words, demote the
+    cumulative win% sum, and name a habit spanning two phases as one weakness."""
+    p1 = _pat("priority_selection:middlegame", "priority_selection", "middlegame",
+              "Urgent priority (middlegame)", 14, 8, 210.0,
+              [{"game_key": "g1", "move_label": "22. Re1"}])
+    p2 = _pat("left_piece_en_prise:middlegame", "left_piece_en_prise", "middlegame",
+              "Piece en prise (middlegame)", 11, 7, 367.0,
+              [{"game_key": "g2", "move_label": "18... Rad8"}])
+    p3 = _pat("priority_selection:opening", "priority_selection", "opening",
+              "Urgent priority (opening)", 6, 4, 113.0,
+              [{"game_key": "g3", "move_label": "7... Bg4"}])
+    batch = BatchReview(batch_id="t", created="2026-06-15", games_analyzed=14,
+                        games_skipped=0, truncated=False, moments_found=31,
+                        patterns=[p1, p2, p3], strengths=[])
+    digest = batch.digest()
+    # frequency leader is P1 (14 moments); damage leader is P2 (367, blunder-sized)
+    assert "Most FREQUENT: Pattern 1" in digest
+    assert "Most DAMAGING: Pattern 2" in digest
+    assert "averages a blunder" in digest          # 367/11 = 33.4
+    # games-affected lead + demoted cumulative
+    assert "appears in 8 of 14 games" in digest
+    assert "raw cumulative 210 win%" in digest
+    # P1 and P3 share an objective -> framed as one weakness across phases
+    assert "SAME HABIT, TWO PHASES" in digest
+    assert "Pattern 1 and Pattern 3" in digest
+
+
+def test_digest_renders_lichess_link_and_orientation():
+    """FR #6: teaching-position header shows the Lichess link; the per-moment
+    orientation states the move number and the opponent's last move."""
+    r = MoveRecord(ply=42, number=22, color="white", san="Re1", uci="f1e1",
+                   fen_before="2r4r/p1Bk3p/4bp2/8/4P1p1/P7/P1RNnPPP/5R1K w - - 3 22",
+                   fen_after="2r4r/p1Bk3p/4bp2/8/4P1p1/P7/P1RN1PPP/4R2K b - - 4 22",
+                   eval_before_cp=120, eval_after_cp=-200, drop_pct=30.0,
+                   quality="blunder", prev_move_san="Kd7")
+    p = _pat("x:middlegame", "x", "middlegame", "T", 3, 2, 60.0,
+             [{"game_key": "qqJUqmuk", "move_label": "22. Re1"}])
+    batch = BatchReview(batch_id="t", created="2026-06-15", games_analyzed=2,
+                        games_skipped=0, truncated=False, moments_found=3,
+                        patterns=[p], strengths=[], records=[r], rep_pattern_idx=[0],
+                        rep_sources=[{"game_key": "qqJUqmuk", "white": "mcmd",
+                                      "black": "antakyadurum",
+                                      "site": "https://lichess.org/qqJUqmuk"}])
+    digest = batch.digest()
+    assert "https://lichess.org/qqJUqmuk" in digest
+    assert "this is move 22 of the game" in digest
+    assert "the opponent has just played 21... Kd7" in digest
+
+
+def test_scan_captures_opponent_previous_move(stub_config):
+    """FR #6: review_game records prev_move_san (the move into fen_before)."""
+    pgn, engines = _fixture()
+    review = review_game(pgn, engines, stub_config, with_maia=False, enrich=False)
+    assert review.records[0].prev_move_san is None      # first move has no predecessor
+    assert review.records[2].prev_move_san == review.records[1].san  # g4 follows e5
+
+
+def test_scan_prefers_pgn_eval_when_present(stub_config):
+    """#4: the win% stream comes from the PGN's [%eval] when annotated, not the
+    local engine — so slide/mistake detection matches the calibrated baseline."""
+    pgn = ('[White "mcmd"]\n[Black "opp"]\n\n'
+           '1. e4 { [%eval 0.3] } e5 { [%eval 0.2] } 2. Nf3 { [%eval 3.5] } *')
+    engines = FakeEngines()   # quick_eval returns cp=0 for every position
+    review = review_game(pgn, engines, stub_config, with_maia=False, enrich=False)
+    assert review.eval_source == "pgn"
+    assert review.records[2].eval_after_cp == 350   # from [%eval 3.5], not the fake's 0
+
+
+def test_scan_falls_back_to_engine_without_pgn_evals(stub_config):
+    pgn, engines = _fixture()   # the fool's-mate fixture carries no [%eval]
+    review = review_game(pgn, engines, stub_config, with_maia=False, enrich=False)
+    assert review.eval_source == "engine"
+
+
+def test_slide_digest_flags_engine_eval_reliability():
+    """#4: slides read off a local search (no [%eval]) get a reliability caveat."""
+    sig = {"slide_games": 2, "games_total": 10, "rate": 0.2, "baseline": 0.17,
+           "above_baseline": False, "markers": [], "engine_eval_slides": 1,
+           "examples": [{"game_key": "g1", "start_move": 16, "end_move": 20,
+                         "net_loss": 30.0, "plies": 4}]}
+    batch = BatchReview(batch_id="x", created="2026-06-15", games_analyzed=10,
+                        games_skipped=0, truncated=False, moments_found=0,
+                        patterns=[], strengths=[], slide_signature=sig)
+    assert "RELIABILITY CAVEAT" in batch.digest()
+    sig["engine_eval_slides"] = 0
+    batch2 = BatchReview(batch_id="x", created="2026-06-15", games_analyzed=10,
+                         games_skipped=0, truncated=False, moments_found=0,
+                         patterns=[], strengths=[], slide_signature=sig)
+    assert "RELIABILITY CAVEAT" not in batch2.digest()
+
+
+def test_slide_signature_survives_save_and_reload(stub_config):
+    pgn, engines = _fixture()
+    batch = run_batch_review(pgn, engines, stub_config)
+    # inject a signature and a pattern axis, persist, reload.
+    from app.batch import _save_report
+    batch.slide_signature = {"slide_games": 2, "games_total": 3, "rate": 0.67,
+                             "baseline": 0.17, "above_baseline": True,
+                             "markers": [], "examples": []}
+    batch.patterns[0].axis = "execution"
+    batch.patterns[0].in_slide_count = 2
+    _save_report(batches_dir(stub_config), batch)
+    loaded = load_latest_batch(stub_config)
+    assert loaded.slide_signature["slide_games"] == 2
+    assert loaded.patterns[0].axis == "execution"
+    assert loaded.patterns[0].in_slide_count == 2
 
 
 # --- /batch command ---

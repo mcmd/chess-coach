@@ -82,6 +82,8 @@ class MoveRecord:
     clock_remaining: float = None
     time_flag: str = None
     punisher_uci: str = None     # engine's best reply to the played move (free from the scan)
+    history_uci: list = field(default_factory=list)  # UCI moves reaching fen_before (history-aware maia3)
+    prev_move_san: str = None    # the opponent's move that led into fen_before (game orientation)
     # Agenda enrichment (populated only for critical moments):
     is_agenda: bool = False
     best_line: list = field(default_factory=list)
@@ -96,6 +98,8 @@ class MoveRecord:
     best_move_human_prob: float = None      # findability: % of peers who play the engine-best move
     phase: str = None                       # opening / middlegame / endgame at the time of the move
     human_win_prob: float = None            # Maia: how often peers actually score from here (mover POV)
+    human_draw_prob: float = None           # Maia WDL draw share, mover POV (maia3 only)
+    human_loss_prob: float = None           # Maia WDL loss share, mover POV (maia3 only)
     likely_wrong_answer: str = None         # the guess the student will most likely offer, pre-refuted
     aspirational: dict = None               # what stronger players choose here ({elo, move, probability})
     book_share: float = None                # share of master games playing this move (it IS theory)
@@ -141,6 +145,8 @@ class GameReview:
     opening_eco: str = None
     opening_deviation: dict = None   # where the game left established theory
     tablebase_entry: dict = None     # where the game entered provable endgame territory
+    slides: list = None              # within-game eval-only one-sided slide segments
+    eval_source: str = "engine"      # "pgn" (used the PGN's [%eval]) or "engine" (local search)
 
     def record_at(self, ply: int):
         return self.records[ply] if 0 <= ply < len(self.records) else None
@@ -234,6 +240,19 @@ class GameReview:
             for r, text in praised:
                 lines.append(f"  {r.move_label}: {text}")
 
+        if self.slides:
+            lines.append("")
+            lines.append("WITHIN-GAME SLIDE (cumulative loss, no single blunder):")
+            for s in self.slides:
+                lines.append(
+                    f"  Moves {s['start_move']}-{s['end_move']} ({s['plies']} of the student's moves): "
+                    f"winning chances fell from {s['start_winpct']:.0f}% to {s['end_winpct']:.0f}% "
+                    f"(net {s['net_loss']:.0f}% lost; no single move lost more than {s['max_single']:.0f}%). "
+                    "The damage was CUMULATIVE drift, not one mistake — coach the META-PATTERN "
+                    "(consolidating an advantage, staying alert after the critical moment, handling "
+                    "rising complexity) using the eval/time facts in the moments. State only what the "
+                    "evals show; never mind-read.")
+
         lines.append("")
         lines.append("Annotated moves (?? blunder, ? mistake, ?! inaccuracy, ! only-move):")
         lines.append(self.annotated_movetext())
@@ -286,6 +305,28 @@ def _opening_alignment_facts(student_records: list) -> str:
             "do not merge them): " + "; ".join(parts) + ".")
 
 
+def _wdl_risk_profile(win: float, draw: float, loss: float) -> tuple:
+    """Translate a Maia WDL spread (mover POV, fractions) into a coaching risk
+    verdict. The backend decides the verdict; the coach narrates it. Returns
+    (label, guidance); 'balanced' means no notable skew worth a digest line.
+
+    Calibrated to real maia3 output, which (trained on decisive online games) has
+    structurally LOW draw in live positions and high draw only in genuinely held
+    ones. So we flag only clear skews and deliberately do NOT try to detect
+    'sharpness' — a tactical 50/3/47 and a calm 50/3/47 are indistinguishable in
+    the value head, so a balanced spread stays 'balanced'."""
+    if loss - win >= 0.25:
+        return ("must-hold", "you are under real pressure (loss chances clearly exceed winning ones) "
+                             "— prioritise solid defence over ambition")
+    if win - loss >= 0.25 and win >= 0.55:
+        return ("winning", "you hold the better practical chances — convert with low-risk technique "
+                           "rather than sharp complications")
+    if draw >= 0.50:
+        return ("drawish", "drawish at this level (a draw is the most likely result) — don't force "
+                           "it; press only with safe, incremental improvements")
+    return ("balanced", "")
+
+
 def moment_digest_lines(i: int, r: MoveRecord) -> list:
     """The digest block for one agenda moment — shared by single-game reviews
     and batch training reports so the coaching protocol sees identical data."""
@@ -294,6 +335,15 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
     wa = cp_to_win_pct(r.eval_after_cp if r.color == "white" else -r.eval_after_cp)
     lines.append(f"[Moment {i}] {r.move_label} by {r.color} — {r.quality} "
                  f"(win% {wb:.0f} -> {wa:.0f}; eval {r.eval_before_cp / 100.0:+.2f} -> {r.eval_after_cp / 100.0:+.2f}).")
+    orient = f"  Orientation: this is move {r.number} of the game"
+    if r.prev_move_san:
+        # The opponent's move is one ply earlier: a Black reply precedes a White
+        # move of the same number; a White move precedes a Black move +1.
+        if r.color == "white":
+            orient += f"; the opponent has just played {r.number - 1}... {r.prev_move_san}"
+        else:
+            orient += f"; the opponent has just played {r.number}. {r.prev_move_san}"
+    lines.append(orient + " (state this when setting the scene).")
     lines.append(f"  FEN before the move: {r.fen_before}")
     if r.board_token:
         lines.append(f"  Board diagram token for this position: {r.board_token} "
@@ -334,6 +384,12 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
                          + ("HARDER to play than the eval suggests; teach technique, not the number."
                             if human_pct < engine_pct else
                             "easier in practice than the eval suggests."))
+    if r.human_draw_prob is not None and r.human_win_prob is not None:
+        w, d, l = r.human_win_prob, r.human_draw_prob, (r.human_loss_prob or 0.0)
+        profile, guidance = _wdl_risk_profile(w, d, l)
+        if profile != "balanced":
+            lines.append(f"  Risk profile (Maia WDL, mover POV {w * 100:.0f}/{d * 100:.0f}/{l * 100:.0f}): "
+                         f"{profile} — {guidance}.")
     if r.time_spent is not None:
         flag = f" (flag: {r.time_flag})" if r.time_flag else ""
         lines.append(f"  Time: spent {int(r.time_spent)}s, {int(r.clock_remaining)}s remaining{flag}.")
@@ -432,6 +488,8 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     total = len(nodes)
     prev_eval_cp = None
     prev_best_uci = None
+    prev_move_san = None  # SAN of the move leading into the current position (orientation)
+    pgn_eval_moves = 0    # moves whose eval came from the PGN's [%eval] (not local engine)
     white_elo = _header_elo(headers, "WhiteElo", getattr(config, "user_elo", 1200))
     black_elo = _header_elo(headers, "BlackElo", getattr(config, "user_elo", 1200))
 
@@ -443,10 +501,17 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     for ply, node in enumerate(nodes):
         move = node.move
         fen_before = board.fen()
+        # Game line reaching this position — fed to maia3 for history-aware
+        # prediction. Only built when we actually run Maia (the batch scan skips
+        # it to keep its JSON cache lean).
+        history_before = [m.uci() for m in board.move_stack] if with_maia else None
 
         eval_time_ply = scan_eval_time
         if prev_eval_cp is None:
             eval_before_cp, best_uci = _eval_with_best(engines, board, eval_time_ply)
+            parent_eval = node.parent.eval() if node.parent else None
+            if parent_eval is not None:   # prefer the PGN's own eval here too
+                eval_before_cp = parent_eval.white().score(mate_score=MATE_CP)
         else:
             eval_before_cp, best_uci = prev_eval_cp, prev_best_uci
 
@@ -469,6 +534,16 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         board.push(move)
         fen_after = board.fen()
         eval_after_cp, next_best = _eval_with_best(engines, board, eval_time_ply)
+        # The win% stream that drives drop/quality and slide detection is far more
+        # reliable from the PGN's own deep [%eval] annotations than from a sub-second
+        # local search — and the slide baseline (~17%) was calibrated on exactly those
+        # Lichess evals (scripts/scan_eval_slides.py). Prefer them when present; the
+        # engine eval is the fallback for un-annotated PGNs (flagged via eval_source).
+        # Stockfish is still consulted for the BEST move / punisher (evals lack those).
+        node_eval = node.eval()
+        if node_eval is not None:
+            eval_after_cp = node_eval.white().score(mate_score=MATE_CP)
+            pgn_eval_moves += 1
 
         before_m = eval_before_cp if mover_white else -eval_before_cp
         after_m = eval_after_cp if mover_white else -eval_after_cp
@@ -485,11 +560,15 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         maia = None
         if with_maia:
             with tracing.suspended():
-                maia = engines.maia_predict(fen_before, elo_self=mover_elo, elo_oppo=oppo_elo)
+                maia = engines.maia_predict(fen_before, elo_self=mover_elo, elo_oppo=oppo_elo,
+                                            history_uci=history_before, tier="scan")
         best_move_human_prob = None
         human_win_prob = None
+        human_draw_prob = human_loss_prob = None
         if maia:
             human_win_prob = maia.get("win_probability_for_side_to_move")
+            human_draw_prob = maia.get("draw_probability")
+            human_loss_prob = maia.get("loss_probability")
             maia_top = maia["top_moves"]
             prob = maia["raw_probs"].get(uci)
             maia_played_prob = round(float(prob), 3) if prob is not None else None
@@ -531,20 +610,29 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             best_move_san=_uci_to_san(fen_before, best_uci),
             is_capture=is_capture, time_spent=time_spent, clock_remaining=clock_remaining,
             time_flag=time_flag_for(quality, time_spent, clock_remaining, is_forced),
-            punisher_uci=next_best,
+            punisher_uci=next_best, history_uci=history_before or [],
+            prev_move_san=prev_move_san,
             maia_top=maia_top, maia_played_prob=maia_played_prob,
             was_maia_top=was_maia_top, avoided_natural_mistake=avoided,
             brilliancy_note=brilliancy, error_typicality=typicality,
             best_move_human_prob=best_move_human_prob,
             phase=phase, human_win_prob=human_win_prob,
+            human_draw_prob=human_draw_prob, human_loss_prob=human_loss_prob,
         ))
         prev_eval_cp, prev_best_uci = eval_after_cp, next_best
+        prev_move_san = san  # next iteration's "opponent's last move"
         if on_progress:
             on_progress(ply + 1, total)
 
+    # "pgn" when the game shipped its own [%eval] (Lichess analysed) on essentially
+    # every move — the eval source the slide detector was calibrated on; "engine"
+    # when we fell back to the local sub-second search (less reliable; flagged in
+    # the slide output so the coach never overstates a fallback read).
+    eval_source = "pgn" if total and pgn_eval_moves >= 0.8 * total else "engine"
     review = GameReview(headers=headers, records=records, student_color=student_color,
                         agenda_plies=[], game=game, extra_games_ignored=extra,
-                        white_elo=white_elo, black_elo=black_elo)
+                        white_elo=white_elo, black_elo=black_elo, eval_source=eval_source)
+    _detect_slides(review)   # eval-only; cheap and safe in scan and full review
     if not enrich:
         return review
     online = bool(getattr(config, "use_online_databases", True))
@@ -827,6 +915,16 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
             pv = infos[0].get("pv") or []
             r.best_line = _pv_to_san(board_before, pv[:8])
             r.best_line_motifs = detect_motifs_in_line(board_before, r.best_line)
+            # The deep multipv PV is more authoritative than the shallow scan eval
+            # that first set best_move_san. When they disagree on the FIRST move,
+            # the explanation (best_line + its motifs) describes the deep line while
+            # the "answer" still names the shallow move — which produced tactically
+            # FALSE coaching (e.g. teaching 22.Nb3 as a 'discovered check' when the
+            # check only appears after the line's real first move 22.Rd1). Reconcile
+            # the answer to the deep PV so the move taught and the move explained are
+            # the same. Done before the lesson primitives / diagnosis read best_move.
+            if r.best_line:
+                r.best_move_san = r.best_line[0]
         except Exception:
             pass
 
@@ -895,7 +993,10 @@ def _assess_practicality(r: MoveRecord, engines, review: GameReview, deep_after_
                                - infos[1]["score"].pov(pov).score(mate_score=MATE_CP))
                     prob = None
                     mover_elo = (review.white_elo if mover_white else review.black_elo)
-                    maia = engines.maia_predict(reply_board.fen(), elo_self=mover_elo, elo_oppo=mover_elo)
+                    reply_hist = (list(r.history_uci) + [r.uci, reply_board.move_stack[-1].uci()]
+                                  if r.history_uci else None)
+                    maia = engines.maia_predict(reply_board.fen(), elo_self=mover_elo,
+                                                elo_oppo=mover_elo, history_uci=reply_hist, tier="deep")
                     if maia:
                         prob = maia["raw_probs"].get(pv[0].uci())
                     saving = {"san": reply_board.san(pv[0]), "gap": gap, "prob": prob}
@@ -1210,9 +1311,112 @@ def _aspirational_instinct(r: MoveRecord, engines, review: GameReview) -> None:
     target_elo = min(mover_elo + 350, 1900)
     if target_elo <= mover_elo + 50:
         return
-    asp = engines.maia_predict(r.fen_before, elo_self=target_elo, elo_oppo=target_elo)
+    asp = engines.maia_predict(r.fen_before, elo_self=target_elo, elo_oppo=target_elo,
+                               history_uci=(r.history_uci or None), tier="deep")
     if asp and asp["top_moves"]:
         r.aspirational = {"elo": target_elo, **asp["top_moves"][0]}
+
+
+# Within-game SLIDE detection: EVAL-ONLY (no Maia). This replaces the rejected
+# Phase 4 maia "skill band" trajectory (calibrated & rejected 2026-06-14 — see
+# design/maia3_integration_design_20260613.md §8.4 / §15 FR-3). That method tried
+# to spot "moves that look like a weaker player's", and was structurally confounded
+# (bad moves are rare at all bands -> read 'level' -> missed). The eval stream is the
+# signal that actually survived: a "slide" is a stretch of several mediocre moves
+# that together hand the game away with NO single blunder — exactly the pattern the
+# move-by-move agenda misses (each move alone isn't agenda-worthy).
+#
+# Validated on 1,700+ analysed Lichess games across two players (~1500 and ~2000):
+# genuine gradual slides occur in ~16-18% of games, and the win%-space thresholds
+# below are rating-stable (a 500-Elo gap moved the rate by ~2 points). The win%
+# frame is self-normalizing, so "lose 25 net win% over 3+ moves" means the same
+# thing at every level. Detector + corpus bench: scripts/scan_eval_slides.py.
+SLIDE_PLY_DROP_MIN = 3.0       # a student move "loses" if it sheds >= this much win%
+SLIDE_MIN_RUN = 3              # consecutive losing student moves to form a run
+SLIDE_MIN_START_WINPCT = 30.0  # the run must START from a non-floored position (had chances)
+SLIDE_NET_LOSS_MIN = 25.0      # net (start->end) win% lost across the run
+SLIDE_CLIFF_FRACTION = 0.70    # if one move is >= this share of the NET loss it's a single
+                               # blunder (the agenda already covers it), not a gradual slide
+
+
+def _slide_onset_state(start_winpct: float) -> str:
+    """Classify the student's standing when a slide began (start win% is gated
+    >= SLIDE_MIN_START_WINPCT, so the floor is ~30)."""
+    if start_winpct >= 55:
+        return "ahead"
+    if start_winpct < 45:
+        return "worse"
+    return "level"
+
+
+def _slide_queens_on(fen: str) -> bool:
+    """Whether queens were still on the board at slide onset (a coarse proxy for
+    'sharp, attack-laden' vs 'simplified' positions)."""
+    try:
+        b = chess.Board(fen)
+    except ValueError:
+        return False
+    return bool(b.pieces(chess.QUEEN, chess.WHITE) or b.pieces(chess.QUEEN, chess.BLACK))
+
+
+def _detect_slides(review: GameReview) -> None:
+    """Flag sustained one-sided eval slides in the student's play: >= SLIDE_MIN_RUN
+    consecutive moves each losing win%, starting from a non-floored position, shedding
+    a large NET amount, with no single dominating blunder. Eval-only — reads the
+    win%-space already on each MoveRecord, needs no engine. Sets review.slides or
+    leaves it None.
+
+    NET (start win% before the run minus end win% after it) is the key measure, not
+    the sum of per-move drops: summing inflates mutual-blunder churn where the
+    opponent keeps handing win% back. A real slide is a NET one-sided collapse."""
+    sc = review.student_color
+    if sc is None:
+        return
+    student_white = sc == "white"
+    rows = []   # (record, winpct_before, winpct_after, drop)
+    for r in review.records:
+        if r.color != sc or r.phase == "opening":
+            continue
+        if r.eval_before_cp is None or r.eval_after_cp is None:
+            continue
+        cb = r.eval_before_cp if student_white else -r.eval_before_cp
+        ca = r.eval_after_cp if student_white else -r.eval_after_cp
+        rows.append((r, cp_to_win_pct(cb), cp_to_win_pct(ca), r.drop_pct))
+
+    segments, i, n = [], 0, len(rows)
+    while i < n:
+        if rows[i][3] < SLIDE_PLY_DROP_MIN or rows[i][1] < SLIDE_MIN_START_WINPCT:
+            i += 1
+            continue
+        j = i
+        while j < n and rows[j][3] >= SLIDE_PLY_DROP_MIN:
+            j += 1
+        seg = rows[i:j]
+        net = seg[0][1] - seg[-1][2]
+        max_single = max(x[3] for x in seg)
+        if (len(seg) >= SLIDE_MIN_RUN and net >= SLIDE_NET_LOSS_MIN
+                and max_single < SLIDE_CLIFF_FRACTION * net):
+            onset = seg[0][0]
+            start_wp = seg[0][1]
+            segments.append({
+                "start_move": onset.number, "end_move": seg[-1][0].number,
+                "plies": len(seg), "start_winpct": round(start_wp, 1),
+                "end_winpct": round(seg[-1][2], 1), "net_loss": round(net, 1),
+                "max_single": round(max_single, 1),
+                # Co-markers: factual co-occurrence captured at slide onset, so the
+                # cross-game batch aggregate can describe WHEN slides happen (ahead /
+                # queens on / time pressure) — never a causal/psychological claim.
+                "onset": _slide_onset_state(start_wp),
+                "queens_on": _slide_queens_on(onset.fen_before),
+                # clock < 60s if the PGN carried clocks, else None (unknown — never
+                # counted against the player in the aggregate).
+                "clock_low": (onset.clock_remaining < 60)
+                             if onset.clock_remaining is not None else None,
+            })
+        i = j
+
+    if segments:
+        review.slides = segments
 
 
 def position_facts(board: chess.Board) -> str:

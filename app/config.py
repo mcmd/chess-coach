@@ -27,6 +27,20 @@ class AppConfig:
     board_dark_color: str = "#769656"
     board_scale: int = 2
 
+    # Human-move model (maia2 / maia3). `maia_version`: "auto" prefers maia3 with
+    # a maia2 fallback; "3" is maia3-only; "2" forces maia2. Both tiers default to
+    # maia3-79M (loaded once, shared); point the scan tier at maia3-23m if the
+    # batch trajectory pass ever needs more throughput.
+    maia_version: str = "auto"
+    maia3_deep_model: str = "maia3-79m"
+    maia3_scan_model: str = "maia3-79m"
+    maia3_cache_dir: str = None
+    maia3_device: str = "cpu"
+    maia3_offline: bool = False       # once the checkpoint is cached, set true to load
+                                      # from the local HF cache only (no startup phone-home)
+    maia_history_plies: int = 12      # max game-history plies fed to maia3
+    spar_temperature: float = 0.0     # maia3 sparring move-sampling temperature (0 = argmax)
+
     # Engine quality knobs. Broad scans are cheaper; agenda/threat/practicality
     # analysis is where extra time most directly improves coaching quality.
     review_eval_time: float = 1.0
@@ -39,7 +53,10 @@ class AppConfig:
     threat_multipv: int = 3
     practicality_depth: int = 16
     practicality_time: float = 3.0
-    batch_eval_time: float = 0.4   # Stockfish seconds per position in the /batch fast scan
+    batch_eval_time: float = 0.4   # Stockfish seconds per position in the /batch fast scan.
+                                   # Slide detection no longer leans on this: the scan prefers
+                                   # the PGN's own deep [%eval] when present (issue #4); the local
+                                   # search is a fallback and mainly feeds best-move/punisher.
     batch_max_games: int = 50      # cap on games per /batch run
     batch_top_patterns: int = 3    # patterns presented in the training plan
     batch_reps: int = 3            # deep-verified teaching positions per pattern
@@ -142,6 +159,13 @@ Examples:
         board_light_color=app_config.get("board_light_color", "#eeeed2"),
         board_dark_color=app_config.get("board_dark_color", "#769656"),
         board_scale=int(app_config.get("board_scale", 2)),
+        maia_version=str(app_config.get("maia_version", "auto")),
+        maia3_deep_model=app_config.get("maia3_deep_model", "maia3-79m"),
+        maia3_scan_model=app_config.get("maia3_scan_model", "maia3-79m"),
+        maia3_cache_dir=app_config.get("maia3_cache_dir"),
+        maia3_device=app_config.get("maia3_device", "cpu"),
+        maia_history_plies=int(engine_value("maia_history_plies", 12)),
+        spar_temperature=float(app_config.get("spar_temperature", 0.0)),
         review_eval_time=float(engine_value("review_eval_time", 1.0)),
         agenda_best_depth=int(engine_value("agenda_best_depth", 20)),
         agenda_best_time=float(engine_value("agenda_best_time", 6.0)),

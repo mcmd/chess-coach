@@ -67,7 +67,7 @@ def main():
         console.print(f"[bold red]Error:[/bold red] {e}")
         return 1
     if engines.maia is None and engines.maia_error:
-        console.print(f"[yellow]Warning: Maia-2 unavailable ({engines.maia_error}). "
+        console.print(f"[yellow]Warning: human-move model unavailable ({engines.maia_error}). "
                       "Human-move prediction disabled.[/yellow]")
 
     review_progress = _ReviewProgress()
