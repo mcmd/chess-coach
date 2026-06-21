@@ -4,6 +4,11 @@ import json
 import shutil
 from dataclasses import dataclass
 
+# Single source of truth for the fallback rating when nothing else is known.
+# (Was inconsistent: load_config defaulted 1100 while every other call site used
+# getattr(config, "user_elo", 1200). Plan P0-4a.)
+DEFAULT_USER_ELO = 1200
+
 @dataclass
 class AppConfig:
     user_elo: int
@@ -142,7 +147,7 @@ Examples:
         exit(1)
 
     return AppConfig(
-        user_elo=app_config.get("user_elo", 1100),
+        user_elo=app_config.get("user_elo", DEFAULT_USER_ELO),
         language=app_config.get("language", "English"),
         stockfish_path=app_config.get("stockfish_path"),
         gemini_model=app_config.get("gemini_model", "gemini-3.1-pro-preview"),

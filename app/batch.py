@@ -23,6 +23,7 @@ import chess
 import chess.pgn
 
 from app import trace as tracing
+from app.config import DEFAULT_USER_ELO
 from app.review import (GameReview, MoveRecord, review_game, _enrich_agenda,
                         detect_student_color, moment_digest_lines)
 
@@ -633,14 +634,14 @@ def run_batch_review(pgn_text: str, engines, config, on_progress=None, on_status
         moments_found=moments_found, patterns=patterns,
         strengths=compute_strengths(scans),
         slide_signature=slide_signature,
-        white_elo=getattr(config, "user_elo", 1200),
-        black_elo=getattr(config, "user_elo", 1200),
+        white_elo=getattr(config, "user_elo", DEFAULT_USER_ELO),
+        black_elo=getattr(config, "user_elo", DEFAULT_USER_ELO),
     )
     headers_by_key = {s["game_key"]: s.get("headers", {}) for s in scans}
     for p_idx, pattern in enumerate(patterns):
         for moment in select_representatives(pattern, reps_per):
             record = MoveRecord(**moment["record"])
-            _backfill_maia(record, engines, getattr(config, "user_elo", 1200))
+            _backfill_maia(record, engines, getattr(config, "user_elo", DEFAULT_USER_ELO))
             pattern.representatives.append(record)
             batch.records.append(record)
             batch.rep_pattern_idx.append(p_idx)
@@ -727,8 +728,8 @@ def load_latest_batch(config):
         records=[_record_from_dict(d) for d in data.get("records", [])],
         rep_pattern_idx=data.get("rep_pattern_idx", []),
         rep_sources=data.get("rep_sources", []),
-        white_elo=getattr(config, "user_elo", 1200),
-        black_elo=getattr(config, "user_elo", 1200),
+        white_elo=getattr(config, "user_elo", DEFAULT_USER_ELO),
+        black_elo=getattr(config, "user_elo", DEFAULT_USER_ELO),
     )
     batch.agenda_plies = list(range(len(batch.records)))
     for p_idx, rec in zip(batch.rep_pattern_idx, batch.records):

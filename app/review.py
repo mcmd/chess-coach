@@ -16,6 +16,7 @@ import chess
 import chess.pgn
 
 from app.concepts import get_game_phase
+from app.config import DEFAULT_USER_ELO
 from app.motifs import detect_motifs_in_line
 from app import trace as tracing
 
@@ -484,6 +485,28 @@ def _header_elo(headers, key, fallback):
         return fallback
 
 
+def resolve_student_elo(side: str, headers: dict, config, purpose: str):
+    """The Elo for one purpose + its source (mirrors the eval_source honesty
+    pattern, GT-12 / plan P0-4a). Returns (elo, source) with source ∈ {config, pgn}.
+
+    - purpose="conversation": the student's anchor level — ALWAYS config.user_elo
+      (their declared identity; never prompted, never overridden by a PGN). Grounds
+      "your level", coaching, drills, hints, the aspirational base.
+    - purpose="typicality": how common a *played* move was — the PGN game-time Elo
+      of `side` ("white"/"black"), because "common at your level" means the level of
+      whoever made the move when they made it. Falls back to the conversation anchor
+      when the PGN carries no rating. Label the prose when source == "pgn" and it
+      diverges from the anchor ("at the ~1140 level you were playing then…").
+    """
+    anchor = int(getattr(config, "user_elo", DEFAULT_USER_ELO) or DEFAULT_USER_ELO)
+    if purpose == "conversation":
+        return anchor, "config"
+    if purpose == "typicality":
+        pgn_elo = _header_elo(headers or {}, "WhiteElo" if side == "white" else "BlackElo", None)
+        return (pgn_elo, "pgn") if pgn_elo is not None else (anchor, "config")
+    raise ValueError(f"unknown elo purpose: {purpose!r}")
+
+
 def detect_student_color(headers, config):
     name = (getattr(config, "player_name", None) or "").strip().casefold()
     if not name:
@@ -523,8 +546,8 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     prev_best_uci = None
     prev_move_san = None  # SAN of the move leading into the current position (orientation)
     pgn_eval_moves = 0    # moves whose eval came from the PGN's [%eval] (not local engine)
-    white_elo = _header_elo(headers, "WhiteElo", getattr(config, "user_elo", 1200))
-    black_elo = _header_elo(headers, "BlackElo", getattr(config, "user_elo", 1200))
+    white_elo = _header_elo(headers, "WhiteElo", getattr(config, "user_elo", DEFAULT_USER_ELO))
+    black_elo = _header_elo(headers, "BlackElo", getattr(config, "user_elo", DEFAULT_USER_ELO))
 
     scan_eval_time = float(eval_time) if eval_time is not None else float(
         getattr(config, "review_eval_time", 0.5))
@@ -924,7 +947,7 @@ def _analyze_opening(review: GameReview, config) -> None:
         deviation = {"ply": r.ply, "label": r.move_label, "color": r.color,
                      "played_share": share, "played_games": played_games, "theory": theory}
         brackets = [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500]
-        user_elo = getattr(config, "user_elo", 1200)
+        user_elo = getattr(config, "user_elo", DEFAULT_USER_ELO)
         valid = [str(b) for b in brackets if abs(b - user_elo) <= 250]
         amateur = external.lichess_moves(r.fen_before, ",".join(valid) if valid else "1000,1200")
         if amateur and amateur.get("moves"):

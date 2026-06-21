@@ -493,6 +493,21 @@ def test_aspirational_instinct_from_stronger_maia():
     assert "growing toward" in review.digest()
 
 
+def test_resolve_student_elo_two_purposes_and_sources():
+    # P0-4a: conversation anchors to config; typicality reads the PGN game-time Elo
+    # of the mover (the session's 1142-vs-config case), falling back to the anchor.
+    from app.review import resolve_student_elo
+
+    class C:
+        user_elo = 1150
+
+    headers = {"WhiteElo": "1142", "BlackElo": "1500"}
+    assert resolve_student_elo("white", headers, C(), "conversation") == (1150, "config")
+    assert resolve_student_elo("white", headers, C(), "typicality") == (1142, "pgn")
+    assert resolve_student_elo("black", headers, C(), "typicality") == (1500, "pgn")
+    assert resolve_student_elo("white", {}, C(), "typicality") == (1150, "config")
+
+
 def test_aspirational_suppressed_when_band_plays_the_same_move():
     # P0-6 divergence guard: if the +350 band's top move equals the move the
     # student actually played, no aspirational instinct is surfaced (it must never
