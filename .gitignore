@@ -34,3 +34,6 @@ games/
 # Documentation and system cards
 design/
 system_cards/
+
+maia_threshold.csv
+triage_report.csv
