@@ -330,6 +330,29 @@ def test_sparring_reply_plays_maia_move(stub_config):
     assert "Maia" in result["selected_by"]
 
 
+def test_explain_move_returns_verified_facts(stub_config):
+    tools, _ = make_tools(stub_config)
+    facts = tools.explain_move(START, "Nf3")
+    assert facts["legal"] is True
+    assert facts["moving_piece"] == "knight"
+    assert facts["is_capture"] is False and facts["gives_check"] is False
+    assert facts["moved_piece_hangs"] is False
+
+
+def test_explain_move_rejects_illegal(stub_config):
+    tools, _ = make_tools(stub_config)
+    facts = tools.explain_move(START, "Qd5")  # queen can't reach d5 from the start
+    assert facts["legal"] is False and "error" in facts
+
+
+def test_explain_move_flags_hanging_piece(stub_config):
+    tools, _ = make_tools(stub_config)
+    # White Qd1 plays Qd5, walking onto a square the e6 pawn attacks, undefended.
+    fen = "4k3/8/4p3/8/8/8/8/3QK3 w - - 0 1"
+    facts = tools.explain_move(fen, "Qd5")
+    assert facts["legal"] is True and facts["moved_piece_hangs"] is True
+
+
 def _review_with_reasons(reasons):
     from app.review import GameReview, MoveRecord
     rec = MoveRecord(ply=0, number=1, color="white", san="Re1", uci="f1e1",

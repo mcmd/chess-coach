@@ -6,9 +6,11 @@ display — the student sees the lesson, not the model's bookkeeping.
 import re
 import time
 
+import chess
 from google.genai import types
 from rich.markdown import Markdown
 
+from app.notation import san_mentions
 from app.trace import fmt_args, trace
 from app.ui import console
 
@@ -89,7 +91,7 @@ def run_agent_turn(chat, coach_tools, message) -> None:
 
         response = _send_with_spinner(chat, tool_parts)
 
-    _render(full_text, coach_tools.state)
+    _render(full_text, coach_tools.state, getattr(coach_tools, "config", None))
 
 
 def _summarize_result(result) -> str:
@@ -177,7 +179,80 @@ def _split_board_segments(text: str, visuals: dict) -> tuple[list[tuple[str, str
     return segments, scrubbed
 
 
-def _render(full_text: str, state) -> None:
+# --- Render-time claim gate (plan P0-3) -----------------------------------
+# A bounded verifier: it does NOT try to validate every adjective. It checks the
+# one thing that is cheap and unambiguous — that a chess move named in the prose is
+# legal in some position actually in play — and is staged by enforcement level so
+# it ships in shadow (log-only) and is promoted only once the logs are clean.
+
+_BOARD_TOKEN_RE = re.compile(r"`?\[\[BOARD_[A-Za-z0-9]+\]\]`?")
+
+
+def _parses(board: chess.Board, san: str) -> bool:
+    try:
+        board.parse_san(san)
+        return True
+    except ValueError:
+        return False
+
+
+def candidate_boards(state) -> list:
+    """The positions the coach may legitimately reference this turn: the live
+    board plus every agenda moment's before/after FEN. A move legal in any of
+    these is allowed; one legal in none is 'impossible' (likely hallucinated)."""
+    fens, boards = set(), []
+    board = getattr(state, "board", None)
+    if board is not None:
+        fens.add(board.fen())
+    review = getattr(state, "review", None)
+    for r in (getattr(review, "agenda", None) or []):
+        for f in (getattr(r, "fen_before", None), getattr(r, "fen_after", None)):
+            if f:
+                fens.add(f)
+    for f in fens:
+        try:
+            boards.append(chess.Board(f))
+        except ValueError:
+            pass
+    return boards
+
+
+def find_illegal_moves(text: str, boards: list) -> list:
+    """SAN-looking moves that are illegal in EVERY candidate board (impossible
+    given the positions in play). Zero false positives by construction: a move
+    legal in any known position is allowed. Board tokens are stripped first so
+    their hex ids can't masquerade as moves."""
+    if not boards:
+        return []  # no known positions to check against — never flag blind
+    clean = _BOARD_TOKEN_RE.sub(" ", text)
+    return [san for san in san_mentions(clean)
+            if not any(_parses(b, san) for b in boards)]
+
+
+def apply_claim_gate(text: str, boards: list, level: int) -> tuple:
+    """Run the claim gate at `level`. Returns (text, findings).
+    L0: detect only (text unchanged) — shadow/log mode.
+    L1+: redact moves illegal in every known position (degrade to less detail,
+         never a non-sequitur — the redaction is visible, not a silent hole)."""
+    findings = [{"type": "illegal_move", "token": san} for san in find_illegal_moves(text, boards)]
+    if level >= 1 and findings:
+        for f in findings:
+            text = re.sub(rf"`?\b{re.escape(f['token'])}\b`?", "(an unverified move)", text)
+    return text, findings
+
+
+def _run_claim_gate(output_text: str, state, config) -> str:
+    level = int(getattr(config, "claim_gate_level", 0)) if config else 0
+    boards = candidate_boards(state)
+    new_text, findings = apply_claim_gate(output_text, boards, level)
+    if findings:
+        tokens = ", ".join(f["token"] for f in findings)
+        trace(f"claim-gate (L{level}): {len(findings)} illegal-move finding(s): {tokens} "
+              + ("[shadow: not modified]" if level < 1 else "[redacted]"))
+    return new_text
+
+
+def _render(full_text: str, state, config=None) -> None:
     if not full_text:
         console.print("\n[bold red]Error: Received no text response from the model.[/bold red]")
         return
@@ -185,6 +260,7 @@ def _render(full_text: str, state) -> None:
     output_text = strip_think_blocks(full_text.strip())
     output_text = re.sub(r"^(?:(?:Output|Done|End|Yes|I will output now)\.\s*)+", "", output_text, flags=re.IGNORECASE).strip()
 
+    output_text = _run_claim_gate(output_text, state, config)
     output_text = normalize_move_styling(output_text)
     segments, scrubbed = _split_board_segments(output_text, state.board_visuals)
     if scrubbed:

@@ -2,10 +2,60 @@
 tools run outside any live display and can show their own progress bars."""
 from types import SimpleNamespace
 
-from app.agent_loop import run_agent_turn
+import chess
+
+from app.agent_loop import (run_agent_turn, find_illegal_moves, apply_claim_gate,
+                            candidate_boards)
 from app.state import SessionState, TimelineManager
 from app.tools import CoachTools
 from tests.conftest import FakeEngines
+
+
+# --- P0-3 render-time claim gate (shipped at L0 / shadow) ------------------
+
+_AFTER_E4E5 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+
+
+def test_find_illegal_moves_flags_only_impossible():
+    # Qh5 is illegal on the starting position (the queen is blocked); Nf3 is legal.
+    assert find_illegal_moves("Try Nf3, or even Qh5 right away.", [chess.Board()]) == ["Qh5"]
+
+
+def test_find_illegal_moves_allows_move_legal_in_any_board():
+    # Qh5 IS legal after 1.e4 e5, so with that board in play it must not be flagged.
+    assert find_illegal_moves("White can play Qh5.", [chess.Board(), chess.Board(_AFTER_E4E5)]) == []
+
+
+def test_find_illegal_moves_ignores_board_tokens():
+    # Hex inside a board token must not masquerade as a move; e4 is legal.
+    assert find_illegal_moves("Here [[BOARD_a1b2c3d4]] then e4.", [chess.Board()]) == []
+
+
+def test_find_illegal_moves_never_flags_without_known_positions():
+    assert find_illegal_moves("Qh5 Nf3 Zz9", []) == []
+
+
+def test_claim_gate_shadow_is_log_only():
+    out, findings = apply_claim_gate("Try Qh5 here.", [chess.Board()], level=0)
+    assert out == "Try Qh5 here."                       # unchanged in shadow
+    assert findings and findings[0]["token"] == "Qh5"
+
+
+def test_claim_gate_level1_redacts_illegal_move():
+    out, findings = apply_claim_gate("Try Qh5 here.", [chess.Board()], level=1)
+    assert "Qh5" not in out and "unverified move" in out and findings
+
+
+def test_candidate_boards_includes_board_and_agenda():
+    from app.review import GameReview, MoveRecord
+    rec = MoveRecord(ply=0, number=1, color="white", san="e4", uci="e2e4",
+                     fen_before=_AFTER_E4E5, fen_after=chess.STARTING_FEN,
+                     eval_before_cp=0, eval_after_cp=0, drop_pct=0.0, quality="best")
+    state = SimpleNamespace(board=chess.Board(),
+                            review=GameReview(headers={}, records=[rec],
+                                              student_color="white", agenda_plies=[0]))
+    fens = {b.fen() for b in candidate_boards(state)}
+    assert chess.Board().fen() in fens and _AFTER_E4E5 in fens
 
 
 class FakeChat:

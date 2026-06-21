@@ -8,7 +8,7 @@ import chess.pgn
 import requests
 from rich.panel import Panel
 
-from app.concepts import extract_board_features
+from app.concepts import extract_board_features, see_exchange_gain
 from app.memory import load_lesson_metadata, save_lesson_metadata
 from app.motifs import detect_motifs_in_line
 from app.pawn_story import analyze_pawn_structure_evolution
@@ -579,6 +579,68 @@ class CoachTools:
                 "their reply, and only submit_diagnosis once it is addressed (or after two tries).")
         return result
 
+    def explain_move(self, fen: str, move_san: str) -> dict:
+        """
+        Verified facts about a SPECIFIC move, so you explain WHY it is good or bad
+        from backend truth ONLY — never invent geometry (a pin, a block, "the pawn
+        is pinned", an attack) the data does not state. Call this before narrating a
+        move's merits or flaws, and phrase your explanation using only what it returns.
+
+        Args:
+            fen: The position the move is made in (copy it exactly from backend data).
+            move_san: The move in SAN (e.g. "Rfe1").
+        """
+        try:
+            board = chess.Board(fen)
+        except ValueError as e:
+            return {"error": f"Invalid FEN: {e}"}
+        try:
+            move = board.parse_san(move_san)
+        except ValueError:
+            return {"legal": False,
+                    "error": f"'{move_san}' is not legal in this position — do not explain it as if it were."}
+
+        mover = board.turn
+        san = board.san(move)
+        after = board.copy(stack=False)
+        after.push(move)
+
+        attacked = []
+        for sq in after.attacks(move.to_square):
+            target = after.piece_at(sq)
+            if target and target.color != mover and target.piece_type != chess.PAWN:
+                attacked.append(f"{chess.piece_name(target.piece_type)} on {chess.square_name(sq)}")
+
+        moving = board.piece_at(move.from_square)
+        facts = {
+            "legal": True,
+            "move": san,
+            "moving_piece": chess.piece_name(moving.piece_type) if moving else None,
+            "is_capture": board.is_capture(move),
+            "gives_check": board.gives_check(move),
+            "enemy_pieces_attacked_after": attacked[:4],
+            # Does the move simply hang the piece it moved? (opponent profits capturing it)
+            "moved_piece_hangs": see_exchange_gain(after, move.to_square) > 0,
+        }
+        if board.is_capture(move):
+            facts["capture_see_centipawns"] = see_exchange_gain(board, move.to_square)
+        motifs = detect_motifs_in_line(board, [san])
+        if motifs:
+            facts["motifs"] = [{"motif": m["motif"], "detail": m["detail"]} for m in motifs]
+        try:
+            before_score, _ = self.engines.quick_eval(fen)
+            after_score, _ = self.engines.quick_eval(after.fen())
+            facts["win_pct_before_for_mover"] = round(
+                cp_to_win_pct(before_score.pov(mover).score(mate_score=MATE_CP)), 1)
+            facts["win_pct_after_for_mover"] = round(
+                cp_to_win_pct(after_score.pov(mover).score(mate_score=MATE_CP)), 1)
+        except Exception:
+            pass
+        facts["usage"] = ("VERIFIED facts only. Explain the move's merit or flaw from THESE — never "
+                          "assert a pin, block, fork, or attack that is not listed here. Call "
+                          "analyze_position if you need more geometry.")
+        return facts
+
     # NOTE: the old predict_human_move tool was retired: analyze_position already
     # includes Maia's tendencies automatically, the review consults Maia on every
     # move, and the digest pre-computes the anticipated wrong answer.
@@ -1071,7 +1133,7 @@ class CoachTools:
         """Returns the bound methods to be passed to the Gemini API."""
         return [
             self.analyze_position, self.evaluate_student_answer, self.evaluate_threat_answer,
-            self.evaluate_explanation,
+            self.evaluate_explanation, self.explain_move,
             self.play_sparring_reply, self.execute_coach_move, self.submit_diagnosis,
             self.get_game_review_summary, self.explain_pawn_structure_evolution,
             self.get_opening_repertoire,
