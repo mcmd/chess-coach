@@ -1,0 +1,1 @@
+tests/fixtures/coaching/*.pgn text eol=lf -diff

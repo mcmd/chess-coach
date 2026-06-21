@@ -1,0 +1,23 @@
+[Event "rated rapid game"]
+[Site "https://lichess.org/JI23vCkO"]
+[Date "2024.06.16"]
+[Round "-"]
+[White "msnid"]
+[Black "Capitannem"]
+[Result "0-1"]
+[GameId "JI23vCkO"]
+[UTCDate "2024.06.16"]
+[UTCTime "22:30:13"]
+[WhiteElo "1353"]
+[BlackElo "1373"]
+[WhiteRatingDiff "-5"]
+[BlackRatingDiff "+5"]
+[Variant "Standard"]
+[TimeControl "600+0"]
+[ECO "A45"]
+[Opening "Queen's Pawn Game: Chigorin Variation"]
+[Termination "Normal"]
+
+1. Nc3 { [%eval 0.0] [%clk 0:10:00] } 1... d5 { [%eval 0.0] [%clk 0:10:00] } 2. d4 { [%eval -0.08] [%clk 0:09:59] } 2... Nf6 { [%eval 0.0] [%clk 0:09:56] } 3. h3 { [%eval -0.29] [%clk 0:09:53] } 3... e6 { [%eval -0.34] [%clk 0:09:53] } 4. g4 { [%eval -0.65] [%clk 0:09:49] } 4... h6 { [%eval -0.32] [%clk 0:09:51] } 5. Bf4 { [%eval -0.32] [%clk 0:09:36] } 5... a6 { [%eval -0.4] [%clk 0:09:48] } 6. Bg3 { [%eval -0.68] [%clk 0:09:32] } 6... c5 { [%eval -0.7] [%clk 0:09:46] } 7. dxc5 { [%eval -0.78] [%clk 0:09:14] } 7... Bxc5 { [%eval -0.78] [%clk 0:09:43] } 8. e3 { [%eval -0.91] [%clk 0:09:04] } 8... Qb6 { [%eval -0.67] [%clk 0:09:38] } 9. b3 { [%eval -3.0] [%clk 0:08:54] } 9... Bb4 { [%eval -2.93] [%clk 0:09:25] } 10. Qd3 { [%eval -3.62] [%clk 0:08:19] } 10... Ne4 { [%eval -3.55] [%clk 0:09:11] } 11. Be5 { [%eval -4.43] [%clk 0:08:06] } 11... O-O { [%eval -3.42] [%clk 0:08:48] } 12. Bd4 { [%eval -4.76] [%clk 0:07:43] } 12... Qc7 { [%eval -4.4] [%clk 0:08:35] } 13. Rh2 { [%eval -5.75] [%clk 0:07:09] } 0-1
+
+

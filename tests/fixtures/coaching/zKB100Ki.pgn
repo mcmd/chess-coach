@@ -1,0 +1,23 @@
+[Event "rated rapid game"]
+[Site "https://lichess.org/zKB100Ki"]
+[Date "2026.03.20"]
+[Round "-"]
+[White "GettingReady9878"]
+[Black "msnid"]
+[Result "1-0"]
+[GameId "zKB100Ki"]
+[UTCDate "2026.03.20"]
+[UTCTime "16:39:01"]
+[WhiteElo "1500"]
+[BlackElo "1663"]
+[WhiteRatingDiff "+378"]
+[BlackRatingDiff "-4"]
+[Variant "Standard"]
+[TimeControl "600+0"]
+[ECO "B02"]
+[Opening "Alekhine Defense: Brooklyn Variation"]
+[Termination "Normal"]
+
+1. e4 { [%eval 0.18] [%clk 0:10:00] } 1... Nf6 { [%eval 0.68] [%clk 0:10:00] } 2. e5 { [%eval 0.53] [%clk 0:09:56] } 2... Ng8 { [%eval 0.73] [%clk 0:09:53] } 3. d4 { [%eval 0.95] [%clk 0:09:52] } 3... d6 { [%eval 0.73] [%clk 0:09:52] } 4. Nf3 { [%eval 0.72] [%clk 0:09:45] } 4... dxe5 { [%eval 0.79] [%clk 0:09:44] } 5. Nxe5 { [%eval 0.78] [%clk 0:09:41] } 5... Nf6 { [%eval 0.76] [%clk 0:09:32] } 6. Be3 { [%eval 0.88] [%clk 0:09:37] } 6... e6 { [%eval 1.03] [%clk 0:09:14] } 7. Qf3 { [%eval 0.83] [%clk 0:09:32] } 7... Be7 { [%eval 0.97] [%clk 0:09:09] } 8. Nc3 { [%eval 1.31] [%clk 0:09:27] } 8... O-O { [%eval 1.18] [%clk 0:09:07] } 9. Qg3 { [%eval 1.19] [%clk 0:09:23] } 9... Re8 { [%eval 1.68] [%clk 0:09:02] } 10. Bd3 { [%eval 1.54] [%clk 0:09:19] } 10... Bd6 { [%eval 2.19] [%clk 0:08:43] } 11. h4 { [%eval 2.06] [%clk 0:09:14] } 11... Nh5 { [%eval 2.47] [%clk 0:08:20] } 12. Qf3 { [%eval 2.49] [%clk 0:09:09] } 12... Qf6 { [%eval 5.86] [%clk 0:07:48] } 13. Qxh5 { [%eval 5.7] [%clk 0:09:04] } 13... Bxe5 { [%eval 9.14] [%clk 0:07:43] } 14. Bxh7+ { [%eval 9.3] [%clk 0:08:55] } 14... Kf8 { [%eval 9.48] [%clk 0:07:40] } 15. dxe5 { [%eval 9.68] [%clk 0:08:54] } 15... Qd8 { [%eval 10.37] [%clk 0:07:20] } 16. Be4 { [%eval 9.47] [%clk 0:08:49] } 16... Nc6 { [%eval #4] [%clk 0:07:04] } 17. Qh8+ { [%eval #3] [%clk 0:08:44] } 17... Ke7 { [%eval #3] [%clk 0:07:01] } 18. Bg5+ { [%eval #2] [%clk 0:08:43] } 18... f6 { [%eval #1] [%clk 0:06:54] } 19. Qxg7# { [%clk 0:08:35] } 1-0
+
+

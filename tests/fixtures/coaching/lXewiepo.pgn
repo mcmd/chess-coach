@@ -1,0 +1,23 @@
+[Event "rated rapid game"]
+[Site "https://lichess.org/lXewiepo"]
+[Date "2024.10.23"]
+[Round "-"]
+[White "onrDRK"]
+[Black "msnid"]
+[Result "0-1"]
+[GameId "lXewiepo"]
+[UTCDate "2024.10.23"]
+[UTCTime "18:08:20"]
+[WhiteElo "1470"]
+[BlackElo "1426"]
+[WhiteRatingDiff "-7"]
+[BlackRatingDiff "+6"]
+[Variant "Standard"]
+[TimeControl "600+0"]
+[ECO "B00"]
+[Opening "Nimzowitsch Defense"]
+[Termination "Normal"]
+
+1. e4 { [%eval 0.18] [%clk 0:10:00] } 1... Nc6 { [%eval 0.36] [%clk 0:10:00] } 2. d4 { [%eval 0.35] [%clk 0:09:58] } 2... e6 { [%eval 0.75] [%clk 0:09:55] } 3. c4 { [%eval 0.0] [%clk 0:09:53] } 3... Bb4+ { [%eval 0.33] [%clk 0:09:46] } 4. Nc3 { [%eval 0.35] [%clk 0:09:42] } 4... Bxc3+ { [%eval 0.93] [%clk 0:09:38] } 5. bxc3 { [%eval 0.72] [%clk 0:09:41] } 5... d5 { [%eval 1.25] [%clk 0:09:33] } 6. cxd5 { [%eval 1.48] [%clk 0:09:31] } 6... exd5 { [%eval 1.01] [%clk 0:09:28] } 7. e5 { [%eval 1.06] [%clk 0:09:31] } 7... Qh4 { [%eval 1.79] [%clk 0:09:05] } 8. Nf3 { [%eval 1.79] [%clk 0:09:24] } 8... Qe4+ { [%eval 1.91] [%clk 0:08:52] } 9. Be2 { [%eval 1.89] [%clk 0:09:19] } 9... Bg4 { [%eval 2.78] [%clk 0:08:41] } 10. O-O { [%eval 2.84] [%clk 0:09:07] } 10... f6 { [%eval 2.76] [%clk 0:08:07] } 11. exf6 { [%eval 1.88] [%clk 0:09:00] } 11... Nxf6 { [%eval 1.6] [%clk 0:07:58] } 12. Re1 { [%eval 0.69] [%clk 0:08:57] } 12... O-O { [%eval 0.91] [%clk 0:07:47] } 13. Bd3 { [%eval -0.1] [%clk 0:08:48] } 13... Bxf3 { [%eval -0.11] [%clk 0:07:31] } 14. Bxe4 { [%eval -4.52] [%clk 0:08:34] } 14... Bxd1 { [%eval -4.52] [%clk 0:07:28] } 15. Bc2 { [%eval -7.34] [%clk 0:08:19] } 15... Bxc2 { [%eval -7.39] [%clk 0:07:24] } 16. Ba3 { [%eval -7.55] [%clk 0:07:52] } 16... Rfe8 { [%eval -7.51] [%clk 0:07:15] } 17. Rec1 { [%eval -7.8] [%clk 0:07:48] } 17... Bd3 { [%eval -7.84] [%clk 0:06:56] } 18. h3 { [%eval -7.91] [%clk 0:07:46] } 18... Ne4 { [%eval -7.84] [%clk 0:06:38] } 19. Rd1 { [%eval -8.17] [%clk 0:07:35] } 19... Bc4 { [%eval -8.03] [%clk 0:06:23] } 20. f3 { [%eval -8.91] [%clk 0:07:28] } 20... Nxc3 { [%eval -8.77] [%clk 0:06:16] } 21. Rdc1 { [%eval -9.26] [%clk 0:07:24] } 21... Ne2+ { [%eval -9.27] [%clk 0:06:00] } 0-1
+
+

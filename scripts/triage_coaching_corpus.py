@@ -43,6 +43,7 @@ import chess.pgn
 try:
     from app.review import (cp_to_win_pct, MATE_CP, SLIDE_MIN_RUN, SLIDE_MIN_START_WINPCT,
                             SLIDE_NET_LOSS_MIN, SLIDE_CLIFF_FRACTION, SLIDE_PLY_DROP_MIN)
+    from app.concepts import get_game_phase as _production_phase
     _SRC = "app.review"
 except Exception:  # pragma: no cover - lets the script run outside the repo
     import math
@@ -54,13 +55,13 @@ except Exception:  # pragma: no cover - lets the script run outside the repo
     SLIDE_NET_LOSS_MIN = 25.0
     SLIDE_CLIFF_FRACTION = 0.70
     SLIDE_PLY_DROP_MIN = 3.0
+    _production_phase = None
     _SRC = "fallback literals"
 
 # Move-severity bands mirror review.classify_move's win%-drop thresholds. We drop the
 # is_best/is_only/is_forced credit logic on purpose: that needs an engine, and triage only
 # cares about how bad the mistakes are, not about awarding brilliancy credit.
 BLUNDER, MISTAKE, INACCURACY = 30.0, 20.0, 10.0
-OPENING_CUTOFF_MOVE = 8        # matches scripts/scan_eval_slides.py: ignore early theory noise
 HARNESS_MAX_MISTAKES = 5       # a clean teaching game, not a chaotic blunder-fest
 MIN_PLIES = 20                 # skip trivial/aborted games
 
@@ -76,8 +77,9 @@ def severity(drop: float) -> str:
 
 
 def phase_of(board: chess.Board, move_no: int) -> str:
-    """Coarse phase for the variety matrix (triage only). Endgame ~ <=7 pieces or queens off
-    with little material; opening by move number; else middlegame."""
+    """Production phase when available; coarse fallback for standalone use."""
+    if _production_phase is not None:
+        return _production_phase(board)
     n = len(board.piece_map())
     queens = board.pieces(chess.QUEEN, chess.WHITE) or board.pieces(chess.QUEEN, chess.BLACK)
     if n <= 7 or (not queens and n <= 12):
@@ -158,7 +160,9 @@ def analyse_side(game, student_white: bool):
                 counts[sev] += 1
                 ph = phase_of(board_before, move_no)
                 by_phase[ph][sev] += 1
-                if move_no > OPENING_CUTOFF_MOVE:
+                # Production slide detection excludes records classified as opening;
+                # use the same board-derived phase instead of a divergent move cutoff.
+                if ph != "opening":
                     slide_rows.append((move_no, wb, wa, drop))
         prev_white_cp = after_white_cp
 

@@ -1,0 +1,23 @@
+[Event "rated rapid game"]
+[Site "https://lichess.org/Pet0TV5g"]
+[Date "2024.12.15"]
+[Round "-"]
+[White "poirot0987"]
+[Black "msnid"]
+[Result "1-0"]
+[GameId "Pet0TV5g"]
+[UTCDate "2024.12.15"]
+[UTCTime "15:58:50"]
+[WhiteElo "1385"]
+[BlackElo "1437"]
+[WhiteRatingDiff "+7"]
+[BlackRatingDiff "-6"]
+[Variant "Standard"]
+[TimeControl "600+0"]
+[ECO "C20"]
+[Opening "King's Pawn Game: Leonardis Variation"]
+[Termination "Normal"]
+
+1. e4 { [%eval 0.18] [%clk 0:10:00] } 1... e5 { [%eval 0.21] [%clk 0:10:00] } 2. d3 { [%eval 0.0] [%clk 0:09:58] } 2... Nc6 { [%eval -0.05] [%clk 0:09:59] } 3. Nf3 { [%eval -0.14] [%clk 0:09:57] } 3... Nf6 { [%eval -0.03] [%clk 0:09:56] } 4. a3 { [%eval -0.27] [%clk 0:09:56] } 4... Bc5 { [%eval -0.03] [%clk 0:09:55] } 5. h3 { [%eval -0.32] [%clk 0:09:52] } 5... Bxf2+ { [%eval 3.89] [%clk 0:09:53] } 6. Kxf2 { [%eval 3.89] [%clk 0:09:49] } 6... Nd4 { [%eval 4.54] [%clk 0:09:53] } 7. Nxe5 { [%eval 4.28] [%clk 0:09:45] } 7... d6 { [%eval 5.22] [%clk 0:09:48] } 8. Nf3 { [%eval 5.06] [%clk 0:09:42] } 8... O-O { [%eval 5.61] [%clk 0:09:39] } 9. Be2 { [%eval 4.61] [%clk 0:09:40] } 9... d5 { [%eval 4.57] [%clk 0:09:17] } 10. Nxd4 { [%eval 4.92] [%clk 0:09:34] } 10... dxe4 { [%eval 4.8] [%clk 0:09:13] } 11. dxe4 { [%eval 4.74] [%clk 0:09:24] } 11... Nxe4+ { [%eval 4.61] [%clk 0:09:11] } 12. Kg1 { [%eval 4.71] [%clk 0:09:16] } 12... Ng3 { [%eval 5.1] [%clk 0:08:54] } 13. Rh2 { [%eval -2.83] [%clk 0:09:13] } 13... Nxe2+ { [%eval 2.51] [%clk 0:08:42] } 14. Qxe2 { [%eval 2.49] [%clk 0:09:06] } 14... Qxd4+ { [%eval 2.4] [%clk 0:08:41] } 15. Qf2 { [%eval 2.32] [%clk 0:08:57] } 15... Qd1+ { [%eval 2.42] [%clk 0:08:18] } 16. Qf1 { [%eval 2.33] [%clk 0:08:54] } 16... Qxc2 { [%eval 2.85] [%clk 0:08:15] } 17. g4 { [%eval 1.13] [%clk 0:08:49] } 17... Be6 { [%eval 7.05] [%clk 0:08:04] } 18. Rxc2 { [%eval 6.65] [%clk 0:08:46] } 1-0
+
+

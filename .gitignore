@@ -25,6 +25,7 @@ config.json
 
 # Downloaded games or large files
 *.pgn
+!tests/fixtures/coaching/*.pgn
 output.txt
 maia2_models/
 
