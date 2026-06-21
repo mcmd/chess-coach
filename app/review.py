@@ -10,6 +10,7 @@ This module is UI-free: pass `on_progress(done, total)` for progress display.
 import io
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 import chess
 import chess.pgn
@@ -132,6 +133,20 @@ class MoveRecord:
 
 
 @dataclass
+class ReviewTheme:
+    """A verified cross-moment cluster of the single-game agenda (P0-1a). The
+    synthesis reads these instead of inventing a theme, and must NOT assert a theme
+    across moments the backend placed in different clusters. Seeded minimal now so
+    the P1-18 theme-lifecycle can extend this shape rather than rewrite it."""
+    id: str
+    label: str
+    plies: list                 # agenda plies in this cluster, in game order
+    confidence: Literal["high", "medium", "low"]
+    safe_summary: str
+    avoid_language: list = field(default_factory=list)
+
+
+@dataclass
 class GameReview:
     headers: dict
     records: list
@@ -147,6 +162,7 @@ class GameReview:
     tablebase_entry: dict = None     # where the game entered provable endgame territory
     slides: list = None              # within-game eval-only one-sided slide segments
     eval_source: str = "engine"      # "pgn" (used the PGN's [%eval]) or "engine" (local search)
+    themes: list = field(default_factory=list)  # ReviewTheme clusters (verified single-game theming)
 
     def record_at(self, ply: int):
         return self.records[ply] if 0 <= ply < len(self.records) else None
@@ -263,6 +279,21 @@ class GameReview:
                          "Praise the student's accuracy and offer to discuss plans or openings.")
             return "\n".join(lines)
 
+        ply_to_moment = {p: i for i, p in enumerate(self.agenda_plies, 1)}
+        if self.themes:
+            lines.append("VERIFIED THEMES (backend-clustered by diagnosis category — the synthesis MUST "
+                         "use these and MUST NOT assert a single theme across moments in different "
+                         "clusters; that over-fit is the exact defect this block fixes):")
+            for t in self.themes:
+                moments = ", ".join(f"moment {ply_to_moment[p]}" for p in t.plies if p in ply_to_moment)
+                lines.append(f"  [{t.label}] ({t.confidence} confidence) — {t.safe_summary}"
+                             + (f"  ({moments})" if moments else ""))
+            if any(t.confidence == "high" for t in self.themes):
+                lines.append("  A high-confidence theme repeats within the game (a real in-game pattern); "
+                             "a low-confidence one is a single moment — teach it, but do not generalise it "
+                             "into a 'habit' on one instance.")
+            lines.append("")
+
         lines.append("CRITICAL MOMENTS — the lesson agenda. Work through them ONE AT A TIME, in order.")
         for i, r in enumerate(self.agenda, 1):
             lines.extend(moment_digest_lines(i, r))
@@ -272,7 +303,9 @@ class GameReview:
                      "use the hint ladder only after the student has made an attempt or asked for help, "
                      "grade answers with evaluate_student_answer, ask the student WHY the move works, "
                      "then teach using the reveal-phase explanation primitives. "
-                     "Log each diagnosed mistake once with submit_diagnosis.")
+                     "Log each diagnosed mistake once with submit_diagnosis. "
+                     "For the closing synthesis, group moments ONLY by the VERIFIED THEMES above — "
+                     "never invent a theme that spans moments the backend placed in different clusters.")
         return "\n".join(lines)
 
 
@@ -650,6 +683,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     review.agenda_plies = _select_agenda(records, student_color, agenda_size, forced_plies)
     _enrich_agenda(review, engines, online)
     _apply_opening_moment(review)
+    review.themes = _derive_themes(review)
     return review
 
 
@@ -731,6 +765,52 @@ def _select_agenda(records, student_color, agenda_size, forced_plies=()):
     chosen = {r.ply for r in pool[:agenda_size]}
     chosen |= {p for p in forced_plies if 0 <= p < len(records)}
     return sorted(chosen)
+
+
+def _theme_key(r: MoveRecord) -> str:
+    """The verified category a single-game agenda moment belongs to. Prefers the
+    deep, taxonomy-grounded `recommended_diagnosis` (what actually 'churned' in the
+    session: premature_attack / bad_trade / ignored_threat …), so distinct error
+    classes don't get smoothed into one narrative."""
+    return r.recommended_diagnosis or r.lesson_objective or "uncategorized"
+
+
+def _derive_themes(review: GameReview) -> list:
+    """Cluster the enriched agenda by verified category + phase (P0-1a), mirroring
+    batch.aggregate_patterns down onto a single game. The synthesis reads these and
+    must not assert a theme across moments the backend placed in different clusters
+    — that is exactly the over-fit that put a forced recapture in 'don't grab
+    material' in game 2dtDqQgRy2OD."""
+    groups: dict = {}
+    for ply in review.agenda_plies:
+        if not (0 <= ply < len(review.records)):
+            continue
+        r = review.records[ply]
+        if review.student_color and r.color != review.student_color:
+            continue
+        key = (_theme_key(r), r.phase or "?")
+        groups.setdefault(key, []).append(ply)
+
+    themes = []
+    for (cat, phase), plies in groups.items():
+        plies = sorted(plies)
+        moves = ", ".join(review.records[p].move_label for p in plies)
+        label = cat.replace("_", " ")
+        count = len(plies)
+        themes.append(ReviewTheme(
+            id=f"{cat}:{phase}",
+            label=f"{label} ({phase})" if phase != "?" else label,
+            plies=plies,
+            # A repeated category within one game is a real in-game pattern; a
+            # singleton is a one-off (teach it, but don't generalise to a "habit").
+            confidence="high" if count >= 2 else "low",
+            safe_summary=(f"{count}x {label} in the {phase}: {moves}." if count >= 2
+                          else f"a single {label} moment in the {phase}: {moves}."),
+            avoid_language=[f"do not group these plies with moments outside cluster '{cat}:{phase}'"],
+        ))
+    # Largest (most repeated) clusters first — the most teachable patterns lead.
+    themes.sort(key=lambda t: (-len(t.plies), t.id))
+    return themes
 
 
 def _tablebase_category_scan(review: GameReview) -> list:
