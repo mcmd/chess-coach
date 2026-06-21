@@ -50,6 +50,17 @@ def test_chat_about_move_one_does_not_clobber_board(stub_config):
     assert "1. e4" in result.prompt
 
 
+def test_commands_match_exact_first_token_not_prefix(stub_config):
+    # Audit: startswith made "/review-old", "/movefoo", "/sparring" trigger commands.
+    proc, _, _ = make_processor(stub_config)
+    # A lookalike is NOT a command — it's chat (gets a model prompt, not handled locally).
+    res = proc.process("/review-old please")
+    assert res.prompt is not None and "/review-old" in res.prompt
+    assert proc.process("/sparring is fun").prompt is not None
+    # The real command (bare) is still handled locally (its own message, no chat prompt).
+    assert proc.process("/help").message and proc.process("/help").prompt is None
+
+
 # --- LOADING & REVIEW (F1: digest goes to the model) ---
 
 def test_pasted_pgn_loads_review_and_sends_digest(stub_config):

@@ -14,6 +14,10 @@ from app.notation import san_mentions
 from app.trace import fmt_args, trace
 from app.ui import console
 
+# A single user turn may need several analyse→grade→explain tool rounds, but never
+# dozens. Bounds a model that gets stuck requesting tools in a loop (plan audit).
+MAX_TOOL_ROUNDS = 12
+
 TOOL_MESSAGES = {
     "fetch_lichess_game_by_id": "[dim cyan]↳ Fetching game from Lichess...[/dim cyan]",
     "fetch_chessgames_com_game": "[dim cyan]↳ Fetching Master Game from Chessgames.com...[/dim cyan]",
@@ -56,6 +60,7 @@ def run_agent_turn(chat, coach_tools, message) -> None:
     then render the final response."""
     response = _send_with_spinner(chat, message)
     full_text = ""
+    rounds = 0
 
     while True:
         if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
@@ -65,6 +70,15 @@ def run_agent_turn(chat, coach_tools, message) -> None:
 
         f_calls = _extract_function_calls(response)
         if not f_calls:
+            break
+
+        rounds += 1
+        if rounds > MAX_TOOL_ROUNDS:
+            # A confused model can otherwise request tools forever; per-call engine
+            # caps don't bound the NUMBER of round trips. Stop the turn cleanly.
+            trace(f"tool loop hit the {MAX_TOOL_ROUNDS}-round budget; aborting turn")
+            full_text += ("\n\n_(I got stuck cycling through analysis tools and stopped to avoid "
+                          "looping — please re-ask, perhaps more specifically.)_")
             break
 
         tool_parts = []

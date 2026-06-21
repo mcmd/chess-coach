@@ -72,35 +72,38 @@ class CommandProcessor:
 
     def process(self, user_input: str) -> CommandResult:
         text = user_input.strip()
+        # Match the EXACT first token, not a prefix: startswith made "/review-old",
+        # "/movefoo", "/sparring" trigger commands they only resemble.
+        cmd = text.split(maxsplit=1)[0].lower() if text else ""
 
-        if text.startswith("/help"):
+        if cmd == "/help":
             return CommandResult(message=HELP_TEXT)
-        if text.startswith("/load_pgn"):
+        if cmd == "/load_pgn":
             return self._load_pgn(text)
-        if text.startswith("/batch"):
+        if cmd == "/batch":
             return self._batch(text)
-        if text.startswith("/move"):
+        if cmd == "/move":
             return self._move(text)
-        if text.startswith("/undo") or text.startswith("/prev"):
+        if cmd in ("/undo", "/prev"):
             return self._step_back()
-        if text.startswith("/next"):
+        if cmd == "/next":
             return self._step_forward()
-        if text.startswith("/goto"):
+        if cmd == "/goto":
             return self._goto(text)
-        if text.startswith("/reset"):
+        if cmd == "/reset":
             return self._reset()
-        if text.startswith("/spar"):
+        if cmd == "/spar":
             self.state.sparring_mode = True
             return CommandResult(prompt="I am ready to spar! Play a move.",
                                  message="[bold green]🥊 Sparring mode ENABLED.[/bold green]")
-        if text.startswith("/nospar"):
+        if cmd == "/nospar":
             self.state.sparring_mode = False
             return CommandResult(message="[bold yellow]🛑 Sparring mode DISABLED.[/bold yellow]")
-        if text.startswith("/review"):
+        if cmd == "/review":
             return self._dossier_quiz()
-        if text.startswith("/clear"):
+        if cmd == "/clear":
             return self._clear()
-        if text.startswith("/memorize"):
+        if cmd == "/memorize":
             return self._memorize()
 
         if looks_like_pgn(text):

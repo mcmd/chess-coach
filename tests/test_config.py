@@ -41,3 +41,13 @@ def test_load_config_reads_nested_engine_section(tmp_path, monkeypatch):
     assert config.practicality_depth == 17
     assert config.practicality_time == 3.5
     assert config.batch_eval_time == 0.45
+
+
+def test_valid_profile_name_rejects_path_escapes():
+    from app.config import _valid_profile_name
+    assert _valid_profile_name("mcmd")
+    assert not _valid_profile_name("../outside")
+    assert not _valid_profile_name("a/b")
+    assert not _valid_profile_name("..")
+    assert not _valid_profile_name("../outside")
+    assert not _valid_profile_name("")

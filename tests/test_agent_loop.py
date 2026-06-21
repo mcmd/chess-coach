@@ -92,6 +92,18 @@ def test_agent_loop_executes_tool_and_renders_final_text(stub_config, capsys):
     assert "Lesson text here." in out
 
 
+def test_tool_loop_terminates_at_budget(stub_config, capsys):
+    # Audit: a model that keeps requesting tools must not loop unboundedly.
+    from app.agent_loop import MAX_TOOL_ROUNDS
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), FakeEngines(), stub_config)
+    chat = FakeChat([_tool_response("get_game_review_summary")
+                     for _ in range(MAX_TOOL_ROUNDS + 10)])
+    run_agent_turn(chat, tools, "hi")
+    assert len(chat.sent) == MAX_TOOL_ROUNDS + 1          # initial send + one per round, capped
+    assert chat.responses                                  # stopped before exhausting the stream
+
+
 def test_agent_loop_progress_callback_reaches_review(stub_config):
     """The fetch tool passes the shared progress adapter into review_game."""
     from tests.test_review import PGN, _scripted_engines

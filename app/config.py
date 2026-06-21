@@ -73,6 +73,14 @@ class AppConfig:
     batch_reps: int = 3            # deep-verified teaching positions per pattern
 
 
+def _valid_profile_name(name: str) -> bool:
+    """A profile name must stay inside profiles_dir: no path separators, no '..',
+    no absolute paths. (Local CLI input, but profile isolation still matters.)"""
+    return bool(name) and not (
+        os.path.isabs(name) or os.path.sep in name
+        or (os.path.altsep and os.path.altsep in name) or name in (".", ".."))
+
+
 def _is_dark_terminal() -> bool:
     colorfgbg = os.environ.get("COLORFGBG")
     if colorfgbg:
@@ -123,6 +131,12 @@ Examples:
     BASE_PROFILES_DIR = root_config.get("profiles_dir", "./profiles")
 
     if args.profile:
+        # Keep profiles inside profiles_dir: reject path separators / .. / absolute
+        # paths so a profile name can't escape its sandbox (e.g. --profile=../../etc).
+        if not _valid_profile_name(args.profile):
+            print(f"Error: invalid profile name '{args.profile}'. Use a plain name with no "
+                  "path separators — it must stay inside the profiles directory.")
+            exit(1)
         profile_dir = os.path.join(BASE_PROFILES_DIR, args.profile)
         os.makedirs(profile_dir, exist_ok=True)
         
