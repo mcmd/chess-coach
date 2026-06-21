@@ -509,6 +509,34 @@ def test_reason_set_marks_forcing_tactic_as_key():
     assert len(key) == 1 and key[0]["squares"] == ["h2"] and "mate" in key[0]["keywords"]
 
 
+def test_aspirational_anchors_on_conversation_elo_not_game_elo():
+    # P0-4a: aspiration is for the student's CURRENT level. A game rated 1150
+    # reviewed by a 1500 student aspires from 1500 (+350 = 1850), not the game-time
+    # 1150 — and the digest flags the rating divergence.
+    class C:
+        user_elo = 1500
+        player_name = "mcmd"
+
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    engines = FakeEngines(evals=evals, maia={fens[4]: {"h5f7": 0.45}},
+                          maia_by_elo={(fens[4], 1850): {"g1f3": 0.70}})
+    review = review_game(PGN, engines, C())
+    assert review.conversation_elo == 1500                      # anchor = config, not header
+    assert review.white_elo == 1150                             # typicality = PGN game-time
+    assert review.records[4].aspirational == {"elo": 1850, "move": "Nf3", "probability": 0.70}
+    digest = review.digest()
+    assert "Rating note" in digest and "~1150" in digest and "~1500" in digest
+
+
+def test_no_rating_note_when_game_elo_matches_conversation():
+    review = review_game(PGN, _scripted_engines(), _Cfg())      # both 1150
+    assert review.conversation_elo == 1150
+    assert "Rating note" not in review.digest()
+
+
 def test_resolve_student_elo_two_purposes_and_sources():
     # P0-4a: conversation anchors to config; typicality reads the PGN game-time Elo
     # of the mover (the session's 1142-vs-config case), falling back to the anchor.

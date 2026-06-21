@@ -165,6 +165,9 @@ class GameReview:
     slides: list = None              # within-game eval-only one-sided slide segments
     eval_source: str = "engine"      # "pgn" (used the PGN's [%eval]) or "engine" (local search)
     themes: list = field(default_factory=list)  # ReviewTheme clusters (verified single-game theming)
+    conversation_elo: int = None     # the STUDENT'S level (config.user_elo); anchors coaching/aspiration.
+                                     # Distinct from white_elo/black_elo, which are the PGN game-time
+                                     # (move-typicality) ratings. Plan P0-4a "two purposes, one anchor".
 
     def record_at(self, ply: int):
         return self.records[ply] if 0 <= ply < len(self.records) else None
@@ -218,6 +221,13 @@ class GameReview:
                          "from that point the game is pure technique, and mistakes after it are provable.")
         if self.student_color:
             lines.append(f"The STUDENT played {self.student_color.upper()}. Coach that side.")
+            game_elo = self.white_elo if self.student_color == "white" else self.black_elo
+            if self.conversation_elo and game_elo and abs(game_elo - self.conversation_elo) > 50:
+                lines.append(
+                    f"Rating note: move-commonness here is judged at the ~{game_elo} the student was rated "
+                    f"in THIS game, but coaching is pitched at their current level (~{self.conversation_elo}). "
+                    f"When you say a move is 'common at your level', label which — e.g. 'at the ~{game_elo} "
+                    "level you were playing then'.")
         else:
             lines.append("Student color unknown — ask the student which side they played before coaching.")
         if self.extra_games_ignored:
@@ -688,9 +698,13 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     # when we fell back to the local sub-second search (less reliable; flagged in
     # the slide output so the coach never overstates a fallback read).
     eval_source = "pgn" if total and pgn_eval_moves >= 0.8 * total else "engine"
+    # conversation_elo = the student's CURRENT level (config), the anchor for
+    # coaching/aspiration; distinct from the PGN game-time ratings above (P0-4a).
+    conversation_elo = resolve_student_elo(student_color or "white", headers, config, "conversation")[0]
     review = GameReview(headers=headers, records=records, student_color=student_color,
                         agenda_plies=[], game=game, extra_games_ignored=extra,
-                        white_elo=white_elo, black_elo=black_elo, eval_source=eval_source)
+                        white_elo=white_elo, black_elo=black_elo, eval_source=eval_source,
+                        conversation_elo=conversation_elo)
     _detect_slides(review)   # eval-only; cheap and safe in scan and full review
     if not enrich:
         return review
@@ -1479,11 +1493,16 @@ def _anticipate_wrong_answer(r: MoveRecord, engines, board_before: chess.Board) 
 
 
 def _aspirational_instinct(r: MoveRecord, engines, review: GameReview) -> None:
-    """What do players a few hundred points stronger choose here? The next
-    level's instinct, as a concrete target."""
-    mover_elo = (review.white_elo if r.color == "white" else review.black_elo) or 1200
-    target_elo = min(mover_elo + 350, 1900)
-    if target_elo <= mover_elo + 50:
+    """What do players a few hundred points above the STUDENT'S level choose here?
+    The next level's instinct, as a concrete target. Anchored on conversation_elo
+    (who the student is now), NOT the game-time rating — aspiration is for the
+    student's growth, so an old 1140-rated game still aspires from today's level
+    (plan P0-4a). Falls back to the mover's rating for duck-typed reviews (batch)."""
+    base = (getattr(review, "conversation_elo", None)
+            or (review.white_elo if r.color == "white" else review.black_elo)
+            or DEFAULT_USER_ELO)
+    target_elo = min(base + 350, 1900)
+    if target_elo <= base + 50:
         return
     asp = engines.maia_predict(r.fen_before, elo_self=target_elo, elo_oppo=target_elo,
                                history_uci=(r.history_uci or None), tier="deep")
