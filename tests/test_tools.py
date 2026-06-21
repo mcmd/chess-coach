@@ -297,8 +297,8 @@ def test_analyze_position_exposes_wdl_risk_profile(stub_config):
     assert summary["win_draw_loss_for_side_to_move"] == {"win": 0.2, "draw": 0.6, "loss": 0.2}
 
 
-def test_analyze_position_no_wdl_for_maia2_style(stub_config):
-    # maia2-style prediction (no draw/loss) → no risk fields, no crash.
+def test_analyze_position_no_wdl(stub_config):
+    # a prediction with no draw/loss → no risk fields, no crash.
     engines = FakeEngines(maia={START: {"e2e4": 1.0}})
     tools, _ = make_tools(stub_config, engines)
     summary = tools.analyze_position(START)["human_tendency_at_student_elo"]
@@ -328,6 +328,18 @@ def test_sparring_reply_plays_maia_move(stub_config):
     assert result["coach_played"] == "e4"
     assert state.board.move_stack  # board actually advanced
     assert "Maia" in result["selected_by"]
+
+
+def test_sparring_temperature_zero_is_argmax(stub_config):
+    # P2-11c: spar_temperature=0 → always Maia's most likely move (deterministic),
+    # even when a lower-prob move would sometimes win proportional sampling.
+    stub_config.spar_temperature = 0.0
+    engines = FakeEngines(maia={START: {"e2e4": 0.49, "d2d4": 0.51}})
+    tools, state = make_tools(stub_config, engines)
+    state.sparring_mode = True
+    for _ in range(8):
+        state.board = chess.Board()
+        assert tools.play_sparring_reply()["coach_played"] == "d4"
 
 
 def test_execute_coach_move_logic_tutor_still_guards(stub_config):

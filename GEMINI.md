@@ -13,8 +13,8 @@ coach.py             thin wiring: config -> state -> engines -> tools -> chat ->
 app/commands.py      slash-command / chat-input processing (CommandProcessor, testable)
 app/agent_loop.py    Gemini tool-execution loop + response rendering
 app/state.py         SessionState (single source of truth) + TimelineManager (board mutations)
-app/engines.py       EngineManager: Stockfish subprocess + in-process Maia (Maia-3 tiered
-                     deep/scan, Maia-2 fallback) AND all engine policy (tiers, limits, eval source)
+app/engines.py       EngineManager: Stockfish subprocess + in-process Maia-3 (tiered
+                     deep/scan) AND all engine policy (tiers, limits, eval source)
 app/review.py        game review pipeline: per-move classification (win%-space eval swings),
                      lesson agenda selection, digest_for_llm
 app/concepts.py      pure chess features: SEE-based piece safety, pawn structure, outposts,
@@ -35,8 +35,9 @@ app/config.py        config.json + profiles + CLI args
   mutation paths are the `play_sparring_reply` / `execute_coach_move` tools.
 - **Engine policy lives in `EngineManager` only.** Never call
   `engines.stockfish.analyse` from other modules; add a method instead. This
-  includes Maia tiering: `maia_predict` picks the deep/scan model (Maia-3, with a
-  Maia-2 fallback) by `tier=`; callers never choose a model.
+  includes Maia tiering: `maia_predict` picks the deep/scan Maia-3 model by
+  `tier=`; callers never choose a model. If Maia-3 fails to load, the coach runs
+  engine-only (no human-move lens) behind a warning — no silent fallback.
 - **The win% stream prefers the PGN's `[%eval]`.** `review_game`'s scan uses the
   game's own deep annotations for eval/drop/slide detection when present (the ~17%
   slide baseline was calibrated on Lichess evals — `scripts/scan_eval_slides.py`);
@@ -52,6 +53,11 @@ app/config.py        config.json + profiles + CLI args
   `clear()` is the full wipe. Don't conflate them.
 - **`app/concepts.py` and `app/motifs.py` stay pure** (board in, data out,
   no engine/network/UI) — that's why they're exhaustively unit-testable.
+- **Aspirational instinct is reveal-gated and divergence-guarded.**
+  `review._aspirational_instinct` shows what a ~+350-Elo player would choose only
+  when that move *differs* from the student's played move (never dressing the
+  student's own move as the target), only after the moment resolves (inlined in the
+  digest's WITHHELD block), and self-suppresses near the rating cap.
 
 ## Development
 
@@ -60,8 +66,7 @@ app/config.py        config.json + profiles + CLI args
   (fakes live in `tests/conftest.py`).
 - Concept-extractor changes require regenerating the snapshot baseline
   deliberately: `python -m tests.test_concepts_snapshot --save`.
-- `scripts/smoke_maia2.py` is a manual smoke test that downloads/loads the
-  Maia-2 model — never name it `test_*.py` (pytest would load the model at
-  collection time).
+- Manual model-loading smoke scripts belong in `scripts/`, never named `test_*.py`
+  (pytest would load the model at collection time).
 - Secrets: `GEMINI_API_KEY` comes from `.env` (gitignored). Never commit
   `config.json` (machine-local paths) — `config.example.json` is the template.

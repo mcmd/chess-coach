@@ -27,11 +27,9 @@ class AppConfig:
     board_dark_color: str = "#769656"
     board_scale: int = 2
 
-    # Human-move model (maia2 / maia3). `maia_version`: "auto" prefers maia3 with
-    # a maia2 fallback; "3" is maia3-only; "2" forces maia2. Both tiers default to
-    # maia3-79M (loaded once, shared); point the scan tier at maia3-23m if the
-    # batch trajectory pass ever needs more throughput.
-    maia_version: str = "auto"
+    # Human-move model (maia3). Both tiers default to maia3-79M (loaded once,
+    # shared); point the scan tier at maia3-23m if the batch pass ever needs more
+    # throughput. (Maia-2 was removed; see issue #8 / plan P0-7.)
     maia3_deep_model: str = "maia3-79m"
     maia3_scan_model: str = "maia3-79m"
     maia3_cache_dir: str = None
@@ -39,7 +37,9 @@ class AppConfig:
     maia3_offline: bool = False       # once the checkpoint is cached, set true to load
                                       # from the local HF cache only (no startup phone-home)
     maia_history_plies: int = 12      # max game-history plies fed to maia3
-    spar_temperature: float = 0.0     # maia3 sparring move-sampling temperature (0 = argmax)
+    spar_temperature: float = 1.0     # sparring sampling sharpness over Maia's top moves:
+                                      # 1.0 = proportional to human likelihood (default, most
+                                      # human-realistic); <1 sharper (0 = always top move); >1 flatter
 
     # Engine quality knobs. Broad scans are cheaper; agenda/threat/practicality
     # analysis is where extra time most directly improves coaching quality.
@@ -159,13 +159,13 @@ Examples:
         board_light_color=app_config.get("board_light_color", "#eeeed2"),
         board_dark_color=app_config.get("board_dark_color", "#769656"),
         board_scale=int(app_config.get("board_scale", 2)),
-        maia_version=str(app_config.get("maia_version", "auto")),
         maia3_deep_model=app_config.get("maia3_deep_model", "maia3-79m"),
         maia3_scan_model=app_config.get("maia3_scan_model", "maia3-79m"),
         maia3_cache_dir=app_config.get("maia3_cache_dir"),
         maia3_device=app_config.get("maia3_device", "cpu"),
+        maia3_offline=bool(app_config.get("maia3_offline", False)),
         maia_history_plies=int(engine_value("maia_history_plies", 12)),
-        spar_temperature=float(app_config.get("spar_temperature", 0.0)),
+        spar_temperature=float(app_config.get("spar_temperature", 1.0)),
         review_eval_time=float(engine_value("review_eval_time", 1.0)),
         agenda_best_depth=int(engine_value("agenda_best_depth", 20)),
         agenda_best_time=float(engine_value("agenda_best_time", 6.0)),

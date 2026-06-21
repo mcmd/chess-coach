@@ -1,7 +1,7 @@
 [project]
 name = "chess-coach"
 version = "1.0.0"
-description = "An engine-grounded, Elo-aware AI chess coach (Gemini + Stockfish + Maia-2)"
+description = "An engine-grounded, Elo-aware AI chess coach (Gemini + Stockfish + Maia-3)"
 requires-python = ">=3.10"
 dependencies = [
     "chess>=1.10",
@@ -10,10 +10,11 @@ dependencies = [
     "python-dotenv>=1.0",
     "prompt_toolkit>=3.0",
     "requests>=2.31",
-    "maia2",
-    # maia2 transitive requirements that need explicit pins on some platforms:
+    # maia3 (AGPL-3.0): in-process human-move model. Pinned to a commit for reproducibility;
+    # pulls huggingface-hub/hf-xet/typer transitively.
+    "maia3 @ git+https://github.com/CSSLab/maia3.git@1e13597c42d4858b7cfd7cfdae01e297263364b2",
+    # model / runtime deps (explicit pins for some platforms):
     "einops==0.8.0",
-    "gdown==5.2.0",
     "pyzstd>=0.19.1",
     "tqdm>=4.65.0",
     "numpy>=2.1.0",

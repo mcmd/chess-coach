@@ -1314,7 +1314,14 @@ def _aspirational_instinct(r: MoveRecord, engines, review: GameReview) -> None:
     asp = engines.maia_predict(r.fen_before, elo_self=target_elo, elo_oppo=target_elo,
                                history_uci=(r.history_uci or None), tier="deep")
     if asp and asp["top_moves"]:
-        r.aspirational = {"elo": target_elo, **asp["top_moves"][0]}
+        # Divergence guard (P0-6): only surface an aspirational instinct when the
+        # stronger band would play something OTHER than the move the student played.
+        # The digest frames this as "the instinct you're growing toward," so an
+        # unguarded same-as-played result would dress the student's own move (often
+        # their mistake) up as the target. Canonical case: game 2dtDqQgRy2OD move 24,
+        # where the +350 top move is the played Kxg2 (not the better Rfe1) → suppress.
+        if asp["top_moves"][0]["move"] != r.san:
+            r.aspirational = {"elo": target_elo, **asp["top_moves"][0]}
 
 
 # Within-game SLIDE detection: EVAL-ONLY (no Maia). This replaces the rejected

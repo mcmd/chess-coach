@@ -549,8 +549,15 @@ class CoachTools:
         maia = self.engines.maia_predict(board.fen(), history_uci=spar_hist, tier="deep")
         if maia and maia["top_moves"]:
             moves = maia["top_moves"]
-            weights = [m["probability"] for m in moves]
-            san = random.choices([m["move"] for m in moves], weights=weights, k=1)[0]
+            # spar_temperature shapes the sampling sharpness over Maia's top moves:
+            # 1.0 = sample in proportion to human likelihood (most human-realistic);
+            # <1 sharper (→0 = always the most likely move); >1 flatter / more varied.
+            temp = float(getattr(self.config, "spar_temperature", 1.0))
+            if temp <= 0:
+                san = max(moves, key=lambda m: m["probability"])["move"]
+            else:
+                weights = [m["probability"] ** (1.0 / temp) for m in moves]
+                san = random.choices([m["move"] for m in moves], weights=weights, k=1)[0]
         else:
             try:
                 infos = self.engines.top_lines(board, multipv=3, depth=8, time_cap=1.0)

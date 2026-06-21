@@ -1,17 +1,16 @@
-"""Human-move models behind one capability interface.
+"""Human-move model behind one capability interface.
 
 The coach predicts "what a human at rating X is likely to play here" via a
-`HumanModel`. Two implementations exist:
+`HumanModel`. One implementation:
 
-- `Maia2Model`  — the legacy maia2 net (positional, no history, no draw signal).
-- `Maia3Model`  — maia3 (in-process / Route B): history-aware, with a WDL value
+- `Maia3Model` — maia3 (in-process / Route B): history-aware, with a WDL value
   head. Loaded at a configurable size; the same instance can serve multiple
   tiers (see `app.engines.EngineManager`).
 
 `EngineManager` owns *which* model serves *which* call (tier policy) and adapts
 `HumanPrediction` back into the legacy `maia_predict` dict so existing callers
-are untouched. Heavy imports (torch / maia2 / maia3) are deferred to construction
-time so importing this module stays cheap and test-friendly.
+are untouched. Heavy imports (torch / maia3) are deferred to construction time so
+importing this module stays cheap and test-friendly.
 """
 from __future__ import annotations
 
@@ -27,9 +26,8 @@ class HumanPrediction:
 
     `raw_probs` is the full distribution over legal moves ({uci: prob}); it is
     the source of truth. `top_moves` (SAN) is a convenience view. `draw/loss`
-    are populated only by models with a WDL value head (maia3); maia2 leaves
-    them `None`. `used_history` records whether a non-empty game history actually
-    informed the prediction.
+    are populated from the WDL value head. `used_history` records whether a
+    non-empty game history actually informed the prediction.
     """
     raw_probs: dict[str, float]
     win_probability: float | None = None
@@ -53,36 +51,6 @@ def top_moves_san(raw_probs: dict[str, float], board: chess.Board, k: int = 3) -
         if len(out) >= k:
             break
     return out
-
-
-class Maia2Model:
-    """Legacy maia2 ("rapid") net. Positional only — ignores `history_uci`."""
-
-    supports_history = False
-    supports_wdl = False
-
-    def __init__(self, device: str = "cpu"):
-        from maia2 import model, inference
-        self.name = "maia2-rapid"
-        self._model = model.from_pretrained(type="rapid", device=device)
-        self._prepared = inference.prepare()
-
-    def predict(self, fen: str, *, elo_self: int, elo_oppo: int,
-                history_uci: list[str] | None = None) -> HumanPrediction | None:
-        from maia2 import inference
-        move_probs, win_prob = inference.inference_each(
-            self._model, self._prepared, fen, elo_self=elo_self, elo_oppo=elo_oppo)
-        if not move_probs:
-            return None
-        raw = {u: float(p) for u, p in move_probs.items()}
-        board = chess.Board(fen)
-        return HumanPrediction(
-            raw_probs=raw,
-            win_probability=float(win_prob) if win_prob is not None else None,
-            top_moves=top_moves_san(raw, board),
-            used_history=False,
-            model_name=self.name,
-        )
 
 
 class Maia3Model:
@@ -132,7 +100,7 @@ class Maia3Model:
                        history_uci: list[str] | None) -> tuple[deque, bool]:
         """Build the deque of board tokenisations leading up to `board`. Returns
         (history, used_history). Falls back to the single current position
-        (positional, maia2-equivalent) when no usable history is supplied."""
+        (positional, no history) when no usable history is supplied."""
         hist: deque = deque(maxlen=self.cfg.history)
         if history_uci:
             plies = history_uci[-self.history_plies:]

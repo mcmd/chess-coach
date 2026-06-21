@@ -25,8 +25,7 @@ class EngineManager:
     def __init__(self, config):
         self.config = config
         self.stockfish = None
-        self.human_models = {}      # tier ("deep"/"scan") -> HumanModel
-        self.human_fallback = None  # HumanModel (maia2) used when a tier is missing
+        self.human_models = {}      # tier ("deep"/"scan") -> HumanModel (maia3)
         self.maia_error = None      # user-facing load-warning summary (None if a model loaded)
 
     def start(self):
@@ -41,38 +40,31 @@ class EngineManager:
 
         self._start_human_models()
 
-    # --- HUMAN MODEL (maia2 / maia3) LIFECYCLE & POLICY ---
+    # --- HUMAN MODEL (maia3) LIFECYCLE & POLICY ---
 
     def _make_human_model(self, spec: str, cache: dict):
-        """Build (or reuse a cached) HumanModel for a spec. `"maia2"` selects the
-        legacy net; anything else is a maia3 preset/repo. Tiers that name the same
-        spec share one loaded instance."""
+        """Build (or reuse a cached) maia3 model for a spec. Tiers that name the
+        same spec share one loaded instance."""
         if spec in cache:
             return cache[spec]
-        from app.human_model import Maia2Model, Maia3Model
-        if spec == "maia2":
-            model = Maia2Model(device=getattr(self.config, "maia3_device", "cpu"))
-        else:
-            model = Maia3Model(
-                spec,
-                cache_dir=getattr(self.config, "maia3_cache_dir", None),
-                device=getattr(self.config, "maia3_device", "cpu"),
-                history_plies=getattr(self.config, "maia_history_plies", 12),
-                local_files_only=getattr(self.config, "maia3_offline", False),
-            )
+        from app.human_model import Maia3Model
+        model = Maia3Model(
+            spec,
+            cache_dir=getattr(self.config, "maia3_cache_dir", None),
+            device=getattr(self.config, "maia3_device", "cpu"),
+            history_plies=getattr(self.config, "maia_history_plies", 12),
+            local_files_only=getattr(self.config, "maia3_offline", False),
+        )
         cache[spec] = model
         return model
 
     def _start_human_models(self):
-        """Load the configured human-move models. `maia_version`: "2" forces maia2
-        for every tier; "3" loads maia3 tiers with no fallback; "auto" (default)
-        loads maia3 tiers, plus a maia2 fallback only if a tier fails to load."""
-        version = getattr(self.config, "maia_version", "auto")
-        if version == "2":
-            deep_spec = scan_spec = "maia2"
-        else:
-            deep_spec = getattr(self.config, "maia3_deep_model", "maia3-79m")
-            scan_spec = getattr(self.config, "maia3_scan_model", "maia3-79m")
+        """Load the maia3 deep/scan tiers (sharing a checkpoint when the same
+        spec). On failure, set `maia_error` and leave the model unavailable — the
+        coach continues engine-only (no human-move lens), failing loud rather than
+        silently degrading. (Maia-2 was removed; see issue #8 / plan P0-7.)"""
+        deep_spec = getattr(self.config, "maia3_deep_model", "maia3-79m")
+        scan_spec = getattr(self.config, "maia3_scan_model", "maia3-79m")
 
         cache, errors = {}, []
         for tier, spec in (("deep", deep_spec), ("scan", scan_spec)):
@@ -82,27 +74,16 @@ class EngineManager:
             except Exception as e:
                 errors.append(f"{tier} ({spec}): {e}")
 
-        # Only pay for the maia2 fallback when a maia3 tier actually failed to
-        # load. A tier that loaded never falls back at runtime (predict errors
-        # return None, they don't cascade), so loading maia2 in the happy path
-        # just wastes RAM and startup time.
-        if version == "auto" and len(self.human_models) < 2:
-            try:
-                self.human_fallback = self._make_human_model("maia2", cache)
-            except Exception as e:
-                errors.append(f"fallback (maia2): {e}")
-
-        if not self.human_models and not self.human_fallback:
+        if not self.human_models:
             self.maia_error = "; ".join(errors) or "no human model available"
         elif errors:
             trace("human model load warnings: " + "; ".join(errors))
 
     def _resolve_tier(self, tier: str):
-        """Pick the model for a tier, degrading deep->scan->fallback->None."""
+        """Pick the model for a tier, degrading deep->scan->None."""
         return (self.human_models.get(tier)
                 or self.human_models.get("deep")
-                or self.human_models.get("scan")
-                or self.human_fallback)
+                or self.human_models.get("scan"))
 
     @property
     def maia(self):
@@ -172,14 +153,14 @@ class EngineManager:
                                     "threat_line": " ".join(line)})
         return threats
 
-    # --- HUMAN MOVE PREDICTION (maia2 / maia3) ---
+    # --- HUMAN MOVE PREDICTION (maia3) ---
 
     def human_predict(self, fen: str, *, elo_self: int = None, elo_oppo: int = None,
                       history_uci: list = None, tier: str = "deep"):
         """Run the human model for `tier` and return a `HumanPrediction` (rich
         object: full distribution + WDL when available), or None if no model is
         available or the position has no prediction. `history_uci` (the moves
-        reaching `fen`) is used by maia3 and ignored by maia2."""
+        reaching `fen`) conditions the maia3 prediction."""
         model = self._resolve_tier(tier)
         if model is None:
             return None

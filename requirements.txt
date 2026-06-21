@@ -6,13 +6,11 @@ google-genai>=1.0
 python-dotenv>=1.0
 prompt_toolkit>=3.0
 requests>=2.31
-maia2
 # maia3 (AGPL-3.0): human-move model, integrated in-process. Pinned to a commit for reproducibility.
 # Pulls huggingface-hub/hf-xet/typer transitively. See design/maia3_integration_design_20260613.md.
 maia3 @ git+https://github.com/CSSLab/maia3.git@1e13597c42d4858b7cfd7cfdae01e297263364b2
-# Maia2 dependencies
+# Model / runtime deps
 einops==0.8.0
-gdown==5.2.0
 pyzstd>=0.19.1
 tqdm>=4.65.0
 numpy>=2.1.0

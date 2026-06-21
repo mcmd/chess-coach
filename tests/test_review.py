@@ -336,8 +336,8 @@ def test_wdl_risk_profile_surfaced_in_digest():
     assert "drawish" in digest
 
 
-def test_wdl_absent_for_maia2_style_prediction():
-    # maia2 (no WDL) → no draw/loss fields → no Risk profile line.
+def test_wdl_absent_when_prediction_has_no_wdl():
+    # a prediction with no WDL → no draw/loss fields → no Risk profile line.
     fens = _fens_of(PGN)
     evals = {fen: 0 for fen in fens}
     evals[fens[5]] = -700
@@ -491,6 +491,26 @@ def test_aspirational_instinct_from_stronger_maia():
     assert record.aspirational == {"elo": 1500, "move": "Nf3", "probability": 0.70}
     assert "aspirational instinct" in review.digest()
     assert "growing toward" in review.digest()
+
+
+def test_aspirational_suppressed_when_band_plays_the_same_move():
+    # P0-6 divergence guard: if the +350 band's top move equals the move the
+    # student actually played, no aspirational instinct is surfaced (it must never
+    # dress the student's own move up as "the instinct you're growing toward").
+    fens = _fens_of(PGN)
+    evals = {fen: 0 for fen in fens}
+    evals[fens[5]] = -700
+    evals[fens[6]] = -700
+    base = FakeEngines(evals=evals, maia={fens[4]: {"h5f7": 0.45}})
+    played_uci = review_game(PGN, base, _Cfg()).records[4].uci
+    engines = FakeEngines(
+        evals=evals,
+        maia={fens[4]: {"h5f7": 0.45}},
+        maia_by_elo={(fens[4], 1500): {played_uci: 0.70}},  # band plays the SAME move
+    )
+    review = review_game(PGN, engines, _Cfg())
+    assert review.records[4].aspirational is None
+    assert "growing toward" not in review.digest()
 
 
 def test_phase_alignment_breakdown_in_digest():
