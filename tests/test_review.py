@@ -493,6 +493,22 @@ def test_aspirational_instinct_from_stronger_maia():
     assert "growing toward" in review.digest()
 
 
+def test_reason_set_marks_forcing_tactic_as_key():
+    # P0-2: a forcing tactic is the load-bearing reason — keyed, anchored on the
+    # target square, with the motif as a sayable keyword.
+    import chess
+    from app.review import _reason_set, MoveRecord
+    r = MoveRecord(ply=0, number=1, color="white", san="Re1", uci="f1e1",
+                   fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                   eval_before_cp=0, eval_after_cp=-300, drop_pct=20.0, quality="mistake")
+    r.motifs = [{"motif": "smothered_mate", "detail": "Qxh2# is smothered mate"}]
+    data = {"target_square": "h2", "forcing_move": "Qxh2#",
+            "why_wrong_move_fails": "Re1 does not address Qxh2#; the opponent gets a forcing move on h2"}
+    reasons = _reason_set(r, chess.Board(chess.STARTING_FEN), data)
+    key = [x for x in reasons if x["key"]]
+    assert len(key) == 1 and key[0]["squares"] == ["h2"] and "mate" in key[0]["keywords"]
+
+
 def test_resolve_student_elo_two_purposes_and_sources():
     # P0-4a: conversation anchors to config; typicality reads the PGN game-time Elo
     # of the mover (the session's 1142-vs-config case), falling back to the anchor.

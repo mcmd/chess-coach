@@ -521,6 +521,64 @@ class CoachTools:
         self._persist_lesson_progress(fen, "awaiting_diagnosis" if result["reveal_allowed"] else "awaiting_answer")
         return result
 
+    def evaluate_explanation(self, fen: str, student_explanation: str) -> dict:
+        """
+        Grade the student's stated WHY against the verified reason-set for this
+        moment. Call this AFTER the student has found the right move and explained
+        why it works, BEFORE submit_diagnosis.
+
+        It tells you whether the student named the position's LOAD-BEARING reason
+        (the actual point — e.g. that the move stops mate on h2), as opposed to a
+        correct-but-partial reason (e.g. "it gains tempo"). When the key reason is
+        missing, do NOT say "exactly" and move on, and do NOT reveal it outright:
+        PROBE it — a focused question or hint that points toward the idea — so the
+        student finds it, then re-check by calling this again.
+
+        Args:
+            fen: The FEN the moment is about (copy it exactly from the digest).
+            student_explanation: The student's own words for why the move works.
+        """
+        record = self._agenda_record_for_fen(fen)
+        if record is None:
+            return {"error": "No agenda moment matches that FEN. Use the exact fen_before from the digest."}
+        reasons = (getattr(record, "explanation_primitives", None) or {}).get("reasons") or []
+        key_reasons = [r for r in reasons if r.get("key")]
+        if not key_reasons:
+            return {"gradable": False,
+                    "guidance": "No single load-bearing reason is pinned for this moment; if the "
+                                "explanation is sound, affirm it and proceed to submit_diagnosis."}
+
+        text = (student_explanation or "").lower()
+        squares_in = set(re.findall(r"[a-h][1-8]", text))
+        words_in = set(re.findall(r"[a-z]+", text))
+
+        def named(reason):
+            return (bool(set(reason.get("squares", [])) & squares_in)
+                    or any(k in words_in for k in reason.get("keywords", [])))
+
+        key = key_reasons[0]
+        key_named = named(key)
+        result = {
+            "gradable": True,
+            "key_reason": key["text"],
+            "key_reason_named": key_named,
+            "also_named": [r["text"] for r in reasons if not r.get("key") and named(r)],
+        }
+        if key_named:
+            result["guidance"] = ("The student named the load-bearing reason. Affirm briefly, then "
+                                  "submit_diagnosis.")
+        else:
+            anchor = ", ".join(key.get("squares", []))
+            result["missing_key_reason"] = key["text"]
+            result["guidance"] = (
+                "The student's explanation did NOT address the load-bearing reason above. Do not "
+                "rubber-stamp it and do not reveal the reason outright — PROBE it: ask a focused "
+                "question or give a hint pointing toward "
+                + (f"the {anchor} square / " if anchor else "")
+                + "the key idea, so the student finds it. Re-check with evaluate_explanation after "
+                "their reply, and only submit_diagnosis once it is addressed (or after two tries).")
+        return result
+
     # NOTE: the old predict_human_move tool was retired: analyze_position already
     # includes Maia's tendencies automatically, the review consults Maia on every
     # move, and the digest pre-computes the anticipated wrong answer.
@@ -1013,6 +1071,7 @@ class CoachTools:
         """Returns the bound methods to be passed to the Gemini API."""
         return [
             self.analyze_position, self.evaluate_student_answer, self.evaluate_threat_answer,
+            self.evaluate_explanation,
             self.play_sparring_reply, self.execute_coach_move, self.submit_diagnosis,
             self.get_game_review_summary, self.explain_pawn_structure_evolution,
             self.get_opening_repertoire,

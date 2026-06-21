@@ -9,6 +9,7 @@ This module is UI-free: pass `on_progress(done, total)` for progress display.
 """
 import io
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -303,7 +304,9 @@ class GameReview:
                      "ask the Initial question EXACTLY as the first prompt, "
                      "use the hint ladder only after the student has made an attempt or asked for help, "
                      "grade answers with evaluate_student_answer, ask the student WHY the move works, "
-                     "then teach using the reveal-phase explanation primitives. "
+                     "then GRADE that 'why' with evaluate_explanation: if it reports a missing "
+                     "load-bearing reason, probe the gap (a question or hint, not the answer) before "
+                     "moving on; only then teach using the reveal-phase explanation primitives. "
                      "Log each diagnosed mistake once with submit_diagnosis. "
                      "For the closing synthesis, group moments ONLY by the VERIFIED THEMES above — "
                      "never invent a theme that spans moments the backend placed in different clusters.")
@@ -460,7 +463,7 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
                       "the student is growing toward; share it AFTER the moment is resolved")
     if r.explanation_primitives:
         secret.append("reveal-phase explanation primitives: " + "; ".join(
-            f"{k}={v}" for k, v in r.explanation_primitives.items() if v))
+            f"{k}={v}" for k, v in r.explanation_primitives.items() if v and k != "reasons"))
     if secret:
         lines.append("  WITHHELD ANSWER (do NOT reveal until the student attempts; "
                      "verify attempts with evaluate_student_answer): " + " | ".join(secret))
@@ -1290,7 +1293,75 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
         data["process_habit"] = "Before taking material, ask what the position's urgent priority is."
     else:
         data["process_habit"] = "Name the position's urgent priority before choosing a natural move."
+    data["reasons"] = _reason_set(r, board_before, data)
     return data
+
+
+# Motif-name fragments the student can plausibly *say* (so they double as
+# explanation signal tokens). Verified motifs are detected in code; here we only
+# map them to a word a human might use when explaining the point.
+_MOTIF_KEYWORDS = {
+    "fork", "pin", "skewer", "mate", "discovered", "double", "smothered",
+    "deflection", "decoy", "interference", "clearance", "zwischenzug", "promotion",
+    "back", "rank", "removal", "trap", "overload",
+}
+
+
+def _san_dest_square(board: chess.Board, san: str):
+    """The destination square name of a SAN move on `board`, or None."""
+    try:
+        return chess.square_name(board.parse_san(san).to_square)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _motif_keywords(motif_dicts) -> list:
+    """The human-sayable motif words present in a list of detected-motif dicts."""
+    out = []
+    for m in motif_dicts or []:
+        name = (m.get("motif") or "").lower().replace("-", "_")
+        out += [tok for tok in name.split("_") if tok in _MOTIF_KEYWORDS]
+    return out
+
+
+def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
+    """Structured, gradable reasons for *why* the moment matters (P0-2). Each is
+    {text, key, squares, keywords}; exactly one `key` (load-bearing) reason is
+    flagged when a concrete signal exists, so evaluate_explanation can tell a
+    partial 'why' (e.g. 'gains tempo') from one that names the actual point
+    (e.g. 'stops mate on h2') and probe the gap instead of rubber-stamping it."""
+    reasons = []
+    target = data.get("target_square")
+    if target:
+        # A forcing tactic is the point: the student must grasp the square it lands
+        # on and (when present) the motif — not just that they "lost material".
+        keywords = _motif_keywords(r.motifs) + _motif_keywords(r.best_line_motifs)
+        if (data.get("forcing_move") or "").endswith("#"):
+            keywords.append("mate")
+        reasons.append({
+            "text": (data.get("why_wrong_move_fails") or data.get("forcing_move_consequences")
+                     or f"the opponent's forcing move on {target}"),
+            "key": True,
+            "squares": [target],
+            "keywords": sorted(set(keywords)),
+        })
+    elif data.get("why_best_move_works") and r.best_move_san:
+        dest = _san_dest_square(board_before, r.best_move_san)
+        # Positional point: weak to tokenise, so it is "key" only when we have a
+        # concrete square to anchor on; otherwise leave it ungraded (no false probe).
+        reasons.append({
+            "text": data["why_best_move_works"],
+            "key": bool(dest),
+            "squares": [dest] if dest else [],
+            "keywords": _motif_keywords(r.best_line_motifs),
+        })
+    if data.get("human_temptation"):
+        m = re.search(r" on ([a-h][1-8])", data["human_temptation"])
+        reasons.append({
+            "text": data["human_temptation"], "key": False,
+            "squares": [m.group(1)] if m else [], "keywords": ["material", "won"],
+        })
+    return reasons
 
 
 def _diagnosis_sentence(r: MoveRecord) -> str:

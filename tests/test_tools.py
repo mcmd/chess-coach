@@ -330,6 +330,54 @@ def test_sparring_reply_plays_maia_move(stub_config):
     assert "Maia" in result["selected_by"]
 
 
+def _review_with_reasons(reasons):
+    from app.review import GameReview, MoveRecord
+    rec = MoveRecord(ply=0, number=1, color="white", san="Re1", uci="f1e1",
+                     fen_before=START, fen_after=START, eval_before_cp=0, eval_after_cp=-300,
+                     drop_pct=20.0, quality="mistake")
+    rec.explanation_primitives = {"reasons": reasons}
+    return GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+
+
+_TACTIC_REASONS = [
+    {"text": "Re1 does not address Qxh2#; the opponent gets a forcing move on h2",
+     "key": True, "squares": ["h2"], "keywords": ["mate"]},
+    {"text": "won a knight on b5", "key": False, "squares": ["b5"], "keywords": ["material", "won"]},
+]
+
+
+def test_evaluate_explanation_probes_when_key_reason_missing(stub_config):
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    result = tools.evaluate_explanation(START, "it pushes the queen away and gains tempo")
+    assert result["gradable"] is True
+    assert result["key_reason_named"] is False
+    assert "missing_key_reason" in result
+    assert "h2" in result["guidance"]  # the probe is anchored on the tactical square
+
+
+def test_evaluate_explanation_passes_when_key_reason_named(stub_config):
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    result = tools.evaluate_explanation(START, "it blocks e4 and stops the mate on h2")
+    assert result["key_reason_named"] is True
+    assert "submit_diagnosis" in result["guidance"]
+    assert "missing_key_reason" not in result
+
+
+def test_evaluate_explanation_no_key_reason_is_not_gradable(stub_config):
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons([_TACTIC_REASONS[1]])  # only the secondary (key=False)
+    result = tools.evaluate_explanation(START, "anything")
+    assert result["gradable"] is False
+
+
+def test_evaluate_explanation_unknown_fen_errors(stub_config):
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    assert "error" in tools.evaluate_explanation("8/8/8/8/8/8/8/K6k w - - 0 1", "x")
+
+
 def test_sparring_temperature_zero_is_argmax(stub_config):
     # P2-11c: spar_temperature=0 → always Maia's most likely move (deterministic),
     # even when a lower-prob move would sometimes win proportional sampling.
