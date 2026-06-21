@@ -24,7 +24,7 @@ import chess.pgn
 
 from app import trace as tracing
 from app.config import DEFAULT_USER_ELO
-from app.review import (GameReview, MoveRecord, review_game, _enrich_agenda,
+from app.review import (EngineUnavailable, GameReview, MoveRecord, review_game, _enrich_agenda,
                         detect_student_color, moment_digest_lines)
 
 # Bump when MoveRecord scan fields or classification change incompatibly.
@@ -102,7 +102,35 @@ def _scan_path(cache_dir: str, key: str) -> str:
     return os.path.join(cache_dir, "scans", f"{key}.json")
 
 
-def _load_cached_scan(cache_dir: str, key: str):
+def _scan_context(game, student_color: str, engines, config,
+                  scan_eval_time: float) -> dict:
+    """Inputs that can change a fast scan without changing its game key."""
+    stockfish = getattr(engines, "stockfish", None)
+    engine_id = getattr(stockfish, "id", None)
+    if isinstance(engine_id, dict):
+        engine_id = {str(k): str(v) for k, v in sorted(engine_id.items())}
+    elif engine_id is not None:
+        engine_id = str(engine_id)
+
+    return {
+        "source_sha256": hashlib.sha256(str(game).encode("utf-8")).hexdigest(),
+        "initial_fen": game.board().fen(),
+        "student_color": student_color,
+        "player_name": (getattr(config, "player_name", None) or "").strip().casefold(),
+        "user_elo": int(getattr(config, "user_elo", DEFAULT_USER_ELO)),
+        "eval_time": float(scan_eval_time),
+        "stockfish": {
+            "path": os.path.abspath(getattr(config, "stockfish_path", "") or ""),
+            "id": engine_id,
+            "threads": max(1, min(8, os.cpu_count() or 4)),
+            "hash_mb": 512,
+        },
+        "with_maia": False,
+        "enrich": False,
+    }
+
+
+def _load_cached_scan(cache_dir: str, key: str, expected_context: dict):
     path = _scan_path(cache_dir, key)
     if not os.path.exists(path):
         return None
@@ -110,6 +138,8 @@ def _load_cached_scan(cache_dir: str, key: str):
         with open(path, "r", encoding="utf-8") as f:
             scan = json.load(f)
         if scan.get("scan_version") != SCAN_VERSION:
+            return None
+        if scan.get("scan_context") != expected_context:
             return None
         return scan
     except (json.JSONDecodeError, OSError):
@@ -146,10 +176,11 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
         ucis = " ".join(m.uci() for m in game.mainline_moves())
         key = game_key_for(headers, ucis)
         skip = bool(getattr(config, "player_name", None)) and student_color is None
-        cached = None if skip else _load_cached_scan(cache_dir, key)
+        context = _scan_context(game, student_color, engines, config, scan_eval_time)
+        cached = None if skip else _load_cached_scan(cache_dir, key, context)
         n_plies = 0 if (skip or cached is not None) else (ucis.count(" ") + 1 if ucis else 0)
         grand_total += n_plies
-        plan.append((game, headers, key, skip, cached, n_plies))
+        plan.append((game, headers, key, context, skip, cached, n_plies))
 
     # review_game reports (ply, game_total); remap onto the batch-wide total so the
     # one bar advances monotonically and never resets between games.
@@ -159,7 +190,7 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
         if on_progress:
             on_progress(base + done, grand_total or 1)
 
-    for i, (game, headers, key, skip, cached, n_plies) in enumerate(plan, 1):
+    for i, (game, headers, key, context, skip, cached, n_plies) in enumerate(plan, 1):
         if skip:
             skipped += 1
             if on_status:
@@ -176,13 +207,14 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
             review = review_game(str(game), engines, config,
                                  on_progress=(batch_progress if on_progress else None),
                                  eval_time=scan_eval_time, with_maia=False, enrich=False)
-        except Exception as e:
-            # One game whose engine eval failed must not abort the whole batch, and
-            # must NOT be silently scored from fabricated evals — skip it loudly.
+        except EngineUnavailable as e:
+            # A game whose engine eval failed must not abort the whole batch, and must
+            # NOT be silently scored from fabricated evals — skip it loudly. Catch ONLY
+            # EngineUnavailable so a real bug (e.g. malformed record) still surfaces.
             skipped += 1
             base += n_plies
             if on_status:
-                on_status(f"game {i}/{n}: skipped (review failed: {e})")
+                on_status(f"game {i}/{n}: skipped (engine unavailable: {e})")
             continue
         if review is None:
             skipped += 1
@@ -193,6 +225,7 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
             "headers": headers,
             "student_color": review.student_color,
             "scan_version": SCAN_VERSION,
+            "scan_context": context,
             "scanned_with": {"eval_time": scan_eval_time, "with_maia": False},
             "eval_source": review.eval_source,   # "pgn" ([%eval]) or "engine" (local search)
             "records": [asdict(r) for r in review.records],

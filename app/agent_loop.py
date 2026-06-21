@@ -63,13 +63,19 @@ def run_agent_turn(chat, coach_tools, message) -> None:
     rounds = 0
 
     while True:
+        this_text = ""
         if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
                 if getattr(part, 'text', None):
-                    full_text += part.text + "\n"
+                    this_text += part.text + "\n"
 
         f_calls = _extract_function_calls(response)
         if not f_calls:
+            # Reveal-gating integrity: render ONLY the final, tool-free response.
+            # Text emitted ALONGSIDE a grading tool call (before reveal_allowed) is
+            # discarded — otherwise the model could blurt the withheld answer in the
+            # pre-tool text and have it shown regardless of the backend's verdict.
+            full_text = this_text
             break
 
         rounds += 1
@@ -77,8 +83,8 @@ def run_agent_turn(chat, coach_tools, message) -> None:
             # A confused model can otherwise request tools forever; per-call engine
             # caps don't bound the NUMBER of round trips. Stop the turn cleanly.
             trace(f"tool loop hit the {MAX_TOOL_ROUNDS}-round budget; aborting turn")
-            full_text += ("\n\n_(I got stuck cycling through analysis tools and stopped to avoid "
-                          "looping — please re-ask, perhaps more specifically.)_")
+            full_text = ("_(I got stuck cycling through analysis tools and stopped to avoid "
+                         "looping — please re-ask, perhaps more specifically.)_")
             break
 
         tool_parts = []

@@ -269,6 +269,8 @@ def test_batch_lessons_use_their_own_resume_slot(stub_config):
                              "lesson_status": "awaiting_answer"}
     state.review = batch
     rep = batch.records[0]
+    tools.evaluate_explanation(rep.fen_before, "not the key reason")
+    tools.evaluate_explanation(rep.fen_before, "still not the key reason")
     result = tools.submit_diagnosis(rep.fen_before, rep.recommended_diagnosis, "x", "y")
     assert result["success"] is True
     meta = state.lesson_metadata

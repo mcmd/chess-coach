@@ -34,6 +34,14 @@ class EngineManager:
             threads = max(1, min(8, os.cpu_count() or 4))
             self.stockfish.configure({"Threads": threads, "Hash": 512})
         except Exception as e:
+            # popen may have succeeded before configure() failed — don't leak that
+            # live process when the caller bails on EngineStartError.
+            if self.stockfish is not None:
+                try:
+                    self.stockfish.quit()
+                except Exception:
+                    pass
+                self.stockfish = None
             raise EngineStartError(
                 f"Could not start Stockfish at '{self.config.stockfish_path}': {e}"
             )

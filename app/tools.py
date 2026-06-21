@@ -566,36 +566,45 @@ class CoachTools:
         akey = f"explain:{fen}"
         result = {
             "gradable": True,
-            "key_reason": key["text"],
             "key_reason_named": key_named,
             "also_named": [r["text"] for r in reasons if not r.get("key") and named(r)],
         }
+        complete_key = f"explain-complete:{fen}"
         if key_named:
             attempts.pop(akey, None)
+            attempts[complete_key] = True
             result["probes_so_far"] = 0
+            result["reveal_allowed"] = True
+            result["key_reason"] = key["text"]
             result["guidance"] = ("The student named the load-bearing reason. Affirm briefly, then "
                                   "submit_diagnosis.")
+            self._persist_lesson_progress(fen, "awaiting_diagnosis")
             return result
 
         attempts[akey] = attempts.get(akey, 0) + 1
         n = attempts[akey]
         anchor = ", ".join(key.get("squares", []))
-        result["missing_key_reason"] = key["text"]
         result["probes_so_far"] = n
         if n >= 2:
+            attempts[complete_key] = True
             result["reveal_allowed"] = True
+            result["key_reason"] = key["text"]
+            result["missing_key_reason"] = key["text"]
             result["guidance"] = (
                 "The student has now missed the load-bearing reason twice. Stop probing: teach it "
                 "directly and kindly (the lesson matters more than the interrogation), then "
                 "submit_diagnosis.")
+            self._persist_lesson_progress(fen, "awaiting_diagnosis")
         else:
+            result["reveal_allowed"] = False
             result["guidance"] = (
-                "The student's explanation did NOT address the load-bearing reason above. Do not "
+                "The student's explanation did NOT address the load-bearing reason. Do not "
                 "rubber-stamp it and do not reveal the reason outright — PROBE it: ask a focused "
                 "question or give a hint pointing toward "
                 + (f"the {anchor} square / " if anchor else "")
                 + "the key idea, so the student finds it. Re-check with evaluate_explanation after "
                 "their reply.")
+            self._persist_lesson_progress(fen, "awaiting_explanation")
         return result
 
     def explain_move(self, fen: str, move_san: str) -> dict:
@@ -796,6 +805,17 @@ class CoachTools:
 
         record = self._agenda_record_for_fen(fen)
         recommended = getattr(record, "recommended_diagnosis", None) if record else None
+        reasons = ((getattr(record, "explanation_primitives", None) or {}).get("reasons")
+                   if record else [])
+        if any(reason.get("key") for reason in (reasons or [])):
+            complete_key = f"explain-complete:{fen}"
+            if not self.state.socratic_attempts.get(complete_key):
+                return {
+                    "error": ("Explanation grading is not complete for this position. Ask the "
+                              "student why the move works, then call evaluate_explanation before "
+                              "submitting the diagnosis."),
+                    "required_action": "evaluate_explanation",
+                }
         mismatch_warning = None
         if recommended and category != recommended:
             mismatch_warning = (f"Backend recommended '{recommended}' for this moment; "

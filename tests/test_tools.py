@@ -121,6 +121,8 @@ def test_diagnosis_rejects_mismatched_backend_recommendation_without_override(st
     fen = state.review.agenda[0].fen_before
     rec = state.review.agenda[0].recommended_diagnosis
     wrong = next(c for c in ERROR_TAXONOMY if c != rec)
+    tools.evaluate_explanation(fen, "not the key reason")
+    tools.evaluate_explanation(fen, "still not the key reason")
     result = tools.submit_diagnosis(fen, wrong, "x", "y")
     assert "error" in result
     assert result["recommended_diagnosis"] == rec
@@ -133,6 +135,8 @@ def test_diagnosis_allows_mismatched_backend_recommendation_with_override(stub_c
     fen = state.review.agenda[0].fen_before
     rec = state.review.agenda[0].recommended_diagnosis
     wrong = next(c for c in ERROR_TAXONOMY if c != rec)
+    tools.evaluate_explanation(fen, "not the key reason")
+    tools.evaluate_explanation(fen, "still not the key reason")
     result = tools.submit_diagnosis(fen, wrong, "x", "y", override_reason="Student explained a different root cause.")
     assert result["success"] is True
     assert "warning" in result
@@ -375,7 +379,9 @@ def test_evaluate_explanation_probes_when_key_reason_missing(stub_config):
     result = tools.evaluate_explanation(START, "it pushes the queen away and gains tempo")
     assert result["gradable"] is True
     assert result["key_reason_named"] is False
-    assert "missing_key_reason" in result
+    assert result["reveal_allowed"] is False
+    assert "missing_key_reason" not in result
+    assert "key_reason" not in result
     assert "h2" in result["guidance"]  # the probe is anchored on the tactical square
 
 
@@ -394,7 +400,8 @@ def test_evaluate_explanation_stops_probing_after_two_misses(stub_config):
     state.review = _review_with_reasons(_TACTIC_REASONS)
     r1 = tools.evaluate_explanation(START, "it gains tempo")
     r2 = tools.evaluate_explanation(START, "still just tempo")
-    assert r1["probes_so_far"] == 1 and "reveal_allowed" not in r1
+    assert r1["probes_so_far"] == 1 and r1["reveal_allowed"] is False
+    assert "key_reason" not in r1
     assert r2["probes_so_far"] == 2 and r2.get("reveal_allowed") is True
     assert "teach it directly" in r2["guidance"]
 
@@ -523,6 +530,8 @@ def test_final_diagnosis_marks_lesson_complete(stub_config):
     state.review = review_game(RPGN, _scripted_engines(), stub_config)
     state.current_game_id = "testgame1"
     record = state.review.agenda[-1]  # the ONLY agenda moment here
+    tools.evaluate_explanation(record.fen_before, "not the key reason")
+    tools.evaluate_explanation(record.fen_before, "still not the key reason")
     result = tools.submit_diagnosis(record.fen_before, record.recommended_diagnosis, "x", "y")
     assert result.get("success")
     assert state.lesson_metadata["lesson_status"] == "lesson_complete"
