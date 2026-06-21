@@ -498,6 +498,17 @@ def _header_elo(headers, key, fallback):
         return fallback
 
 
+def _parse_increment(headers) -> int:
+    """Increment seconds from the PGN TimeControl ("base+inc", e.g. "300+3"), else 0."""
+    tc = (headers.get("TimeControl") or "").strip()
+    if "+" in tc:
+        try:
+            return int(tc.split("+", 1)[1])
+        except (ValueError, IndexError):
+            return 0
+    return 0
+
+
 def resolve_student_elo(side: str, headers: dict, config, purpose: str):
     """The Elo for one purpose + its source (mirrors the eval_source honesty
     pattern, GT-12 / plan P0-4a). Returns (elo, source) with source ∈ {config, pgn}.
@@ -524,9 +535,12 @@ def detect_student_color(headers, config):
     name = (getattr(config, "player_name", None) or "").strip().casefold()
     if not name:
         return None
-    if name in headers.get("White", "").casefold():
+    # Exact (normalized) equality, not substring: substring made "ann" match
+    # "JoanneSmith". Lichess/chess.com headers are bare usernames, so case-folded
+    # exact match is correct; ties broken White-first by check order.
+    if name == (headers.get("White") or "").strip().casefold():
         return "white"
-    if name in headers.get("Black", "").casefold():
+    if name == (headers.get("Black") or "").strip().casefold():
         return "black"
     return None
 
@@ -561,6 +575,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     pgn_eval_moves = 0    # moves whose eval came from the PGN's [%eval] (not local engine)
     white_elo = _header_elo(headers, "WhiteElo", getattr(config, "user_elo", DEFAULT_USER_ELO))
     black_elo = _header_elo(headers, "BlackElo", getattr(config, "user_elo", DEFAULT_USER_ELO))
+    increment = _parse_increment(headers)  # clock added back per move (for think-time)
 
     scan_eval_time = float(eval_time) if eval_time is not None else float(
         getattr(config, "review_eval_time", 0.5))
@@ -598,7 +613,10 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         if clk is not None:
             clock_remaining = clk
             if ply >= 2 and nodes[ply - 2].clock() is not None:
-                time_spent = max(0.0, nodes[ply - 2].clock() - clk)
+                # think time = clock two plies ago + increment gained this move - now.
+                # Omitting the increment underestimates (often to 0) in increment games,
+                # producing false hope_chess / time_scramble flags.
+                time_spent = max(0.0, nodes[ply - 2].clock() + increment - clk)
 
         board.push(move)
         fen_after = board.fen()
@@ -727,16 +745,25 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
     return review
 
 
+class EngineUnavailable(RuntimeError):
+    """Stockfish evaluation failed and could not be recovered. Raised instead of
+    fabricating a 0.00 ('equal') eval — a silent zero invents chess truth, creating
+    phantom win%-swings, false blunders/slides, and bad agenda selection."""
+
+
 def _eval_with_best(engines, board: chess.Board, eval_time: float = 0.5):
     terminal = _terminal_eval_cp(board)
     if terminal is not None:
         return terminal, None
-    try:
-        with tracing.suspended():  # bulk scan: one trace line would become hundreds
-            score, best_uci = engines.quick_eval(board.fen(), eval_time)
-        return score.white().score(mate_score=MATE_CP), best_uci
-    except Exception:
-        return 0, None
+    last_err = None
+    for _ in range(2):  # one retry — a transient hiccup recovers; a dead engine won't
+        try:
+            with tracing.suspended():  # bulk scan: one trace line would become hundreds
+                score, best_uci = engines.quick_eval(board.fen(), eval_time)
+            return score.white().score(mate_score=MATE_CP), best_uci
+        except Exception as e:
+            last_err = e
+    raise EngineUnavailable(f"Stockfish evaluation failed for {board.fen()}: {last_err}") from last_err
 
 
 def _check_avoided_natural_mistake(engines, fen_before, mover_white, before_m,
@@ -800,7 +827,11 @@ def _select_agenda(records, student_color, agenda_size, forced_plies=()):
         return [r for r in records
                 if r.drop_pct >= 10 and (color_filter is None or r.color == color_filter)]
 
-    pool = candidates(student_color) or candidates(None)
+    # Only widen to BOTH colours when we don't know the student's side. With a
+    # known side and no student mistakes, the agenda must stay empty (→ "praise the
+    # accuracy") — never fall back to coaching the OPPONENT's blunders as if they
+    # were the student's. (Audit: clean student game taught a Black blunder.)
+    pool = candidates(student_color) if student_color else candidates(None)
     pool.sort(key=lambda r: r.drop_pct, reverse=True)
     chosen = {r.ply for r in pool[:agenda_size]}
     chosen |= {p for p in forced_plies if 0 <= p < len(records)}

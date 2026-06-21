@@ -388,6 +388,17 @@ def test_evaluate_explanation_passes_when_key_reason_named(stub_config):
     assert "missing_key_reason" not in result
 
 
+def test_evaluate_explanation_stops_probing_after_two_misses(stub_config):
+    # Backend-enforced probe budget: after two misses, tell the coach to teach it.
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    r1 = tools.evaluate_explanation(START, "it gains tempo")
+    r2 = tools.evaluate_explanation(START, "still just tempo")
+    assert r1["probes_so_far"] == 1 and "reveal_allowed" not in r1
+    assert r2["probes_so_far"] == 2 and r2.get("reveal_allowed") is True
+    assert "teach it directly" in r2["guidance"]
+
+
 def test_evaluate_explanation_no_key_reason_is_not_gradable(stub_config):
     tools, state = make_tools(stub_config)
     state.review = _review_with_reasons([_TACTIC_REASONS[1]])  # only the secondary (key=False)

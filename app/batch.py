@@ -172,9 +172,18 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
             continue
         if on_status:
             on_status(f"game {i}/{n}: scanning ({key})")
-        review = review_game(str(game), engines, config,
-                             on_progress=(batch_progress if on_progress else None),
-                             eval_time=scan_eval_time, with_maia=False, enrich=False)
+        try:
+            review = review_game(str(game), engines, config,
+                                 on_progress=(batch_progress if on_progress else None),
+                                 eval_time=scan_eval_time, with_maia=False, enrich=False)
+        except Exception as e:
+            # One game whose engine eval failed must not abort the whole batch, and
+            # must NOT be silently scored from fabricated evals — skip it loudly.
+            skipped += 1
+            base += n_plies
+            if on_status:
+                on_status(f"game {i}/{n}: skipped (review failed: {e})")
+            continue
         if review is None:
             skipped += 1
             base += n_plies

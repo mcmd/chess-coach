@@ -493,6 +493,53 @@ def test_aspirational_instinct_from_stronger_maia():
     assert "growing toward" in review.digest()
 
 
+def test_detect_student_color_exact_not_substring():
+    # Audit: substring matching let "Ann" match "JoanneSmith". Exact normalized only.
+    from app.review import detect_student_color
+
+    class C:
+        player_name = "Ann"
+
+    assert detect_student_color({"White": "JoanneSmith", "Black": "Ann"}, C()) == "black"
+    assert detect_student_color({"White": "ann", "Black": "Bob"}, C()) == "white"   # case-insensitive
+    assert detect_student_color({"White": "Joanne", "Black": "Bob"}, C()) is None   # no substring hit
+
+
+def test_agenda_empty_for_clean_student_even_if_opponent_blundered():
+    # Audit: a clean student game must NOT coach the opponent's blunders.
+    import chess
+    from app.review import _select_agenda, MoveRecord
+
+    def rec(ply, color, drop):
+        return MoveRecord(ply=ply, number=ply // 2 + 1, color=color, san="x", uci="a2a3",
+                          fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                          eval_before_cp=0, eval_after_cp=0, drop_pct=drop, quality="x")
+
+    records = [rec(0, "white", 2), rec(1, "black", 40), rec(2, "white", 1)]
+    assert _select_agenda(records, "white", 4) == []     # student clean → no agenda
+    assert _select_agenda(records, None, 4) == [1]        # unknown side → widen to both
+
+
+def test_review_aborts_on_engine_failure_instead_of_fabricating_zero():
+    # Audit: a Stockfish failure must surface, never become a 0.00 ("equal") eval.
+    import pytest
+    from app.review import EngineUnavailable
+
+    class Boom(FakeEngines):
+        def quick_eval(self, fen, time_limit=0.3):
+            raise RuntimeError("stockfish died")
+
+    with pytest.raises(EngineUnavailable):
+        review_game(PGN, Boom(), _Cfg())
+
+
+def test_parse_increment():
+    from app.review import _parse_increment
+    assert _parse_increment({"TimeControl": "300+3"}) == 3
+    assert _parse_increment({"TimeControl": "600"}) == 0
+    assert _parse_increment({}) == 0
+
+
 def test_reason_set_marks_forcing_tactic_as_key():
     # P0-2: a forcing tactic is the load-bearing reason — keyed, anchored on the
     # target square, with the motif as a sayable keyword.

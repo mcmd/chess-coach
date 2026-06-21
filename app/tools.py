@@ -558,6 +558,12 @@ class CoachTools:
 
         key = key_reasons[0]
         key_named = named(key)
+        # Backend-enforced probe budget (not prompt-trusted): count probes per FEN so
+        # the coach can't loop on the same missing-reason verdict forever — after two
+        # tries it is told to teach the reason and move on (mirrors the move-grading
+        # two-attempt reveal). Reset once the student gets it.
+        attempts = self.state.socratic_attempts
+        akey = f"explain:{fen}"
         result = {
             "gradable": True,
             "key_reason": key["text"],
@@ -565,18 +571,31 @@ class CoachTools:
             "also_named": [r["text"] for r in reasons if not r.get("key") and named(r)],
         }
         if key_named:
+            attempts.pop(akey, None)
+            result["probes_so_far"] = 0
             result["guidance"] = ("The student named the load-bearing reason. Affirm briefly, then "
                                   "submit_diagnosis.")
+            return result
+
+        attempts[akey] = attempts.get(akey, 0) + 1
+        n = attempts[akey]
+        anchor = ", ".join(key.get("squares", []))
+        result["missing_key_reason"] = key["text"]
+        result["probes_so_far"] = n
+        if n >= 2:
+            result["reveal_allowed"] = True
+            result["guidance"] = (
+                "The student has now missed the load-bearing reason twice. Stop probing: teach it "
+                "directly and kindly (the lesson matters more than the interrogation), then "
+                "submit_diagnosis.")
         else:
-            anchor = ", ".join(key.get("squares", []))
-            result["missing_key_reason"] = key["text"]
             result["guidance"] = (
                 "The student's explanation did NOT address the load-bearing reason above. Do not "
                 "rubber-stamp it and do not reveal the reason outright — PROBE it: ask a focused "
                 "question or give a hint pointing toward "
                 + (f"the {anchor} square / " if anchor else "")
                 + "the key idea, so the student finds it. Re-check with evaluate_explanation after "
-                "their reply, and only submit_diagnosis once it is addressed (or after two tries).")
+                "their reply.")
         return result
 
     def explain_move(self, fen: str, move_san: str) -> dict:
@@ -1042,7 +1061,10 @@ class CoachTools:
             }
         try:
             url = f"https://lichess.org/game/export/{game_id}"
-            params = {"evals": "false", "clocks": "true", "opening": "true", "tags": "true"}
+            # evals=true: pull Lichess's deep server [%eval] so the review uses the
+            # trusted eval source (GT-12) when the game was analysed, instead of
+            # falling back to short local Stockfish searches. (No-op if unanalysed.)
+            params = {"evals": "true", "clocks": "true", "opening": "true", "tags": "true"}
             r = requests.get(url, params=params, headers={"Accept": "application/x-chess-pgn"}, timeout=15)
             if r.status_code == 404:
                 return {"error": f"Game with ID '{game_id}' not found."}
