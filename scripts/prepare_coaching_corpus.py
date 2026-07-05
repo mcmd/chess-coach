@@ -109,12 +109,15 @@ def main(argv=None) -> int:
                 "review": review_proposal_packet(review),
                 "human_decision": {
                     "approve_fixture": None,
+                    "reviewed_by": None,
+                    "reviewed_on": None,
                     "agenda_must_include": [],
                     "agenda_must_exclude": [],
                     "diagnosis_by_ply": {},
                     "key_reason_tokens_by_ply": {},
                     "together_plies": [],
                     "separate_plies": [],
+                    "slide_count": None,
                     "notes": "",
                 },
             }

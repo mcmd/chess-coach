@@ -13,15 +13,17 @@ from scripts.triage_coaching_corpus import analyse_side
 CORPUS = Path(__file__).parent / "fixtures" / "coaching" / "manifest.json"
 
 
-def test_p0_5b_sources_are_valid_but_human_gate_is_explicitly_pending():
+def test_p0_5b_sources_are_valid_and_human_gate_tracks_manifest_progress():
     report = validate_corpus_manifest(CORPUS)
+    manifest = json.loads(CORPUS.read_text(encoding="utf-8"))
+    statuses = [fixture["review_status"] for fixture in manifest["fixtures"]]
 
     assert report["source_errors"] == []
     assert report["label_errors"] == []
     assert report["total"] == 10
-    assert report["pending"] == 10
-    assert report["approved"] == 0
-    assert report["ready"] is False
+    assert report["pending"] == statuses.count("pending_human")
+    assert report["approved"] == statuses.count("approved")
+    assert report["ready"] is (report["approved"] >= manifest["minimum_approved"])
     assert all(item["source_valid"] for item in report["fixtures"])
 
 
@@ -31,6 +33,9 @@ def test_approved_fixture_requires_human_identity_date_and_assertions(tmp_path):
     source = CORPUS.parent / fixture["pgn"]
     shutil.copyfile(source, tmp_path / fixture["pgn"])
     fixture["review_status"] = "approved"
+    fixture["reviewed_by"] = None
+    fixture["reviewed_on"] = None
+    fixture["expected"] = {}
     manifest["fixtures"] = [fixture]
     manifest["minimum_approved"] = 1
     candidate = tmp_path / "manifest.json"

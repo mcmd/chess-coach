@@ -10,12 +10,48 @@
       "sha256": "8c118166abc3279d1236be0691852180dfa14d66dc6884ba49290ab01ecbee4a",
       "student_color": "white",
       "student_name": "msnid",
-      "purposes": ["single_clear_blunder", "reason_grading", "number_tokens"],
+      "purposes": [
+        "single_clear_blunder",
+        "reason_grading",
+        "number_tokens"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "white",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          14,
+          30,
+          38
+        ],
+        "agenda_must_exclude": [
+          12
+        ],
+        "diagnosis_by_ply": {
+          "14": "ignored_threat",
+          "30": "ignored_threat",
+          "38": "king_safety"
+        },
+        "key_reason_tokens_by_ply": {
+          "14": [
+            "h3"
+          ],
+          "30": [
+            "Bxd2",
+            "Qxa1"
+          ],
+          "38": [
+            "Rxe8",
+            "mate"
+          ]
+        },
+        "together_plies": [],
+        "separate_plies": [],
+        "slide_count": 0
+      }
     },
     {
       "id": "U12KR7WO",
@@ -23,12 +59,37 @@
       "sha256": "df5ad81a3777105e0189eb01695177b8a257735d6b7942b10bc9fb5821fedfd7",
       "student_color": "white",
       "student_name": "SmokikoSmoke",
-      "purposes": ["single_clear_blunder", "reason_grading"],
+      "purposes": [
+        "single_clear_blunder",
+        "reason_grading"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "white",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          10,
+          14,
+          30
+        ],
+        "agenda_must_exclude": [],
+        "diagnosis_by_ply": {
+          "10": "ignored_threat",
+          "14": "hanging_piece",
+          "30": "ignored_threat"
+        },
+        "key_reason_tokens_by_ply": {
+          "10": [
+            "f3"
+          ]
+        },
+        "together_plies": [],
+        "separate_plies": [],
+        "slide_count": 0
+      }
     },
     {
       "id": "1UWesR6w",
@@ -36,12 +97,69 @@
       "sha256": "a9e002c8ecc473cf306b6ed440a9032173fe49351885c93fae2819228f3a5fb6",
       "student_color": "black",
       "student_name": "Munziyana",
-      "purposes": ["single_clear_blunder", "reason_grading"],
+      "purposes": [
+        "single_clear_blunder",
+        "reason_grading"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "black",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          53,
+          73,
+          77,
+          79
+        ],
+        "agenda_must_exclude": [
+          21,
+          29,
+          61
+        ],
+        "diagnosis_by_ply": {
+          "53": "king_safety",
+          "73": "ignored_threat",
+          "77": "king_safety",
+          "79": "king_safety"
+        },
+        "key_reason_tokens_by_ply": {
+          "53": [
+            "Qf4"
+          ]
+        },
+        "together_plies": [
+          [
+            77,
+            79
+          ]
+        ],
+        "separate_plies": [
+          [
+            53,
+            73
+          ],
+          [
+            53,
+            77
+          ],
+          [
+            53,
+            79
+          ],
+          [
+            73,
+            77
+          ],
+          [
+            73,
+            79
+          ]
+        ],
+        "slide_count": 0
+      }
     },
     {
       "id": "m6oX8gmL",
@@ -49,12 +167,75 @@
       "sha256": "9be48238bd05b3f0529d3cfdb63e705820290795dd4855835e61fc2c48541601",
       "student_color": "white",
       "student_name": "Munziyana",
-      "purposes": ["single_clear_blunder", "reason_grading"],
+      "purposes": [
+        "single_clear_blunder",
+        "reason_grading"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "white",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          38,
+          46,
+          56,
+          62
+        ],
+        "agenda_must_exclude": [
+          24,
+          26
+        ],
+        "diagnosis_by_ply": {
+          "38": "bad_trade",
+          "46": "calculation_error",
+          "56": "king_safety",
+          "62": "king_safety"
+        },
+        "key_reason_tokens_by_ply": {
+          "46": [
+            "d4",
+            "fork"
+          ],
+          "56": [
+            "Rxa2",
+            "Bd4"
+          ],
+          "62": [
+            "mate"
+          ]
+        },
+        "together_plies": [],
+        "separate_plies": [
+          [
+            38,
+            46
+          ],
+          [
+            38,
+            56
+          ],
+          [
+            38,
+            62
+          ],
+          [
+            46,
+            56
+          ],
+          [
+            56,
+            62
+          ],
+          [
+            46,
+            62
+          ]
+        ],
+        "slide_count": 0
+      }
     },
     {
       "id": "Pet0TV5g",
@@ -62,12 +243,57 @@
       "sha256": "7aa80e76c64e86577234c16739539c7f897e185975bd898283d0581a14fae118",
       "student_color": "black",
       "student_name": "msnid",
-      "purposes": ["multi_error", "theme_clustering"],
+      "purposes": [
+        "multi_error",
+        "theme_clustering"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "black",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          9,
+          25,
+          33
+        ],
+        "agenda_must_exclude": [],
+        "diagnosis_by_ply": {
+          "9": "bad_trade",
+          "25": "bad_trade",
+          "33": "hanging_piece"
+        },
+        "key_reason_tokens_by_ply": {
+          "9": [
+            "f2"
+          ],
+          "25": [
+            "e2"
+          ],
+          "33": [
+            "c2"
+          ]
+        },
+        "together_plies": [
+          [
+            9,
+            25
+          ]
+        ],
+        "separate_plies": [
+          [
+            9,
+            33
+          ],
+          [
+            25,
+            33
+          ]
+        ],
+        "slide_count": 0
+      }
     },
     {
       "id": "iJX5r6vw",
@@ -75,12 +301,71 @@
       "sha256": "afee9e0b4ce4f06f459ad488024667af73977cf4214a5c2436b198c23fd3a74c",
       "student_color": "black",
       "student_name": "Crapulin",
-      "purposes": ["multi_error", "theme_clustering"],
+      "purposes": [
+        "multi_error",
+        "theme_clustering"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "black",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          17,
+          23,
+          59,
+          61
+        ],
+        "agenda_must_exclude": [],
+        "diagnosis_by_ply": {
+          "17": "bad_trade",
+          "23": "calculation_error",
+          "59": "calculation_error",
+          "61": "king_safety"
+        },
+        "key_reason_tokens_by_ply": {
+          "23": [
+            "c6"
+          ],
+          "59": [
+            "g3"
+          ],
+          "61": [
+            "pin"
+          ]
+        },
+        "together_plies": [
+          [
+            17,
+            23
+          ],
+          [
+            59,
+            61
+          ]
+        ],
+        "separate_plies": [
+          [
+            17,
+            59
+          ],
+          [
+            17,
+            61
+          ],
+          [
+            23,
+            59
+          ],
+          [
+            23,
+            61
+          ]
+        ],
+        "slide_count": 1
+      }
     },
     {
       "id": "ZU8uPxvn",
@@ -88,12 +373,62 @@
       "sha256": "a6b495ac39cc78498ac739f62e84a3e5577ee46214e687629aa6bd666b89c837",
       "student_color": "black",
       "student_name": "Munziyana",
-      "purposes": ["multi_error", "theme_clustering"],
+      "purposes": [
+        "multi_error",
+        "theme_clustering"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "black",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          19,
+          21,
+          29
+        ],
+        "agenda_must_exclude": [
+          15,
+          35
+        ],
+        "diagnosis_by_ply": {
+          "19": "premature_attack",
+          "21": "ignored_threat",
+          "29": "bad_trade"
+        },
+        "key_reason_tokens_by_ply": {
+          "19": [
+            "e6",
+            "pin"
+          ],
+          "21": [
+            "e6",
+            "pin"
+          ],
+          "29": [
+            "e5"
+          ]
+        },
+        "together_plies": [
+          [
+            19,
+            21
+          ]
+        ],
+        "separate_plies": [
+          [
+            19,
+            29
+          ],
+          [
+            21,
+            29
+          ]
+        ],
+        "slide_count": 0
+      }
     },
     {
       "id": "lXewiepo",
@@ -101,12 +436,37 @@
       "sha256": "4b92dced6c3ab8d15d1ee120657ab9d6e19695f86e81a876fb78b5cf19b9b952",
       "student_color": "white",
       "student_name": "onrDRK",
-      "purposes": ["cumulative_slide", "meta_pattern"],
+      "purposes": [
+        "cumulative_slide",
+        "meta_pattern"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "white",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          26
+        ],
+        "agenda_must_exclude": [
+          4,
+          28
+        ],
+        "diagnosis_by_ply": {
+          "26": "bad_trade"
+        },
+        "key_reason_tokens_by_ply": {
+          "26": [
+            "d1",
+            "pin"
+          ]
+        },
+        "together_plies": [],
+        "separate_plies": [],
+        "slide_count": 1
+      }
     },
     {
       "id": "JI23vCkO",
@@ -114,12 +474,39 @@
       "sha256": "721710007fa18d635d7fb67910c7aae50ce8e888aa90fc6d208a4ac5f43f9034",
       "student_color": "white",
       "student_name": "msnid",
-      "purposes": ["single_inaccuracy", "phase_boundary_negative_control", "criticality_selection"],
+      "purposes": [
+        "single_inaccuracy",
+        "phase_boundary_negative_control",
+        "criticality_selection"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "white",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          16
+        ],
+        "agenda_must_exclude": [
+          22,
+          24
+        ],
+        "diagnosis_by_ply": {
+          "16": "premature_attack"
+        },
+        "key_reason_tokens_by_ply": {
+          "16": [
+            "e2",
+            "pin",
+            "skewer"
+          ]
+        },
+        "together_plies": [],
+        "separate_plies": [],
+        "slide_count": 3
+      }
     },
     {
       "id": "zKB100Ki",
@@ -127,12 +514,39 @@
       "sha256": "3ae1e1b8def76dad3ad897540c847180f2a4c898ff33b13c87847994cbb26da1",
       "student_color": "black",
       "student_name": "msnid",
-      "purposes": ["cumulative_slide", "meta_pattern", "partial_eval_coverage"],
+      "purposes": [
+        "cumulative_slide",
+        "meta_pattern",
+        "partial_eval_coverage"
+      ],
       "minimum_eval_coverage": 0.95,
-      "review_status": "pending_human",
-      "reviewed_by": null,
-      "reviewed_on": null,
-      "expected": {}
+      "review_status": "approved",
+      "reviewed_by": "mcmd",
+      "reviewed_on": "2026-07-05",
+      "expected": {
+        "student_color": "black",
+        "eval_source": "pgn",
+        "agenda_must_include": [
+          23
+        ],
+        "agenda_must_exclude": [
+          19,
+          25
+        ],
+        "diagnosis_by_ply": {
+          "23": "ignored_threat"
+        },
+        "key_reason_tokens_by_ply": {
+          "23": [
+            "h5",
+            "pin",
+            "skewer"
+          ]
+        },
+        "together_plies": [],
+        "separate_plies": [],
+        "slide_count": 1
+      }
     }
   ]
 }
