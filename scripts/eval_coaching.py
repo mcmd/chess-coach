@@ -112,6 +112,109 @@ def check_review(review, spec: dict) -> list:
     return failures
 
 
+def _motif_names(motifs: list) -> list:
+    return sorted({motif.get("motif") for motif in motifs or [] if motif.get("motif")})
+
+
+def _line_provenance(record, *, line_name: str, line: list, fen: str, meaning: str) -> dict:
+    return {
+        "source": "stockfish_deep_enrichment" if line else None,
+        "line_name": line_name,
+        "position_fen": fen,
+        "meaning": meaning,
+        "line": line,
+        "root_move": line[0] if line else None,
+    }
+
+
+def _reason_provenance(record, reason: dict) -> dict:
+    primitives = getattr(record, "explanation_primitives", None) or {}
+    source = "unknown"
+    source_line = None
+    if reason.get("key") and primitives.get("forcing_move"):
+        source = "forcing_punishment_after_played_move"
+        source_line = "punishment_line"
+    elif reason.get("key") and primitives.get("why_best_move_works"):
+        source = "best_move_improvement_line"
+        source_line = "best_line"
+    elif "material" in set(reason.get("keywords") or []):
+        source = "played_capture_temptation"
+    return {
+        "text": reason.get("text"),
+        "source": source,
+        "source_line": source_line,
+        "squares": reason.get("squares") or [],
+        "keywords": reason.get("keywords") or [],
+    }
+
+
+def _candidate_evidence_provenance(review, record, key_reasons: list) -> dict:
+    """Expose where each proposal field came from.
+
+    This is intentionally descriptive. It does not make the proposal ground
+    truth; it gives the human reviewer enough source/depth/line context to
+    reject stale or incidental motifs without reverse-engineering the engine PV.
+    """
+    return {
+        "schema_version": 1,
+        "evaluation": {
+            "source": review.eval_source,
+            "eval_before_cp_white": record.eval_before_cp,
+            "eval_after_cp_white": record.eval_after_cp,
+            "drop_pct_mover": record.drop_pct,
+            "quality": record.quality,
+        },
+        "agenda_selection": {
+            "source": "review.agenda_plies",
+            "selected": record.ply in review.agenda_plies,
+            "agenda_plies": review.agenda_plies,
+        },
+        "best_line": _line_provenance(
+            record,
+            line_name="best_line",
+            line=record.best_line,
+            fen=record.fen_before,
+            meaning="engine line for the best move from the position before the student move",
+        ),
+        "punishment_line": _line_provenance(
+            record,
+            line_name="punishment_line",
+            line=record.punishment_line,
+            fen=record.fen_after,
+            meaning="engine line after the played move, showing the opponent's punishment",
+        ),
+        "motifs": {
+            "field": "motifs",
+            "source": "best_line_motifs",
+            "source_line": "best_line",
+            "position_fen": record.fen_before,
+            "motif_names": _motif_names(record.best_line_motifs),
+            "note": "These motifs come from the best/improvement line, not necessarily the played-move punishment.",
+        },
+        "punishment_motifs": {
+            "source": "punishment_line_motifs",
+            "source_line": "punishment_line",
+            "position_fen": record.fen_after,
+            "motifs": record.motifs,
+            "motif_names": _motif_names(record.motifs),
+        },
+        "diagnosis": {
+            "source": "backend_recommended_diagnosis",
+            "recommended_diagnosis": record.recommended_diagnosis,
+            "lesson_objective": record.lesson_objective,
+            "suggested_categories": record.suggested_categories,
+            "inputs": {
+                "is_capture": record.is_capture,
+                "time_flag": record.time_flag,
+                "best_line_motif_names": _motif_names(record.best_line_motifs),
+                "punishment_motif_names": _motif_names(record.motifs),
+                "punishment_first_move": record.punishment_line[0] if record.punishment_line else None,
+            },
+        },
+        "key_reasons": [_reason_provenance(record, reason) for reason in key_reasons],
+    }
+
+
 def review_proposal_packet(review) -> dict:
     """Engine-derived evidence for a human labeler, never ground truth itself."""
     student_records = [record for record in review.records
@@ -136,6 +239,7 @@ def review_proposal_packet(review) -> dict:
             "motifs": record.best_line_motifs,
             "key_reasons": key_reasons,
             "initial_question": record.initial_question,
+            "evidence_provenance": _candidate_evidence_provenance(review, record, key_reasons),
         })
     return {
         "notice": "PROPOSAL ONLY: engine-derived evidence for human review; not an approved label.",

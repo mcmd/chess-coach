@@ -60,8 +60,12 @@ def test_human_selection_and_reason_assertions_are_machine_checkable():
     record = SimpleNamespace(
         ply=4, color="white", move_label="3. Bb5", san="Bb5", best_move_label="3. d4",
         drop_pct=18.0, quality="inaccuracy", phase="opening",
+        eval_before_cp=30, eval_after_cp=-80, fen_before="before", fen_after="after",
+        best_line=["d4", "exd4"], punishment_line=["axb5"], motifs=[],
         recommended_diagnosis="priority_selection", lesson_objective="choose_priority",
-        best_line_motifs=[], initial_question="What matters most?",
+        suggested_categories=["priority_selection"], is_capture=False, time_flag=None,
+        best_line_motifs=[{"motif": "pin", "move": "d4", "detail": "example"}],
+        initial_question="What matters most?",
         explanation_primitives={
             "reasons": [{"key": True, "text": "controls d4", "squares": ["d4"],
                          "keywords": ["center"]}]},
@@ -82,7 +86,13 @@ def test_human_selection_and_reason_assertions_are_machine_checkable():
     assert check_review(review, spec) == []
     assert check_review(review, {"agenda_must_exclude": [4]})
     packet = review_proposal_packet(review)
-    assert packet["candidates"][0]["recommended_diagnosis"] == "priority_selection"
+    candidate = packet["candidates"][0]
+    assert candidate["recommended_diagnosis"] == "priority_selection"
+    assert candidate["evidence_provenance"]["evaluation"]["source"] == "pgn"
+    assert candidate["evidence_provenance"]["motifs"]["source_line"] == "best_line"
+    assert candidate["evidence_provenance"]["punishment_line"]["position_fen"] == "after"
+    assert candidate["evidence_provenance"]["diagnosis"]["suggested_categories"] == [
+        "priority_selection"]
     assert packet["notice"].startswith("PROPOSAL ONLY")
 
 
