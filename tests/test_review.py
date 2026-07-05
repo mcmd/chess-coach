@@ -520,6 +520,46 @@ def test_agenda_empty_for_clean_student_even_if_opponent_blundered():
     assert _select_agenda(records, None, 4) == [1]        # unknown side → widen to both
 
 
+def test_agenda_criticality_uses_capped_human_danger_without_reclassifying():
+    # P0-1b: the agenda is no longer pure raw drop. A nearby mistake with strong
+    # human-danger/typicality evidence can be more instructive, but provisional
+    # Maia/local-eval signals are capped and do not rewrite severity.
+    import chess
+    from app.review import _select_agenda, MoveRecord
+
+    def rec(ply, drop, quality, *, danger=None, played_prob=None, best_prob=None):
+        return MoveRecord(
+            ply=ply, number=ply // 2 + 1, color="white", san="x", uci="a2a3",
+            fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+            eval_before_cp=0, eval_after_cp=0, drop_pct=drop, quality=quality,
+            maia_played_prob=played_prob, best_move_human_prob=best_prob,
+            human_danger=danger or {},
+        )
+
+    raw_higher = rec(0, 22.0, "mistake")
+    human_dangerous = rec(
+        2, 21.0, "mistake",
+        played_prob=0.35,
+        best_prob=0.05,
+        danger={
+            "available": True,
+            "provisional": True,
+            "source": "maia_top_moves_plus_local_quick_eval",
+            "bad_or_worse_mass": 0.70,
+            "mistake_or_blunder_mass": 0.70,
+        },
+    )
+    large_blunder = rec(4, 35.0, "blunder")
+
+    assert _select_agenda([raw_higher, human_dangerous], "white", 1) == [2]
+    assert human_dangerous.quality == "mistake"
+    assert human_dangerous.drop_pct == 21.0
+    assert human_dangerous.agenda_score["human_boost"] == 10.0
+    assert human_dangerous.agenda_score["human_danger_provisional"] is True
+
+    assert _select_agenda([raw_higher, human_dangerous, large_blunder], "white", 1) == [4]
+
+
 def test_review_aborts_on_engine_failure_instead_of_fabricating_zero():
     # Audit: a Stockfish failure must surface, never become a 0.00 ("equal") eval.
     import pytest

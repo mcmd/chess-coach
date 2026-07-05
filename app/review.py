@@ -18,6 +18,7 @@ import chess.pgn
 
 from app.concepts import get_game_phase
 from app.config import DEFAULT_USER_ELO
+from app.human_danger import empty_human_danger, human_danger_mass_for_record
 from app.motifs import detect_motifs_in_line
 from app import trace as tracing
 
@@ -120,6 +121,8 @@ class MoveRecord:
     initial_question: str = None
     question_ladder: dict = field(default_factory=dict)
     explanation_primitives: dict = field(default_factory=dict)
+    human_danger: dict = field(default_factory=dict)  # provisional internal P0-1b ranking signal
+    agenda_score: dict = field(default_factory=dict)  # non-narrated criticality components
 
     @property
     def move_label(self) -> str:
@@ -738,6 +741,12 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         except Exception:
             pass
     forced_plies += _opening_deviation_ply(review)
+    _attach_agenda_human_danger(
+        records, student_color, agenda_size, engines,
+        white_elo=white_elo, black_elo=black_elo,
+        eval_time=min(float(eval_time_ply), 0.3) if eval_time_ply else 0.2,
+        enabled=with_maia,
+    )
     review.agenda_plies = _select_agenda(records, student_color, agenda_size, forced_plies)
     _enrich_agenda(review, engines, online)
     _apply_opening_moment(review)
@@ -820,19 +829,116 @@ def _uci_to_san(fen: str, uci: str):
         return None
 
 
+def _agenda_candidate_records(records, student_color):
+    return [r for r in records
+            if r.drop_pct >= 10 and (student_color is None or r.color == student_color)]
+
+
+def _typicality_elo_for_record(record: MoveRecord, white_elo: int, black_elo: int):
+    return white_elo if record.color == "white" else black_elo
+
+
+def _attach_agenda_human_danger(records, student_color, agenda_size: int, engines, *,
+                                white_elo: int, black_elo: int, eval_time: float,
+                                enabled: bool = True) -> None:
+    """Compute the cheap P0-1b danger signal only where it can affect selection.
+
+    Candidate eligibility remains the calibrated eval-drop rule. This pass only
+    fills a bounded, explicitly provisional tie/priority signal for the strongest
+    candidate mistakes, not a whole-game root-move map.
+    """
+    for record in records:
+        record.human_danger = empty_human_danger(record, "not_computed")
+
+    if not enabled or not getattr(engines, "stockfish", None):
+        reason = "maia_disabled" if not enabled else "engine_unavailable"
+        for record in _agenda_candidate_records(records, student_color):
+            record.human_danger = empty_human_danger(record, reason)
+        return
+
+    pool = sorted(_agenda_candidate_records(records, student_color),
+                  key=lambda r: (r.drop_pct, -r.ply), reverse=True)
+    limit = max(agenda_size * 3, agenda_size + 4)
+    for record in pool[:limit]:
+        if not record.maia_top:
+            record.human_danger = empty_human_danger(record, "no_maia_top_moves")
+            continue
+        try:
+            record.human_danger = human_danger_mass_for_record(
+                record, engines,
+                elo=_typicality_elo_for_record(record, white_elo, black_elo),
+                eval_time=eval_time,
+            )
+        except Exception as exc:
+            record.human_danger = empty_human_danger(record, f"probe_failed:{type(exc).__name__}")
+
+
+def _agenda_score_components(record: MoveRecord) -> dict:
+    """Internal criticality score for P0-1b agenda ranking.
+
+    The base remains the calibrated win%-drop. Maia/local-eval factors are capped
+    boosts for teachability and human-likelihood only; they never rewrite
+    `quality`, `drop_pct`, slide detection, or human corpus labels.
+    """
+    danger = record.human_danger or empty_human_danger(record, "not_computed")
+    danger_boost = 0.0
+    if danger.get("available"):
+        bad_mass = float(danger.get("bad_or_worse_mass") or 0.0)
+        mb_mass = float(danger.get("mistake_or_blunder_mass") or 0.0)
+        danger_boost = min(8.0, (bad_mass * 5.0) + (mb_mass * 7.0))
+
+    played_prob = record.maia_played_prob if record.maia_played_prob is not None else 0.0
+    if played_prob >= 0.30:
+        typicality_boost = 4.0
+    elif played_prob >= 0.20:
+        typicality_boost = 2.0
+    else:
+        typicality_boost = 0.0
+
+    best_prob = record.best_move_human_prob
+    if best_prob is None:
+        findability_boost = 0.0
+    elif best_prob <= 0.10:
+        findability_boost = 3.0
+    elif best_prob <= 0.20:
+        findability_boost = 1.5
+    else:
+        findability_boost = 0.0
+
+    human_boost = min(10.0, danger_boost + typicality_boost + findability_boost)
+    total = round(record.drop_pct + human_boost, 2)
+    return {
+        "schema_version": 1,
+        "base_drop_pct": record.drop_pct,
+        "human_boost_cap": 10.0,
+        "human_danger_boost": round(danger_boost, 2),
+        "maia_typicality_boost": round(typicality_boost, 2),
+        "findability_boost": round(findability_boost, 2),
+        "human_boost": round(human_boost, 2),
+        "total": total,
+        "human_danger_available": bool(danger.get("available")),
+        "human_danger_provisional": bool(danger.get("provisional", True)),
+        "human_danger_source": danger.get("source"),
+        "note": "Internal ranking only; severity remains drop_pct/quality from the calibrated eval stream.",
+    }
+
+
 def _select_agenda(records, student_color, agenda_size, forced_plies=()):
-    """Top win%-drop moments, plus moments FORCED by provable evidence the eval
-    swing can miss (tablebase category flips, costly opening deviations)."""
-    def candidates(color_filter):
-        return [r for r in records
-                if r.drop_pct >= 10 and (color_filter is None or r.color == color_filter)]
+    """Top critical moments plus moments forced by evidence the eval swing can miss.
+
+    Candidate eligibility is still eval-drop based. P0-1b adds a capped
+    human-factor priority boost, so a slightly smaller but highly teachable/common
+    mistake can outrank a nearby raw-drop mistake without changing severity.
+    """
 
     # Only widen to BOTH colours when we don't know the student's side. With a
     # known side and no student mistakes, the agenda must stay empty (→ "praise the
     # accuracy") — never fall back to coaching the OPPONENT's blunders as if they
     # were the student's. (Audit: clean student game taught a Black blunder.)
-    pool = candidates(student_color) if student_color else candidates(None)
-    pool.sort(key=lambda r: r.drop_pct, reverse=True)
+    pool = _agenda_candidate_records(records, student_color) if student_color else _agenda_candidate_records(records, None)
+    for record in pool:
+        record.agenda_score = _agenda_score_components(record)
+    pool.sort(key=lambda r: (r.agenda_score["total"], r.drop_pct, -r.ply), reverse=True)
     chosen = {r.ply for r in pool[:agenda_size]}
     chosen |= {p for p in forced_plies if 0 <= p < len(records)}
     return sorted(chosen)

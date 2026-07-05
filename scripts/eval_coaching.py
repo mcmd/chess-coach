@@ -22,12 +22,22 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import math
+import sys
 from datetime import date
 from pathlib import Path
 
 import chess
 import chess.pgn
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.human_danger import (
+    build_human_danger_mass,
+    empty_human_danger as _empty_human_danger,
+    human_danger_mass_for_record,
+)
 
 
 CORPUS_SCHEMA_VERSION = 1
@@ -39,7 +49,6 @@ _ASSERTION_KEYS = {
     "key_reason_tokens_by_ply", "slide_count",
 }
 _PEDAGOGICAL_ASSERTION_KEYS = _ASSERTION_KEYS - {"student_color", "eval_source"}
-MATE_CP = 100000
 
 
 # --- Tier 1: deterministic backend assertions over a GameReview -------------
@@ -117,23 +126,6 @@ def check_review(review, spec: dict) -> list:
 
 def _motif_names(motifs: list) -> list:
     return sorted({motif.get("motif") for motif in motifs or [] if motif.get("motif")})
-
-
-def _cp_to_win_pct(cp: float) -> float:
-    cp = max(-1500, min(1500, cp))
-    return 50 + 50 * (2 / (1 + math.exp(-0.00368208 * cp)) - 1)
-
-
-def _quality_from_drop(drop_pct: float) -> str:
-    if drop_pct >= 30:
-        return "blunder"
-    if drop_pct >= 20:
-        return "mistake"
-    if drop_pct >= 10:
-        return "inaccuracy"
-    if drop_pct <= 2:
-        return "good"
-    return "ok"
 
 
 def _line_provenance(record, *, line_name: str, line: list, fen: str, meaning: str) -> dict:
@@ -233,125 +225,6 @@ def _candidate_evidence_provenance(review, record, key_reasons: list) -> dict:
         },
         "key_reasons": [_reason_provenance(record, reason) for reason in key_reasons],
     }
-
-
-def _move_drop_from_local_eval(record, board: chess.Board, move: chess.Move, engines,
-                               eval_time: float) -> dict:
-    mover_white = record.color == "white"
-    after = board.copy(stack=False)
-    after.push(move)
-    score, _ = engines.quick_eval(after.fen(), time_limit=eval_time)
-    after_cp_white = score.white().score(mate_score=MATE_CP)
-    before_mover = record.eval_before_cp if mover_white else -record.eval_before_cp
-    after_mover = after_cp_white if mover_white else -after_cp_white
-    drop_pct = round(max(0.0, _cp_to_win_pct(before_mover) - _cp_to_win_pct(after_mover)), 1)
-    return {
-        "eval_after_cp_white": after_cp_white,
-        "drop_pct_mover": drop_pct,
-        "quality": _quality_from_drop(drop_pct),
-    }
-
-
-def _empty_human_danger(record, reason: str) -> dict:
-    return {
-        "schema_version": 1,
-        "available": False,
-        "reason": reason,
-        "elo": None,
-        "provisional": True,
-        "source": "maia_top_moves_plus_local_quick_eval",
-        "covered_probability": 0.0,
-        "uncovered_probability": 1.0,
-        "quality_mass": {},
-        "bad_or_worse_mass": 0.0,
-        "mistake_or_blunder_mass": 0.0,
-        "moves": [],
-    }
-
-
-def human_danger_mass_for_record(record, engines, *, elo: int = None,
-                                 eval_time: float = 0.2) -> dict:
-    """Bounded v1 human-danger mass for one candidate position.
-
-    It uses only Maia's stored top human moves and local quick Stockfish evals.
-    That makes it cheap and useful for proposal auditing, but not calibrated
-    enough for student-facing exact claims.
-    """
-    if not getattr(record, "maia_top", None):
-        return _empty_human_danger(record, "no_maia_top_moves")
-    try:
-        board = chess.Board(record.fen_before)
-    except ValueError:
-        return _empty_human_danger(record, "invalid_fen")
-
-    quality_mass = {key: 0.0 for key in ("good", "ok", "inaccuracy", "mistake", "blunder", "unknown")}
-    moves = []
-    covered = 0.0
-    for item in record.maia_top:
-        san = item.get("move")
-        probability = float(item.get("probability") or 0.0)
-        covered += probability
-        try:
-            move = board.parse_san(san)
-            local = _move_drop_from_local_eval(record, board, move, engines, eval_time)
-            quality = local["quality"]
-            moves.append({
-                "move": san,
-                "uci": move.uci(),
-                "probability": round(probability, 3),
-                "quality": quality,
-                "drop_pct_mover": local["drop_pct_mover"],
-                "eval_after_cp_white": local["eval_after_cp_white"],
-                "source": "local_quick_eval",
-            })
-        except Exception as exc:
-            quality = "unknown"
-            moves.append({
-                "move": san,
-                "uci": None,
-                "probability": round(probability, 3),
-                "quality": quality,
-                "error": str(exc),
-                "source": "parse_or_eval_failed",
-            })
-        quality_mass[quality] += probability
-
-    quality_mass = {key: round(value, 3) for key, value in quality_mass.items() if value > 0}
-    bad_or_worse = sum(quality_mass.get(key, 0.0) for key in ("inaccuracy", "mistake", "blunder"))
-    mistake_or_blunder = sum(quality_mass.get(key, 0.0) for key in ("mistake", "blunder"))
-    covered = min(covered, 1.0)
-    return {
-        "schema_version": 1,
-        "available": True,
-        "reason": None,
-        "elo": elo,
-        "provisional": True,
-        "source": "maia_top_moves_plus_local_quick_eval",
-        "source_detail": (
-            "Top Maia moves only; local quick eval is mixed-source and must not be narrated "
-            "as calibrated truth."
-        ),
-        "eval_time": eval_time,
-        "covered_probability": round(covered, 3),
-        "uncovered_probability": round(max(0.0, 1.0 - covered), 3),
-        "quality_mass": quality_mass,
-        "bad_or_worse_mass": round(bad_or_worse, 3),
-        "mistake_or_blunder_mass": round(mistake_or_blunder, 3),
-        "moves": moves,
-    }
-
-
-def build_human_danger_mass(review, engines, *, eval_time: float = 0.2) -> dict:
-    student_records = [record for record in review.records
-                       if review.student_color is None or record.color == review.student_color]
-    out = {}
-    for record in student_records:
-        if record.drop_pct < 5 and record.ply not in review.agenda_plies:
-            continue
-        elo = review.white_elo if record.color == "white" else review.black_elo
-        out[record.ply] = human_danger_mass_for_record(
-            record, engines, elo=elo, eval_time=eval_time)
-    return out
 
 
 def review_proposal_packet(review, human_danger_by_ply: dict = None) -> dict:
