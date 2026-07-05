@@ -115,6 +115,41 @@ def test_diagnosis_accepts_taxonomy_and_dedupes(stub_config):
     assert len(state.diagnostics) == 1
 
 
+def test_submit_diagnosis_records_teaching_redundancy_ledger(stub_config):
+    from app.review import GameReview, MoveRecord, ReviewTheme
+
+    tools, state = make_tools(stub_config)
+    rec = MoveRecord(ply=0, number=1, color="white", san="e4", uci="e2e4",
+                     fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                     eval_before_cp=0, eval_after_cp=-100, drop_pct=12.0,
+                     quality="inaccuracy", recommended_diagnosis="king_safety",
+                     lesson_objective="protect_the_king")
+    state.review = GameReview(headers={}, records=[rec], student_color="white",
+                              agenda_plies=[0], themes=[
+                                  ReviewTheme(
+                                      id="king_safety:opening",
+                                      label="king safety",
+                                      plies=[0],
+                                      confidence="low",
+                                      safe_summary="king safety issue",
+                                  )
+                              ])
+
+    result = tools.submit_diagnosis(
+        chess.STARTING_FEN,
+        "king_safety",
+        "White weakened the king position.",
+        "Check king safety before moving.",
+    )
+
+    assert result["success"]
+    assert state.teaching_ledger["explained_moments"][0]["move_label"] == "1. e4"
+    assert state.teaching_ledger["explained_moments"][0]["theme_ids"] == ["king_safety:opening"]
+    assert {c["concept"] for c in state.teaching_ledger["explained_concepts"]} >= {
+        "king_safety", "protect_the_king"
+    }
+
+
 def test_diagnosis_rejects_mismatched_backend_recommendation_without_override(stub_config):
     tools, state = make_tools(stub_config, _scripted_engines())
     tools._review_and_load(REVIEW_PGN)

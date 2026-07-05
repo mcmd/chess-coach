@@ -188,6 +188,69 @@ def test_p0_8_quiz_me_keeps_socratic_withholding(stub_config):
     assert state.teaching_ledger["last_plan"]["withhold_answer"] is True
 
 
+def test_p0_8_fuzzy_intents_are_routed_without_prompt_guesswork(stub_config):
+    proc, state, _ = make_processor(stub_config)
+
+    translated = proc.process("Can you translate that to Spanish?")
+    assert "intent: translate_previous" in translated.prompt
+    assert "language: Spanish" in translated.prompt
+    assert "no_tail_redirect: true" in translated.prompt
+
+    exercise = proc.process("Give me a practice exercise from this.")
+    assert "intent: generate_exercise" in exercise.prompt
+    assert "withhold_answer: true" in exercise.prompt
+    assert "socratic_redirect: true" in exercise.prompt
+
+    blunder = proc.process("Why was that move a blunder?")
+    assert "intent: explain_blunder" in blunder.prompt
+
+    strength = proc.process("What did I do well in this game?")
+    assert "intent: reinforce_strength" in strength.prompt
+    assert state.teaching_ledger["last_plan"]["intent"] == "reinforce_strength"
+
+
+def test_p0_8_fresh_review_opens_with_self_assessment(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+
+    result = proc.process(RPGN)
+
+    assert "Backend self-assessment opener - P0-8" in result.prompt
+    assert "Before I show you my agenda" in result.prompt
+    assert state.teaching_ledger["self_assessment"]["status"] == "pending"
+
+
+def test_p0_8_self_assessment_answer_is_deterministically_graded(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    top = state.review.agenda[0]
+
+    result = proc.process(f"I think {top.move_label} was the big mistake because I grabbed material.")
+
+    assert "Backend self-assessment result - P0-8" in result.prompt
+    assert "exact_top_agenda_match" in result.prompt
+    assert state.teaching_ledger["self_assessment"]["status"] == "graded"
+    assert state.teaching_ledger["self_assessment"]["matched_ply"] == top.ply
+
+
+def test_p0_8_redundancy_ledger_is_injected_for_followup(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    state.teaching_ledger["explained_moments"] = [
+        {"move_label": "12... Rc3", "diagnosis": "king_safety", "fen": "fen1"}
+    ]
+    state.teaching_ledger["explained_concepts"] = [
+        {"concept": "king_safety", "move_label": "12... Rc3", "fen": "fen1"}
+    ]
+
+    result = proc.process("Summarize the game phase by phase.")
+
+    assert "Backend redundancy ledger - P0-8" in result.prompt
+    assert "12... Rc3" in result.prompt
+    assert "king_safety" in result.prompt
+    assert "Do not re-quiz or re-teach" in result.prompt
+
+
 def test_p0_8_wrap_up_records_verified_theme_takeaway(stub_config):
     from app.memory import load_dossier
     from app.review import GameReview, MoveRecord, ReviewTheme

@@ -58,6 +58,19 @@ def test_candidate_boards_includes_board_and_agenda():
     assert chess.Board().fen() in fens and _AFTER_E4E5 in fens
 
 
+def test_candidate_boards_include_verified_line_positions_for_l1_gate():
+    from app.review import GameReview, MoveRecord
+    rec = MoveRecord(ply=0, number=1, color="white", san="d4", uci="d2d4",
+                     fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                     eval_before_cp=0, eval_after_cp=0, drop_pct=0.0, quality="best",
+                     best_line=["e4", "e5", "Qh5"])
+    state = SimpleNamespace(board=chess.Board(),
+                            review=GameReview(headers={}, records=[rec],
+                                              student_color="white", agenda_plies=[0]))
+    boards = candidate_boards(state)
+    assert find_illegal_moves("The line can continue Qh5.", boards) == []
+
+
 class FakeChat:
     def __init__(self, responses):
         self.responses = list(responses)

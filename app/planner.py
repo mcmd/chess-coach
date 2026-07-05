@@ -9,12 +9,12 @@ from dataclasses import dataclass, field
 
 
 _LANGUAGE_PATTERNS = [
-    (re.compile(r"\b(?:in|en)\s+spanish\b|\ben\s+espa(?:n|ñ)ol\b", re.I), "Spanish"),
-    (re.compile(r"\b(?:in|en)\s+english\b|\ben\s+ingl[eé]s\b", re.I), "English"),
-    (re.compile(r"\b(?:in|en)\s+french\b|\ben\s+franc[eé]s\b", re.I), "French"),
-    (re.compile(r"\b(?:in|en)\s+german\b|\ben\s+alem[aá]n\b", re.I), "German"),
-    (re.compile(r"\b(?:in|en)\s+portuguese\b|\ben\s+portugu[eé]s\b", re.I), "Portuguese"),
-    (re.compile(r"\b(?:in|en)\s+italian\b|\ben\s+italiano\b", re.I), "Italian"),
+    (re.compile(r"\b(?:in|en|to)\s+spanish\b|\ben\s+espa(?:n|ñ)ol\b", re.I), "Spanish"),
+    (re.compile(r"\b(?:in|en|to)\s+english\b|\ben\s+ingl[eé]s\b", re.I), "English"),
+    (re.compile(r"\b(?:in|en|to)\s+french\b|\ben\s+franc[eé]s\b", re.I), "French"),
+    (re.compile(r"\b(?:in|en|to)\s+german\b|\ben\s+alem[aá]n\b", re.I), "German"),
+    (re.compile(r"\b(?:in|en|to)\s+portuguese\b|\ben\s+portugu[eé]s\b", re.I), "Portuguese"),
+    (re.compile(r"\b(?:in|en|to)\s+italian\b|\ben\s+italiano\b", re.I), "Italian"),
 ]
 
 _ANNOTATE_ALL_RE = re.compile(
@@ -36,6 +36,10 @@ _SUMMARY_RE = re.compile(
 _HINT_RE = re.compile(r"\b(?:hint|nudge|clue)\b", re.I)
 _COMPARE_RE = re.compile(r"\b(?:compare|candidate(?:s)?|which of|between)\b", re.I)
 _STRUCTURE_RE = re.compile(r"\b(?:pawn structure|structure|plan|strategy)\b", re.I)
+_TRANSLATE_RE = re.compile(r"\b(?:translate|say that|repeat that|same thing)\b(?:(?!\n).){0,40}\b(?:spanish|english|french|german|portuguese|italian|espa(?:n|Ã±)ol|ingl[eÃ©]s|franc[eÃ©]s|alem[aÃ¡]n|portugu[eÃ©]s|italiano)\b", re.I)
+_EXERCISE_RE = re.compile(r"\b(?:exercise|drill|practice|train me|give me a position|make me solve)\b", re.I)
+_BLUNDER_RE = re.compile(r"\b(?:why|explain|what happened|what went wrong)\b(?:(?!\n).){0,50}\b(?:blunder|mistake|inaccuracy|bad move)\b", re.I)
+_STRENGTH_RE = re.compile(r"\b(?:what did i do well|good move|best move|strong move|where was i accurate|reinforce|praise)\b", re.I)
 _BRIEF_RE = re.compile(r"\b(?:briefly|brief|concise|short answer|quickly|tl;dr|tldr)\b", re.I)
 _VERBOSE_RE = re.compile(r"\b(?:in detail|detailed|thorough|step by step|deep dive)\b", re.I)
 _CLOSE_RE = re.compile(
@@ -135,6 +139,14 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:phase_summary"],
         )
+    if _TRANSLATE_RE.search(text):
+        return TeachingPlan(
+            intent="translate_previous",
+            language=language,
+            density=density,
+            no_tail_redirect=True,
+            reasons=reasons + ["intent:translate_previous"],
+        )
     if _DIRECT_RE.search(text):
         return TeachingPlan(
             intent="answer_directly",
@@ -162,6 +174,16 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:hint"],
         )
+    if _EXERCISE_RE.search(text):
+        return TeachingPlan(
+            intent="generate_exercise",
+            language=language,
+            density=density,
+            withhold_answer=True,
+            socratic_redirect=True,
+            no_tail_redirect=True,
+            reasons=reasons + ["intent:generate_exercise"],
+        )
     if _COMPARE_RE.search(text):
         return TeachingPlan(
             intent="compare_candidates",
@@ -169,6 +191,22 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             density=density,
             no_tail_redirect=True,
             reasons=reasons + ["intent:compare_candidates"],
+        )
+    if _BLUNDER_RE.search(text):
+        return TeachingPlan(
+            intent="explain_blunder",
+            language=language,
+            density=density,
+            no_tail_redirect=True,
+            reasons=reasons + ["intent:explain_blunder"],
+        )
+    if _STRENGTH_RE.search(text):
+        return TeachingPlan(
+            intent="reinforce_strength",
+            language=language,
+            density=density,
+            no_tail_redirect=True,
+            reasons=reasons + ["intent:reinforce_strength"],
         )
     if _STRUCTURE_RE.search(text):
         return TeachingPlan(

@@ -25,12 +25,12 @@ class AppConfig:
     player_name: str = None  # matched against PGN White/Black headers to find the student's side
     trace: bool = False      # show tool calls and engine invocations
     use_online_databases: bool = True  # opening explorer + tablebase enrichment of reviews
+    review_self_assessment: bool = True  # ask one pre-agenda metacognition question on fresh reviews
 
-    # Render-time claim gate (plan P0-3). 0 = shadow/log-only (default — detect and
-    # trace what would be stripped, change nothing); 1 = also strip moves illegal in
-    # every known position; 2+ reserved for modal-claim / motif checks. Promote only
-    # after the shadow logs show a low false-positive rate.
-    claim_gate_level: int = 0
+    # Render-time claim gate (plan P0-3). 0 = shadow/log-only; 1 = strip moves
+    # illegal in every known position (default); 2+ reserved for modal-claim /
+    # motif checks.
+    claim_gate_level: int = 1
 
     # Board diagram theme. Square colours are hex strings; board_scale sets how
     # many character cells each square spans (2*scale wide, scale tall).
@@ -181,7 +181,8 @@ Examples:
         player_name=app_config.get("player_name"),
         trace=args.trace or app_config.get("trace", False),
         use_online_databases=bool(app_config.get("use_online_databases", True)),
-        claim_gate_level=int(app_config.get("claim_gate_level", 0)),
+        review_self_assessment=bool(app_config.get("review_self_assessment", True)),
+        claim_gate_level=int(app_config.get("claim_gate_level", 1)),
         board_light_color=app_config.get("board_light_color", "#eeeed2"),
         board_dark_color=app_config.get("board_dark_color", "#769656"),
         board_scale=int(app_config.get("board_scale", 2)),

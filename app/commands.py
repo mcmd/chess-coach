@@ -135,6 +135,8 @@ class CommandProcessor:
             return CommandResult(message=plan.decline_message)
 
         planned = f"{plan.prompt_block()}\n\nStudent request: {text}"
+        planned += self._self_assessment_response_note(text, plan)
+        planned += self._redundancy_note(plan)
         if plan.intent == "close_with_takeaway":
             planned += self._takeaway_note()
         return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
@@ -287,11 +289,14 @@ class CommandProcessor:
         else:
             meta.update({"last_game_id": game_id, "last_agenda_index": 0,
                          "lesson_status": "fresh_review"})
+            self._start_self_assessment(review)
             prompt = (review.digest()
                       + "\n\n[System: The game is loaded with the board at the STARTING position. "
                         "The student steps through moves with /next. Greet the student with a one-paragraph "
-                        "summary of the game and the agenda, then suggest starting with Moment 1. "
+                        "summary of the game. If the backend self-assessment note is present, ask that "
+                        "single question before revealing the lesson agenda or starting Moment 1. "
                         "Do not analyze anything yet.]")
+            prompt += self._self_assessment_open_note(review)
             message = (f"[green]Reviewed {source}: {len(review.records)} moves analyzed, "
                        f"{n} critical moment(s) found. Board set to the start.[/green]")
 
@@ -570,6 +575,118 @@ class CommandProcessor:
         if not self.state.review:
             return False
         return bool(self._COMPLETE_ACK_RE.match(text or ""))
+
+    def _start_self_assessment(self, review) -> None:
+        if not getattr(self.config, "review_self_assessment", True):
+            return
+        agenda = list(getattr(review, "agenda", []) or [])
+        if not agenda:
+            return
+        self.state.teaching_ledger["self_assessment"] = {
+            "status": "pending",
+            "agenda": [
+                {
+                    "ply": r.ply,
+                    "move_label": r.move_label,
+                    "san": r.san,
+                    "diagnosis": r.recommended_diagnosis,
+                    "drop_pct": r.drop_pct,
+                }
+                for r in agenda
+            ],
+        }
+
+    def _self_assessment_open_note(self, review) -> str:
+        sa = self.state.teaching_ledger.get("self_assessment") or {}
+        if sa.get("status") != "pending":
+            return ""
+        agenda = list(getattr(review, "agenda", []) or [])
+        if not agenda:
+            return ""
+        labels = ", ".join(r.move_label for r in agenda[:5])
+        return (
+            "\n\n[Backend self-assessment opener - P0-8: before revealing the agenda, ask exactly one "
+            "question: \"Before I show you my agenda, which move do you think was your biggest mistake, "
+            "and why?\" Do not grade it yet and do not let the answer change the agenda. Verified agenda "
+            f"labels for later deterministic comparison: {labels}.]")
+
+    @staticmethod
+    def _normalize_label_token(text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", (text or "").casefold())
+
+    def _self_assessment_response_note(self, text: str, plan: TeachingPlan) -> str:
+        sa = self.state.teaching_ledger.get("self_assessment") or {}
+        if sa.get("status") != "pending":
+            return ""
+        if plan.intent in {"answer_directly", "explain_phase_summary"} and re.search(
+                r"\b(?:just show me|skip|show me the agenda|don'?t quiz me|do not quiz me)\b",
+                text or "", re.I):
+            sa["status"] = "skipped"
+            sa["result"] = "student_opted_out"
+            return ("\n[Backend self-assessment - P0-8: the student opted out of the opener. "
+                    "Proceed with the verified agenda normally; do not scold and do not ask the "
+                    "self-assessment question again.]")
+
+        agenda = sa.get("agenda") or []
+        normalized_text = self._normalize_label_token(text)
+        matched = None
+        for item in agenda:
+            labels = {
+                self._normalize_label_token(item.get("move_label")),
+                self._normalize_label_token(item.get("san")),
+            }
+            if any(label and label in normalized_text for label in labels):
+                matched = item
+                break
+
+        if matched is None:
+            result = "no_move_named"
+            detail = "No agenda move label or SAN was clearly named."
+        else:
+            first_ply = agenda[0]["ply"] if agenda else matched["ply"]
+            delta = abs(int(matched["ply"]) - int(first_ply))
+            if delta == 0:
+                result = "exact_top_agenda_match"
+                detail = f"The student named the top agenda moment: {matched['move_label']}."
+            elif delta <= 2:
+                result = "near_miss"
+                detail = (f"The student named {matched['move_label']}, close to the top agenda moment "
+                          f"{agenda[0]['move_label']}.")
+            else:
+                result = "agenda_match_not_top"
+                detail = (f"The student named a real agenda moment ({matched['move_label']}), but the "
+                          f"top backend agenda moment is {agenda[0]['move_label']}.")
+        sa["status"] = "graded"
+        sa["result"] = result
+        sa["student_text"] = (text or "")[:240]
+        if matched:
+            sa["matched_ply"] = matched["ply"]
+        return (
+            "\n[Backend self-assessment result - P0-8: "
+            f"{result}. {detail} Acknowledge briefly, then reveal the verified agenda and proceed "
+            "normally. The student's guess must not change agenda order.]")
+
+    def _redundancy_note(self, plan: TeachingPlan) -> str:
+        ledger = self.state.teaching_ledger or {}
+        moments = list(ledger.get("explained_moments") or [])
+        concepts = list(ledger.get("explained_concepts") or [])
+        if not moments and not concepts:
+            return ""
+        if plan.intent in {"ask_socratic_question", "give_hint", "generate_exercise"}:
+            return ""
+        recent_moments = "; ".join(
+            f"{m.get('move_label')} ({m.get('diagnosis') or m.get('lesson_objective') or 'lesson'})"
+            for m in moments[-4:]
+        )
+        recent_concepts = ", ".join(c.get("concept") for c in concepts[-6:] if c.get("concept"))
+        parts = []
+        if recent_moments:
+            parts.append(f"already-explained moments: {recent_moments}")
+        if recent_concepts:
+            parts.append(f"already-explained concepts: {recent_concepts}")
+        return ("\n[Backend redundancy ledger - P0-8: " + "; ".join(parts)
+                + ". Do not re-quiz or re-teach these from scratch unless the student explicitly asks "
+                  "for a recap; if relevant, connect to the broader arc instead.]")
 
     def _verified_takeaway(self) -> dict:
         review = self.state.review

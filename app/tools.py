@@ -859,6 +859,7 @@ class CoachTools:
         if override_reason:
             diagnosis["override_reason"] = override_reason[:200]
         self.state.diagnostics.append(diagnosis)
+        self._record_teaching_ledger_event(record, diagnosis)
         self._persist_lesson_progress(fen, "diagnosis_logged")
 
         console.print()
@@ -873,6 +874,46 @@ class CoachTools:
         if mismatch_warning:
             result["warning"] = mismatch_warning
         return result
+
+    def _record_teaching_ledger_event(self, record, diagnosis: dict) -> None:
+        if not record:
+            return
+        ledger = self.state.teaching_ledger
+        moments = list(ledger.get("explained_moments") or [])
+        if not any(m.get("fen") == record.fen_before for m in moments):
+            theme_ids = []
+            review = getattr(self.state, "review", None)
+            for theme in getattr(review, "themes", []) or []:
+                if record.ply in (getattr(theme, "plies", []) or []):
+                    theme_ids.append(getattr(theme, "id", None))
+            moments.append({
+                "fen": record.fen_before,
+                "ply": record.ply,
+                "move_label": record.move_label,
+                "diagnosis": diagnosis.get("error_category"),
+                "recommended_diagnosis": getattr(record, "recommended_diagnosis", None),
+                "lesson_objective": getattr(record, "lesson_objective", None),
+                "quality": getattr(record, "quality", None),
+                "theme_ids": [t for t in theme_ids if t],
+            })
+        ledger["explained_moments"] = moments[-12:]
+
+        concepts = list(ledger.get("explained_concepts") or [])
+        for concept in (
+            diagnosis.get("error_category"),
+            getattr(record, "recommended_diagnosis", None),
+            getattr(record, "lesson_objective", None),
+        ):
+            if not concept:
+                continue
+            if not any(c.get("concept") == concept and c.get("fen") == record.fen_before for c in concepts):
+                concepts.append({
+                    "concept": concept,
+                    "fen": record.fen_before,
+                    "move_label": record.move_label,
+                    "ply": record.ply,
+                })
+        ledger["explained_concepts"] = concepts[-24:]
 
     def _persist_lesson_progress(self, fen: str = None, status: str = "awaiting_answer") -> None:
         if not getattr(self.config, "lesson_file", None):

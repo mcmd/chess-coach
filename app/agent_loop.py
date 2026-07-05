@@ -218,8 +218,9 @@ def _parses(board: chess.Board, san: str) -> bool:
 
 def candidate_boards(state) -> list:
     """The positions the coach may legitimately reference this turn: the live
-    board plus every agenda moment's before/after FEN. A move legal in any of
-    these is allowed; one legal in none is 'impossible' (likely hallucinated)."""
+    board plus every agenda moment's before/after FEN and verified line positions.
+    A move legal in any of these is allowed; one legal in none is 'impossible'
+    (likely hallucinated)."""
     fens, boards = set(), []
     board = getattr(state, "board", None)
     if board is not None:
@@ -229,12 +230,41 @@ def candidate_boards(state) -> list:
         for f in (getattr(r, "fen_before", None), getattr(r, "fen_after", None)):
             if f:
                 fens.add(f)
+        for f in _line_position_fens(getattr(r, "fen_before", None), getattr(r, "best_line", None)):
+            fens.add(f)
+        for f in _line_position_fens(getattr(r, "fen_after", None), getattr(r, "punishment_line", None)):
+            fens.add(f)
     for f in fens:
         try:
             boards.append(chess.Board(f))
         except ValueError:
             pass
     return boards
+
+
+def _line_position_fens(start_fen: str, san_line: list) -> list:
+    """All positions where a verified SAN line may be referenced.
+
+    The L1 claim gate checks whether a named SAN move is legal in any known
+    position. A PV move like `Qh5` may be illegal in the agenda's root position
+    but legal after the first two verified line moves, so include each
+    intermediate board before and after pushing the line.
+    """
+    if not start_fen or not san_line:
+        return []
+    try:
+        board = chess.Board(start_fen)
+    except ValueError:
+        return []
+    fens = [board.fen()]
+    for san in san_line[:10]:
+        try:
+            move = board.parse_san(san)
+        except ValueError:
+            break
+        board.push(move)
+        fens.append(board.fen())
+    return fens
 
 
 def find_illegal_moves(text: str, boards: list) -> list:
