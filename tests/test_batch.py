@@ -118,6 +118,18 @@ def test_scan_skips_games_without_the_student(stub_config, tmp_path):
     assert scans == [] and skipped == 1
 
 
+def test_scan_uses_usernames_for_student_detection(stub_config, tmp_path):
+    pgn = ('[Event "T"]\n[Site "?"]\n[White "somebody"]\n[Black "AltHandle"]\n'
+           '[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 1-0\n')
+    stub_config.player_name = None
+    stub_config.usernames = {"lichess": ["mcmd"], "chesscom": ["althandle"]}
+    scans, skipped, _ = scan_games(pgn, FakeEngines(), stub_config, str(tmp_path / "b"))
+    assert skipped == 0
+    assert len(scans) == 1
+    assert scans[0]["student_color"] == "black"
+    assert scans[0]["scan_context"]["usernames"] == ["althandle", "mcmd"]
+
+
 # --- deterministic clustering ---
 
 def _rec(**kw):

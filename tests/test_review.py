@@ -495,14 +495,23 @@ def test_aspirational_instinct_from_stronger_maia():
 
 def test_detect_student_color_exact_not_substring():
     # Audit: substring matching let "Ann" match "JoanneSmith". Exact normalized only.
-    from app.review import detect_student_color
+    from app.review import configured_player_identities, detect_student_color
 
     class C:
         player_name = "Ann"
+        usernames = {}
 
     assert detect_student_color({"White": "JoanneSmith", "Black": "Ann"}, C()) == "black"
     assert detect_student_color({"White": "ann", "Black": "Bob"}, C()) == "white"   # case-insensitive
     assert detect_student_color({"White": "Joanne", "Black": "Bob"}, C()) is None   # no substring hit
+
+    class Multi:
+        player_name = "legacy_handle"
+        usernames = {"lichess": ["mcmd", "AltName"], "chesscom": ["mcmd_cc"]}
+
+    assert detect_student_color({"White": "opponent", "Black": "ALTNAME"}, Multi()) == "black"
+    assert detect_student_color({"White": "mcmd_cc", "Black": "opponent"}, Multi()) == "white"
+    assert configured_player_identities(Multi()) == {"legacy_handle", "mcmd", "altname", "mcmd_cc"}
 
 
 def test_agenda_empty_for_clean_student_even_if_opponent_blundered():

@@ -168,6 +168,10 @@ Tip: run with `--trace` to watch exactly which tools the coach calls for each an
        "gemini_model": "gemini-3.1-pro-preview",
        "profiles_dir": "./profiles",
        "player_name": "your-lichess-username",
+       "usernames": {
+           "lichess": ["your-lichess-username"],
+           "chesscom": ["your-chesscom-username"]
+       },
        "dark_terminal": false,
        "trace": false,
        "review_eval_time": 0.5,
@@ -175,7 +179,7 @@ Tip: run with `--trace` to watch exactly which tools the coach calls for each an
        "maia3_offline": false
    }
    ```
-   `player_name` is matched against PGN headers so the coach knows which side you played. `review_eval_time` is Stockfish seconds per position during a game review (higher = more reliable classification, slower scan). `use_online_databases` toggles the Lichess explorer/tablebase enrichment. `maia3_offline` loads the Maia-3 checkpoint from the local Hugging Face cache only (set it `true` after the first run to silence the startup phone-home). Download [Stockfish](https://stockfishchess.org/download/) for your OS; Maia-3 installs via pip and downloads its checkpoint from Hugging Face on first run (cached thereafter).
+   `usernames` is matched case-insensitively against PGN `White`/`Black` headers so the coach knows which side you played; list every handle you use. `player_name` still works as a legacy single-handle alias. `review_eval_time` is Stockfish seconds per position during a game review (higher = more reliable classification, slower scan). `use_online_databases` toggles the Lichess explorer/tablebase enrichment. `maia3_offline` loads the Maia-3 checkpoint from the local Hugging Face cache only (set it `true` after the first run to silence the startup phone-home). Download [Stockfish](https://stockfishchess.org/download/) for your OS; Maia-3 installs via pip and downloads its checkpoint from Hugging Face on first run (cached thereafter).
 3. Install and run:
    ```bash
    python -m venv .venv

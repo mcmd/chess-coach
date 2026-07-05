@@ -535,17 +535,56 @@ def resolve_student_elo(side: str, headers: dict, config, purpose: str):
 
 
 def detect_student_color(headers, config):
-    name = (getattr(config, "player_name", None) or "").strip().casefold()
-    if not name:
+    names = configured_player_identities(config)
+    if not names:
         return None
     # Exact (normalized) equality, not substring: substring made "ann" match
     # "JoanneSmith". Lichess/chess.com headers are bare usernames, so case-folded
     # exact match is correct; ties broken White-first by check order.
-    if name == (headers.get("White") or "").strip().casefold():
+    if _normalize_player_identity(headers.get("White")) in names:
         return "white"
-    if name == (headers.get("Black") or "").strip().casefold():
+    if _normalize_player_identity(headers.get("Black")) in names:
         return "black"
     return None
+
+
+def _normalize_player_identity(name: str) -> str:
+    return (name or "").strip().casefold()
+
+
+def configured_player_identities(config) -> set[str]:
+    """All configured handles that may identify the student in PGN headers.
+
+    P0-4b generalizes the legacy single `player_name` to:
+    {"usernames": {"lichess": ["mcmd"], "chesscom": ["mcmd_cc"]}}.
+    Matching remains exact and case-insensitive; `player_name` is retained as a
+    back-compat alias and joins the same set.
+    """
+    identities = set()
+    legacy = _normalize_player_identity(getattr(config, "player_name", None))
+    if legacy:
+        identities.add(legacy)
+
+    usernames = getattr(config, "usernames", None) or {}
+    if isinstance(usernames, dict):
+        iterable = usernames.values()
+    else:
+        iterable = [usernames]
+    for handles in iterable:
+        if isinstance(handles, str):
+            handles = [handles]
+        try:
+            for handle in handles or []:
+                normalized = _normalize_player_identity(handle)
+                if normalized:
+                    identities.add(normalized)
+        except TypeError:
+            continue
+    return identities
+
+
+def has_configured_player_identity(config) -> bool:
+    return bool(configured_player_identities(config))
 
 
 def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: int = 4,

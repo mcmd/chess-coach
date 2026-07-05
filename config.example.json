@@ -5,6 +5,10 @@
     "gemini_model": "gemini-3.1-pro-preview",
     "profiles_dir": "./profiles",
     "player_name": "your-lichess-username",
+    "usernames": {
+        "lichess": ["your-lichess-username"],
+        "chesscom": ["your-chesscom-username"]
+    },
     "dark_terminal": false,
     "trace": false,
     "use_online_databases": true,

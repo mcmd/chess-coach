@@ -25,7 +25,8 @@ import chess.pgn
 from app import trace as tracing
 from app.config import DEFAULT_USER_ELO
 from app.review import (EngineUnavailable, GameReview, MoveRecord, review_game, _enrich_agenda,
-                        detect_student_color, moment_digest_lines)
+                        configured_player_identities, detect_student_color,
+                        has_configured_player_identity, moment_digest_lines)
 
 # Bump when MoveRecord scan fields or classification change incompatibly.
 # v2: scans now carry review.slides (eval-only within-game slides + co-markers).
@@ -117,6 +118,7 @@ def _scan_context(game, student_color: str, engines, config,
         "initial_fen": game.board().fen(),
         "student_color": student_color,
         "player_name": (getattr(config, "player_name", None) or "").strip().casefold(),
+        "usernames": sorted(configured_player_identities(config)),
         "user_elo": int(getattr(config, "user_elo", DEFAULT_USER_ELO)),
         "eval_time": float(scan_eval_time),
         "stockfish": {
@@ -175,7 +177,7 @@ def scan_games(pgn_text: str, engines, config, cache_dir: str,
         student_color = detect_student_color(headers, config)
         ucis = " ".join(m.uci() for m in game.mainline_moves())
         key = game_key_for(headers, ucis)
-        skip = bool(getattr(config, "player_name", None)) and student_color is None
+        skip = has_configured_player_identity(config) and student_color is None
         context = _scan_context(game, student_color, engines, config, scan_eval_time)
         cached = None if skip else _load_cached_scan(cache_dir, key, context)
         n_plies = 0 if (skip or cached is not None) else (ucis.count(" ") + 1 if ucis else 0)

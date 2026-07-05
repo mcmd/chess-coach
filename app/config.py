@@ -23,6 +23,7 @@ class AppConfig:
     profile: str = None
     dark_terminal: bool = False
     player_name: str = None  # matched against PGN White/Black headers to find the student's side
+    usernames: dict = None   # platform -> handles; generalizes player_name while keeping it as an alias
     trace: bool = False      # show tool calls and engine invocations
     use_online_databases: bool = True  # opening explorer + tablebase enrichment of reviews
     review_self_assessment: bool = True  # ask one pre-agenda metacognition question on fresh reviews
@@ -179,6 +180,7 @@ Examples:
         profile=args.profile,
         dark_terminal=args.dark_terminal or _is_dark_terminal() or app_config.get("dark_terminal", False),
         player_name=app_config.get("player_name"),
+        usernames=app_config.get("usernames") or {},
         trace=args.trace or app_config.get("trace", False),
         use_online_databases=bool(app_config.get("use_online_databases", True)),
         review_self_assessment=bool(app_config.get("review_self_assessment", True)),
