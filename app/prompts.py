@@ -6,8 +6,9 @@ from app.memory import load_dossier
 def get_dossier_context(dossier_file: str) -> str:
     d = load_dossier(dossier_file)
     slide = d.get("slide_trend") or {}
+    takeaways = d.get("session_takeaways", [])[:3]
     if (d.get("total_blunders_analyzed", 0) == 0 and not d.get("recurring_patterns")
-            and slide.get("status") not in ("active", "improving")):
+            and slide.get("status") not in ("active", "improving") and not takeaways):
         return "No historical data available yet. This is your first session."
     if d.get("total_blunders_analyzed", 0):
         sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
@@ -50,6 +51,9 @@ def get_dossier_context(dossier_file: str) -> str:
             line += ". IMPROVING since the previous batch — praise this progress honestly"
         context += ("\n" + line + ". Coach the meta-skill of not drifting once the position turns; "
                     "it is a factual eval pattern, never a psychological claim.")
+    if takeaways:
+        context += ("\nRecent closing takeaways (use only when genuinely relevant; do not repeat "
+                    "automatically):\n- " + "\n- ".join(t.get("text", "") for t in takeaways if t.get("text")))
     return context
 
 

@@ -15,9 +15,9 @@ import chess
 import chess.pgn
 
 from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata,
-                        update_dossier, update_dossier_with_batch)
+                        record_session_takeaway, update_dossier, update_dossier_with_batch)
 from app.notation import legal_san_mentions
-from app.planner import plan_free_text_turn
+from app.planner import TeachingPlan, plan_free_text_turn
 from app.review import review_game, attach_board_tokens
 from app.trace import trace
 from app.ui import console
@@ -112,6 +112,14 @@ class CommandProcessor:
             return self._load_pasted_pgn(text)
 
         plan = plan_free_text_turn(text, default_language=getattr(self.config, "language", "English"))
+        if self._completion_ack_requests_close(text, plan):
+            plan = TeachingPlan(
+                intent="close_with_takeaway",
+                language=getattr(self.config, "language", "English"),
+                density="brief",
+                no_tail_redirect=True,
+                reasons=["intent:close_after_lesson_complete"],
+            )
         self.state.teaching_ledger["last_plan"] = {
             "intent": plan.intent,
             "language": plan.language,
@@ -127,6 +135,8 @@ class CommandProcessor:
             return CommandResult(message=plan.decline_message)
 
         planned = f"{plan.prompt_block()}\n\nStudent request: {text}"
+        if plan.intent == "close_with_takeaway":
+            planned += self._takeaway_note()
         return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
                              + self._give_up_note(text) + self._pending_diagnosis_note())
 
@@ -546,6 +556,67 @@ class CommandProcessor:
                 "logged yet. In THIS turn: finish the explanation if needed, call submit_diagnosis, and "
                 "move straight on to the next moment (or the game synthesis if this was the last one). "
                 "Do not end your turn by announcing future actions.]")
+
+    _COMPLETE_ACK_RE = re.compile(
+        r"^\s*(?:ok(?:ay)?|thanks?|thank you|great|perfect|nice|cool|done|that'?s all)\s*[.!]*\s*$",
+        re.IGNORECASE)
+
+    def _completion_ack_requests_close(self, text: str, plan: TeachingPlan) -> bool:
+        if plan.intent == "close_with_takeaway":
+            return False
+        meta = self.state.lesson_metadata or {}
+        if meta.get("lesson_status") != "lesson_complete":
+            return False
+        if not self.state.review:
+            return False
+        return bool(self._COMPLETE_ACK_RE.match(text or ""))
+
+    def _verified_takeaway(self) -> dict:
+        review = self.state.review
+        if not review:
+            return {}
+        themes = list(getattr(review, "themes", None) or [])
+        confidence_rank = {"high": 0, "medium": 1, "low": 2}
+        themes.sort(key=lambda t: (
+            confidence_rank.get(getattr(t, "confidence", "low"), 2),
+            -len(getattr(t, "plies", []) or []),
+            (getattr(t, "plies", [999]) or [999])[0],
+        ))
+        if themes:
+            theme = themes[0]
+            label = getattr(theme, "label", "theme")
+            summary = getattr(theme, "safe_summary", "") or label
+            text = f"Session takeaway: {summary}"
+            return {
+                "game_id": self.state.current_game_id,
+                "theme_id": getattr(theme, "id", None),
+                "text": text,
+                "source": "review_theme.safe_summary",
+            }
+        agenda = list(getattr(review, "agenda", []) or [])
+        if agenda:
+            record = agenda[0]
+            label = record.recommended_diagnosis or record.lesson_objective or record.quality
+            text = f"Session takeaway: the priority lesson was {label.replace('_', ' ')} at {record.move_label}."
+            return {
+                "game_id": self.state.current_game_id,
+                "theme_id": None,
+                "text": text,
+                "source": "agenda_record",
+            }
+        return {}
+
+    def _takeaway_note(self) -> str:
+        takeaway = self._verified_takeaway()
+        if not takeaway:
+            return ("\n[Backend session close: no verified review theme is available. Close briefly; "
+                    "do not invent a theme and do not start a new quiz.]")
+        self.state.teaching_ledger["last_takeaway"] = dict(takeaway)
+        record_session_takeaway(getattr(self.config, "dossier_file", None), takeaway)
+        return (
+            "\n[Backend session close: use this verified takeaway exactly or as a very close paraphrase: "
+            f"{takeaway['text']} Source: {takeaway['source']}. Close the loop in one sentence, optionally "
+            "add one short next-step sentence, and do NOT ask a new Socratic question.]")
 
     def _eval_swing_note(self, fen_before: str, fen_after: str) -> str:
         if not (self.engines and getattr(self.engines, "stockfish", None)):

@@ -1,7 +1,7 @@
 import json
 from types import SimpleNamespace
 
-from app.memory import load_dossier, update_dossier, save_history
+from app.memory import load_dossier, record_session_takeaway, update_dossier, save_history
 
 
 def test_dossier_aggregates_taxonomy_categories(tmp_path):
@@ -106,3 +106,27 @@ def test_dossier_context_shows_typicality_trend(tmp_path):
     context = get_dossier_context(dossier_file)
     assert "Error-typicality trend" in context
     assert "1 peer-common" in context
+
+
+def test_session_takeaway_recorded_and_added_to_context(tmp_path):
+    from app.prompts import get_dossier_context
+    dossier_file = str(tmp_path / "dossier.json")
+    record_session_takeaway(dossier_file, {
+        "game_id": "g1",
+        "theme_id": "ignored_threat:opening",
+        "text": "Session takeaway: a single ignored threat moment in the opening: 1. e4.",
+        "source": "review_theme.safe_summary",
+    })
+    record_session_takeaway(dossier_file, {
+        "game_id": "g1",
+        "theme_id": "ignored_threat:opening",
+        "text": "Session takeaway: a single ignored threat moment in the opening: 1. e4.",
+        "source": "review_theme.safe_summary",
+    })
+
+    dossier = load_dossier(dossier_file)
+    assert len(dossier["session_takeaways"]) == 1
+    assert dossier["session_takeaways"][0]["theme_id"] == "ignored_threat:opening"
+    context = get_dossier_context(dossier_file)
+    assert "Recent closing takeaways" in context
+    assert "ignored threat moment" in context

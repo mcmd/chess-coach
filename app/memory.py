@@ -63,6 +63,7 @@ _DOSSIER_DEFAULT = {
     "error_frequencies": {},
     "recent_habits": [],
     "recent_positions": [],
+    "session_takeaways": [],
     "typicality_history": [],
     "recurring_patterns": [],   # confirmed cross-game patterns from batch analysis
     "batch_trends": [],         # one entry per batch run: top patterns with counts
@@ -108,6 +109,7 @@ def load_dossier(dossier_file: str) -> dict:
     dossier["error_frequencies"] = {}
     dossier["recent_habits"] = []
     dossier["recent_positions"] = []
+    dossier["session_takeaways"] = []
     dossier["typicality_history"] = []
     dossier["recurring_patterns"] = []
     dossier["batch_trends"] = []
@@ -159,6 +161,29 @@ def update_dossier(diagnostics, dossier_file):
     dossier["recent_positions"] = dossier["recent_positions"][:20]
     dossier["typicality_history"] = dossier["typicality_history"][-20:]
 
+    _atomic_write_json(dossier_file, dossier)
+
+
+def record_session_takeaway(dossier_file: str, takeaway: dict) -> None:
+    """Persist one verified closing takeaway for future session context."""
+    if not dossier_file or not takeaway:
+        return
+    dossier = load_dossier(dossier_file)
+    entry = {
+        "date": takeaway.get("date") or date.today().isoformat(),
+        "game_id": takeaway.get("game_id"),
+        "theme_id": takeaway.get("theme_id"),
+        "text": takeaway.get("text"),
+        "source": takeaway.get("source", "review_theme"),
+    }
+    if not entry["text"]:
+        return
+    existing = [
+        t for t in dossier.get("session_takeaways", [])
+        if not (t.get("game_id") == entry["game_id"] and t.get("text") == entry["text"])
+    ]
+    dossier["session_takeaways"] = [entry] + existing
+    dossier["session_takeaways"] = dossier["session_takeaways"][:10]
     _atomic_write_json(dossier_file, dossier)
 
 

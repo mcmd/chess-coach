@@ -188,6 +188,68 @@ def test_p0_8_quiz_me_keeps_socratic_withholding(stub_config):
     assert state.teaching_ledger["last_plan"]["withhold_answer"] is True
 
 
+def test_p0_8_wrap_up_records_verified_theme_takeaway(stub_config):
+    from app.memory import load_dossier
+    from app.review import GameReview, MoveRecord, ReviewTheme
+
+    proc, state, _ = make_processor(stub_config)
+    rec = MoveRecord(ply=0, number=1, color="white", san="e4", uci="e2e4",
+                     fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                     eval_before_cp=0, eval_after_cp=-100, drop_pct=12.0,
+                     quality="inaccuracy", recommended_diagnosis="ignored_threat")
+    state.current_game_id = "game-1"
+    state.review = GameReview(headers={}, records=[rec], student_color="white",
+                              agenda_plies=[0], themes=[
+                                  ReviewTheme(
+                                      id="ignored_threat:opening",
+                                      label="ignored threat (opening)",
+                                      plies=[0],
+                                      confidence="low",
+                                      safe_summary="a single ignored threat moment in the opening: 1. e4.",
+                                  )
+                              ])
+
+    result = proc.process("wrap up")
+
+    assert "intent: close_with_takeaway" in result.prompt
+    assert "Backend session close" in result.prompt
+    assert "a single ignored threat moment" in result.prompt
+    assert "do NOT ask a new Socratic question" in result.prompt
+    assert state.teaching_ledger["last_takeaway"]["theme_id"] == "ignored_threat:opening"
+    dossier = load_dossier(stub_config.dossier_file)
+    assert dossier["session_takeaways"][0]["game_id"] == "game-1"
+    assert "a single ignored threat moment" in dossier["session_takeaways"][0]["text"]
+
+
+def test_p0_8_lesson_complete_ack_closes_without_new_quiz(stub_config):
+    from app.review import GameReview, MoveRecord, ReviewTheme
+
+    proc, state, _ = make_processor(stub_config)
+    rec = MoveRecord(ply=0, number=1, color="white", san="e4", uci="e2e4",
+                     fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                     eval_before_cp=0, eval_after_cp=-100, drop_pct=12.0,
+                     quality="inaccuracy")
+    state.current_game_id = "game-2"
+    state.lesson_metadata = {"lesson_status": "lesson_complete", "last_agenda_index": 0}
+    state.review = GameReview(headers={}, records=[rec], student_color="white",
+                              agenda_plies=[0], themes=[
+                                  ReviewTheme(
+                                      id="bad_trade:opening",
+                                      label="bad trade (opening)",
+                                      plies=[0],
+                                      confidence="low",
+                                      safe_summary="a single bad trade moment in the opening: 1. e4.",
+                                  )
+                              ])
+
+    result = proc.process("ok")
+
+    assert "intent: close_with_takeaway" in result.prompt
+    assert "routing_reasons: intent:close_after_lesson_complete" in result.prompt
+    assert "no_tail_redirect: true" in result.prompt
+    assert state.teaching_ledger["last_plan"]["intent"] == "close_with_takeaway"
+
+
 def test_memorize_annotates_diagnoses_with_typicality(stub_config):
     from app.memory import load_dossier
     from tests.test_review import PGN as RPGN, _scripted_engines

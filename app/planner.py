@@ -38,6 +38,11 @@ _COMPARE_RE = re.compile(r"\b(?:compare|candidate(?:s)?|which of|between)\b", re
 _STRUCTURE_RE = re.compile(r"\b(?:pawn structure|structure|plan|strategy)\b", re.I)
 _BRIEF_RE = re.compile(r"\b(?:briefly|brief|concise|short answer|quickly|tl;dr|tldr)\b", re.I)
 _VERBOSE_RE = re.compile(r"\b(?:in detail|detailed|thorough|step by step|deep dive)\b", re.I)
+_CLOSE_RE = re.compile(
+    r"\b(?:wrap up|finish(?: up)?|close(?: it| this| the session)?|done for now|that'?s enough|"
+    r"what should i remember|main takeaway|one takeaway|takeaway)\b",
+    re.I,
+)
 
 
 @dataclass
@@ -114,6 +119,14 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             reasons=reasons + ["decline:full_game_annotation"],
         )
 
+    if _CLOSE_RE.search(text):
+        return TeachingPlan(
+            intent="close_with_takeaway",
+            language=language,
+            density=density,
+            no_tail_redirect=True,
+            reasons=reasons + ["intent:close_with_takeaway"],
+        )
     if _SUMMARY_RE.search(text):
         return TeachingPlan(
             intent="explain_phase_summary",
