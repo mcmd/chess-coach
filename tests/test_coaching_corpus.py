@@ -4,9 +4,16 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
+import chess
+import chess.engine
 import chess.pgn
 
-from scripts.eval_coaching import check_review, review_proposal_packet, validate_corpus_manifest
+from scripts.eval_coaching import (
+    check_review,
+    human_danger_mass_for_record,
+    review_proposal_packet,
+    validate_corpus_manifest,
+)
 from scripts.triage_coaching_corpus import analyse_side
 
 
@@ -94,6 +101,42 @@ def test_human_selection_and_reason_assertions_are_machine_checkable():
     assert candidate["evidence_provenance"]["diagnosis"]["suggested_categories"] == [
         "priority_selection"]
     assert packet["notice"].startswith("PROPOSAL ONLY")
+
+
+def test_human_danger_mass_buckets_maia_top_moves_with_provenance():
+    board = chess.Board()
+    bad = board.copy()
+    bad.push_san("f3")
+    good = board.copy()
+    good.push_san("Nf3")
+
+    class Engine:
+        def __init__(self):
+            self.evals = {bad.fen(): -500, good.fen(): 20}
+
+        def quick_eval(self, fen, time_limit=0.2):
+            return chess.engine.PovScore(chess.engine.Cp(self.evals[fen]), chess.WHITE), None
+
+    record = SimpleNamespace(
+        color="white",
+        fen_before=board.fen(),
+        eval_before_cp=0,
+        maia_top=[
+            {"move": "f3", "probability": 0.6},
+            {"move": "Nf3", "probability": 0.3},
+        ],
+    )
+
+    danger = human_danger_mass_for_record(record, Engine(), elo=1100, eval_time=0.2)
+
+    assert danger["available"] is True
+    assert danger["provisional"] is True
+    assert danger["source"] == "maia_top_moves_plus_local_quick_eval"
+    assert danger["covered_probability"] == 0.9
+    assert danger["bad_or_worse_mass"] == 0.6
+    assert danger["quality_mass"]["blunder"] == 0.6
+    assert danger["quality_mass"]["good"] == 0.3
+    assert danger["moves"][0]["source"] == "local_quick_eval"
 
 
 def test_triage_slide_phase_filter_matches_production_fixture_outcomes():

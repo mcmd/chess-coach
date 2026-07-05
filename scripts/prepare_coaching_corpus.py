@@ -14,7 +14,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from scripts.eval_coaching import review_proposal_packet, validate_corpus_manifest
+from scripts.eval_coaching import (
+    build_human_danger_mass,
+    review_proposal_packet,
+    validate_corpus_manifest,
+)
 
 
 def _load_runtime_config():
@@ -87,6 +91,10 @@ def main(argv=None) -> int:
                 with_maia=not args.without_maia,
                 enrich=True,
             )
+            human_danger = {}
+            if not args.without_maia:
+                human_danger = build_human_danger_mass(
+                    review, engines, eval_time=config.review_eval_time)
             packet = {
                 "fixture_id": fixture_id,
                 "generated_on": date.today().isoformat(),
@@ -106,7 +114,7 @@ def main(argv=None) -> int:
                     "maia_deep_model": config.maia3_deep_model if not args.without_maia else None,
                     "online_enrichment": False,
                 },
-                "review": review_proposal_packet(review),
+                "review": review_proposal_packet(review, human_danger_by_ply=human_danger),
                 "human_decision": {
                     "approve_fixture": None,
                     "reviewed_by": None,
