@@ -143,6 +143,51 @@ def test_help_is_local_only(stub_config):
     assert "/load_pgn" in result.message
 
 
+def test_p0_8_declines_full_game_annotation_in_coach_mode(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    result = proc.process("Can you annotate every move in this game?")
+
+    assert result.prompt is None
+    assert "can't annotate every move" in result.message
+    assert "critical moments one at a time" in result.message
+    assert state.teaching_ledger["last_plan"]["intent"] == "decline_full_game_annotation"
+    assert state.teaching_ledger["last_plan"]["decline"] is True
+
+
+def test_p0_8_direct_language_density_policy_is_injected(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    result = proc.process("Explain directly and briefly in Spanish why Qxf7 is bad.")
+
+    assert "[Backend Teaching Plan - P0-8]" in result.prompt
+    assert "intent: answer_directly" in result.prompt
+    assert "language: Spanish" in result.prompt
+    assert "density: brief" in result.prompt
+    assert "socratic_redirect: false" in result.prompt
+    assert "withhold_answer: false" in result.prompt
+    assert "no_tail_redirect: true" in result.prompt
+    assert state.teaching_ledger["last_plan"]["language"] == "Spanish"
+
+
+def test_p0_8_phase_summary_suppresses_tail_redirect(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    result = proc.process("Summarize the game phase by phase.")
+
+    assert "intent: explain_phase_summary" in result.prompt
+    assert "no_tail_redirect: true" in result.prompt
+    assert "do not append an unrequested quiz" in result.prompt
+    assert state.teaching_ledger["last_plan"]["no_tail_redirect"] is True
+
+
+def test_p0_8_quiz_me_keeps_socratic_withholding(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    result = proc.process("Quiz me on this position.")
+
+    assert "intent: ask_socratic_question" in result.prompt
+    assert "withhold_answer: true" in result.prompt
+    assert "socratic_redirect: true" in result.prompt
+    assert state.teaching_ledger["last_plan"]["withhold_answer"] is True
+
+
 def test_memorize_annotates_diagnoses_with_typicality(stub_config):
     from app.memory import load_dossier
     from tests.test_review import PGN as RPGN, _scripted_engines

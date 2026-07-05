@@ -16,6 +16,7 @@ class SessionState:
     socratic_attempts: dict = field(default_factory=dict)  # fen -> attempt count
     lesson_metadata: dict = field(default_factory=dict)    # persisted resume/restart boundary
     current_game_id: str = None
+    teaching_ledger: dict = field(default_factory=dict)    # P0-8 routing/planning observability
     # Board diagram theme (set from config at startup; defaults = lichess green).
     board_light_color: str = "#eeeed2"
     board_dark_color: str = "#769656"

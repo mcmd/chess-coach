@@ -17,7 +17,9 @@ import chess.pgn
 from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata,
                         update_dossier, update_dossier_with_batch)
 from app.notation import legal_san_mentions
+from app.planner import plan_free_text_turn
 from app.review import review_game, attach_board_tokens
+from app.trace import trace
 from app.ui import console
 
 HELP_TEXT = """[bold]Commands[/bold]
@@ -109,7 +111,23 @@ class CommandProcessor:
         if looks_like_pgn(text):
             return self._load_pasted_pgn(text)
 
-        return CommandResult(prompt=self._enrich(text) + self._candidate_list_note(text)
+        plan = plan_free_text_turn(text, default_language=getattr(self.config, "language", "English"))
+        self.state.teaching_ledger["last_plan"] = {
+            "intent": plan.intent,
+            "language": plan.language,
+            "density": plan.density,
+            "withhold_answer": plan.withhold_answer,
+            "socratic_redirect": plan.socratic_redirect,
+            "no_tail_redirect": plan.no_tail_redirect,
+            "decline": plan.decline,
+            "reasons": list(plan.reasons),
+        }
+        trace(f"teaching plan: {self.state.teaching_ledger['last_plan']}")
+        if plan.decline:
+            return CommandResult(message=plan.decline_message)
+
+        planned = f"{plan.prompt_block()}\n\nStudent request: {text}"
+        return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
                              + self._give_up_note(text) + self._pending_diagnosis_note())
 
     # ------------------------------------------------------------------
