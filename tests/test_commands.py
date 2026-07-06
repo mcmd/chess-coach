@@ -1,5 +1,7 @@
 """Regression tests for the command layer — including the /reset timeline wipe
 (F3) and the chat-text board clobber (F4) found in the 2026-06-10 review."""
+import json
+
 import chess
 
 from app.commands import CommandProcessor, looks_like_pgn
@@ -142,6 +144,48 @@ def test_help_is_local_only(stub_config):
     result = proc.process("/help")
     assert result.prompt is None
     assert "/load_pgn" in result.message
+
+
+def test_dossier_review_uses_pattern_drill_selector(stub_config):
+    from app.memory import load_dossier
+
+    board = chess.Board()
+    board.push_san("e4")
+    older_fen = board.fen()
+    dossier = {
+        "total_blunders_analyzed": 2,
+        "error_frequencies": {"ignored_threat": 2},
+        "recent_positions": [
+            {
+                "fen": chess.STARTING_FEN,
+                "error_category": "ignored_threat",
+                "maia_played_prob": 0.62,
+            },
+            {"fen": older_fen, "error_category": "ignored_threat"},
+        ],
+        "recurring_patterns": [
+            {
+                "id": "ignored_threat:opening",
+                "title": "Ignored threat",
+                "status": "active",
+                "evidence_count": 2,
+            }
+        ],
+        "drill_history": [{"fen": older_fen, "error_category": "ignored_threat"}],
+    }
+    with open(stub_config.dossier_file, "w", encoding="utf-8") as handle:
+        json.dump(dossier, handle)
+    proc, _, _ = make_processor(stub_config)
+
+    result = proc.process("/review")
+
+    assert "Priority: recurring pattern: Ignored threat" in result.prompt
+    assert "Pattern focus: Ignored threat" in result.prompt
+    assert "about 62% of peers" in result.prompt
+    assert chess.STARTING_FEN in result.prompt
+    updated = load_dossier(stub_config.dossier_file)
+    assert updated["drill_history"][0]["fen"] == chess.STARTING_FEN
+    assert updated["drill_state"]["ignored_threat"]["seen_count"] == 1
 
 
 def test_p0_8_declines_full_game_annotation_in_coach_mode(stub_config):

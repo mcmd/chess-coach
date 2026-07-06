@@ -1,0 +1,88 @@
+import json
+
+import chess
+
+from app.drills import popularity_branch, record_drill_presented, select_dossier_drill
+from app.memory import load_dossier
+
+
+def _after(*sans):
+    board = chess.Board()
+    for san in sans:
+        board.push_san(san)
+    return board.fen()
+
+
+def test_drill_selector_prioritizes_recurring_pattern_and_varies_instance():
+    fen_seen = chess.STARTING_FEN
+    fen_fresh = _after("e4")
+    dossier = {
+        "recent_positions": [
+            {"fen": fen_seen, "error_category": "ignored_threat"},
+            {"fen": fen_fresh, "error_category": "ignored_threat"},
+            {"fen": _after("d4"), "error_category": "hanging_piece"},
+        ],
+        "recurring_patterns": [
+            {"id": "ignored_threat:opening", "title": "Ignored threat", "status": "active",
+             "evidence_count": 4},
+        ],
+        "drill_history": [{"fen": fen_seen, "error_category": "ignored_threat"}],
+        "error_frequencies": {"hanging_piece": 10, "ignored_threat": 2},
+    }
+
+    drill = select_dossier_drill(dossier)
+
+    assert drill["fen"] == fen_fresh
+    assert drill["error_category"] == "ignored_threat"
+    assert drill["pattern_id"] == "ignored_threat:opening"
+    assert drill["source"] == "recurring_pattern"
+
+
+def test_drill_selector_skips_invalid_stale_fens():
+    dossier = {
+        "recent_positions": [
+            {"fen": "not a fen", "error_category": "ignored_threat"},
+            {"fen": chess.STARTING_FEN, "error_category": "hanging_piece"},
+        ],
+        "error_frequencies": {"ignored_threat": 10, "hanging_piece": 1},
+    }
+
+    drill = select_dossier_drill(dossier)
+
+    assert drill["fen"] == chess.STARTING_FEN
+    assert drill["error_category"] == "hanging_piece"
+
+
+def test_popularity_branch_uses_probability_not_severity():
+    assert "common" in popularity_branch(0.62)
+    assert "fairly common" in popularity_branch(0.35)
+    assert popularity_branch(0.12) == ""
+    assert popularity_branch(None) == ""
+
+
+def test_record_drill_presented_updates_history_and_state(tmp_path):
+    dossier_file = str(tmp_path / "dossier.json")
+    drill = {
+        "fen": chess.STARTING_FEN,
+        "error_category": "king_safety",
+        "pattern_id": "king_safety:middlegame",
+        "source": "recurring_pattern",
+    }
+
+    record_drill_presented(dossier_file, drill)
+
+    dossier = load_dossier(dossier_file)
+    assert dossier["drill_history"][0]["fen"] == chess.STARTING_FEN
+    assert dossier["drill_history"][0]["pattern_id"] == "king_safety:middlegame"
+    assert dossier["drill_state"]["king_safety"]["seen_count"] == 1
+    assert dossier["drill_state"]["king_safety"]["last_fen"] == chess.STARTING_FEN
+
+
+def test_old_dossier_loads_with_drill_defaults(tmp_path):
+    dossier_file = tmp_path / "dossier.json"
+    dossier_file.write_text(json.dumps({"total_blunders_analyzed": 0}), encoding="utf-8")
+
+    dossier = load_dossier(str(dossier_file))
+
+    assert dossier["drill_history"] == []
+    assert dossier["drill_state"] == {}

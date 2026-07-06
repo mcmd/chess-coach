@@ -65,6 +65,8 @@ _DOSSIER_DEFAULT = {
     "recent_positions": [],
     "session_takeaways": [],
     "self_assessment_history": [],
+    "drill_history": [],
+    "drill_state": {},
     "typicality_history": [],
     "recurring_patterns": [],   # confirmed cross-game patterns from batch analysis
     "batch_trends": [],         # one entry per batch run: top patterns with counts
@@ -112,6 +114,8 @@ def load_dossier(dossier_file: str) -> dict:
     dossier["recent_positions"] = []
     dossier["session_takeaways"] = []
     dossier["self_assessment_history"] = []
+    dossier["drill_history"] = []
+    dossier["drill_state"] = {}
     dossier["typicality_history"] = []
     dossier["recurring_patterns"] = []
     dossier["batch_trends"] = []
@@ -141,6 +145,8 @@ def update_dossier(diagnostics, dossier_file):
                 position = {"fen": diag["fen"], "error_category": category}
                 if diag.get("error_typicality"):
                     position["error_typicality"] = diag["error_typicality"]
+                if diag.get("maia_played_prob") is not None:
+                    position["maia_played_prob"] = diag["maia_played_prob"]
                 dossier["recent_positions"].insert(0, position)
 
         habit = diag.get("preventative_habit")
