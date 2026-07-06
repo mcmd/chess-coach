@@ -19,6 +19,7 @@ class SessionState:
     teaching_ledger: dict = field(default_factory=dict)    # P0-8 routing/planning observability
     pending_unmatched_review: dict = field(default_factory=dict)  # P0-4c: review awaiting POV/consent
     review_context: dict = field(default_factory=dict)      # ownership, adopted POV, dossier consent
+    active_dossier_drill: dict = field(default_factory=dict)  # current /review drill, if any
     claim_gate_extra_fens: list[str] = field(default_factory=list)  # transient tool-returned line positions
     claim_gate_events: list[dict] = field(default_factory=list)  # structured L1/shadow observability
     # Board diagram theme (set from config at startup; defaults = lichess green).
@@ -51,6 +52,7 @@ class TimelineManager:
         self.state.current_game_id = None
         self.state.pending_unmatched_review.clear()
         self.state.review_context.clear()
+        self.state.active_dossier_drill.clear()
         self.state.claim_gate_extra_fens.clear()
         self.state.claim_gate_events.clear()
         self.pgn_nodes = []

@@ -541,6 +541,7 @@ class CommandProcessor:
         if not pick:
             return CommandResult(message="[yellow]No valid stored mistakes to review yet. Use /memorize after a session to build your dossier.[/yellow]")
         record_drill_presented(self.config.dossier_file, pick)
+        self.state.active_dossier_drill = dict(pick)
         popularity = (" " + pick["popularity_note"]) if pick.get("popularity_note") else ""
         pattern = (f" Pattern focus: {pick['pattern_title']}." if pick.get("pattern_title") else "")
         prompt = (f"DOSSIER REVIEW DRILL. Priority: {pick.get('priority_reason')}.{pattern} "

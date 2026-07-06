@@ -9,6 +9,7 @@ import requests
 from rich.panel import Panel
 
 from app.concepts import extract_board_features, see_exchange_gain
+from app.drills import record_drill_outcome
 from app.memory import load_lesson_metadata, save_lesson_metadata
 from app.motifs import detect_motifs_in_line
 from app.pawn_story import analyze_pawn_structure_evolution
@@ -271,10 +272,12 @@ class CoachTools:
         except ValueError:
             attempts[fen] = attempts.get(fen, 0) + 1
             n = attempts[fen]
-            return {"verdict": "illegal",
-                    "explanation": f"'{student_move_san}' is not a legal move here.",
-                    "attempts_so_far": n, "reveal_allowed": n >= 2,
-                    "legal_moves": ", ".join(board.san(m) for m in board.legal_moves)}
+            result = {"verdict": "illegal",
+                      "explanation": f"'{student_move_san}' is not a legal move here.",
+                      "attempts_so_far": n, "reveal_allowed": n >= 2,
+                      "legal_moves": ", ".join(board.san(m) for m in board.legal_moves)}
+            self._record_active_drill_outcome(fen, result)
+            return result
 
         try:
             infos = self.engines.top_lines(board, multipv=5, depth=16, time_cap=3.0)
@@ -388,8 +391,22 @@ class CoachTools:
         else:
             result["note"] = "Answer withheld by backend. Give ONE hint and ask the student to try once more."
             result["hint_facts"] = self._hint_facts(board, best_move)
+        self._record_active_drill_outcome(fen, result)
         self._persist_lesson_progress(fen, "awaiting_diagnosis" if reveal else "awaiting_answer")
         return result
+
+    def _record_active_drill_outcome(self, fen: str, result: dict) -> None:
+        drill = getattr(self.state, "active_dossier_drill", None) or {}
+        if not drill or drill.get("fen") != fen or not result.get("reveal_allowed"):
+            return
+        entry = record_drill_outcome(getattr(self.config, "dossier_file", None), drill, result)
+        if entry:
+            result["drill_outcome_recorded"] = {
+                "error_category": entry.get("error_category"),
+                "success": entry.get("success"),
+                "verdict": entry.get("verdict"),
+            }
+        self.state.active_dossier_drill.clear()
 
     def _agenda_record_for_fen(self, fen: str):
         if not self.state.review:

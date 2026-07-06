@@ -66,6 +66,7 @@ _DOSSIER_DEFAULT = {
     "session_takeaways": [],
     "self_assessment_history": [],
     "drill_history": [],
+    "drill_outcomes": [],
     "drill_state": {},
     "typicality_history": [],
     "recurring_patterns": [],   # confirmed cross-game patterns from batch analysis
@@ -115,6 +116,7 @@ def load_dossier(dossier_file: str) -> dict:
     dossier["session_takeaways"] = []
     dossier["self_assessment_history"] = []
     dossier["drill_history"] = []
+    dossier["drill_outcomes"] = []
     dossier["drill_state"] = {}
     dossier["typicality_history"] = []
     dossier["recurring_patterns"] = []

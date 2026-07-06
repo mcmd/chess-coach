@@ -52,6 +52,29 @@ def test_correct_answer_reveals_immediately(stub_config):
     assert result["best_move_label"] == "1. e4"
 
 
+def test_dossier_drill_answer_records_outcome(stub_config):
+    from app.drills import record_drill_presented
+    from app.memory import load_dossier
+
+    tools, state = make_tools(stub_config, _answer_engines())
+    drill = {
+        "fen": START,
+        "error_category": "ignored_threat",
+        "pattern_id": "ignored_threat:opening",
+        "source": "recurring_pattern",
+    }
+    record_drill_presented(stub_config.dossier_file, drill)
+    state.active_dossier_drill = dict(drill)
+
+    result = tools.evaluate_student_answer(START, "e4")
+
+    assert result["drill_outcome_recorded"]["success"] is True
+    assert state.active_dossier_drill == {}
+    dossier = load_dossier(stub_config.dossier_file)
+    assert dossier["drill_outcomes"][0]["error_category"] == "ignored_threat"
+    assert dossier["drill_state"]["ignored_threat"]["success_count"] == 1
+
+
 def test_agenda_answer_returns_numbered_best_move_label(stub_config):
     fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
     engines = FakeEngines(multipv={fen: [("c3e4", 300), ("e2e4", 0)]})
