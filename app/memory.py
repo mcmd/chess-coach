@@ -16,6 +16,7 @@ MAX_HISTORY_MESSAGES = 80
 # alone. Turn the flag ON at the detector's upper threshold, OFF only once the rate
 # falls below this lower multiple of baseline, and hold it in the dead-band. (issue #4)
 SLIDE_ABOVE_BASELINE_OFF = 1.2
+DRILL_RECENT_WINDOW = 10
 
 
 def _atomic_write_json(path: str, data) -> None:
@@ -227,6 +228,106 @@ def record_self_assessment(dossier_file: str, assessment: dict) -> None:
     _atomic_write_json(dossier_file, dossier)
 
 
+def _norm_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (text or "").casefold())
+
+
+def _drill_outcome_matches_pattern(outcome: dict, pattern: dict) -> bool:
+    pid = pattern.get("id") or ""
+    oid = outcome.get("pattern_id") or ""
+    category = outcome.get("error_category") or ""
+    if oid and oid == pid:
+        return True
+    npid = _norm_key(pid)
+    ncat = _norm_key(category)
+    return bool(ncat and (npid.startswith(ncat) or ncat in _norm_key(pattern.get("title"))))
+
+
+def drill_summary_for_pattern(dossier: dict, pattern: dict) -> dict:
+    """Practice evidence for one recurring pattern.
+
+    This is intentionally separate from the batch recurrence lifecycle: solving
+    drills is practice evidence, while fewer future game mistakes are efficacy
+    evidence.
+    """
+    outcomes = [
+        o for o in dossier.get("drill_outcomes", [])
+        if _drill_outcome_matches_pattern(o, pattern)
+    ]
+    if not outcomes:
+        return {}
+    recent = outcomes[:DRILL_RECENT_WINDOW]
+    successes = sum(1 for o in outcomes if o.get("success"))
+    recent_successes = sum(1 for o in recent if o.get("success"))
+    last = outcomes[0]
+    state = (dossier.get("drill_state") or {}).get(last.get("error_category") or "") or {}
+    return {
+        "attempts": len(outcomes),
+        "successes": successes,
+        "success_rate": round(successes / len(outcomes), 3),
+        "recent_attempts": len(recent),
+        "recent_successes": recent_successes,
+        "recent_success_rate": round(recent_successes / len(recent), 3),
+        "last_drilled": last.get("date"),
+        "last_result": "success" if last.get("success") else "lapse",
+        "last_verdict": last.get("verdict"),
+        "memory": {
+            "difficulty": state.get("difficulty"),
+            "stability_days": state.get("stability_days"),
+            "retrievability": state.get("retrievability"),
+            "due_after_days": state.get("due_after_days"),
+        },
+    }
+
+
+def drill_practice_summary(dossier: dict, limit: int = 3) -> list:
+    summaries = []
+    seen = set()
+    for pattern in dossier.get("recurring_patterns", []):
+        summary = drill_summary_for_pattern(dossier, pattern)
+        if summary:
+            summaries.append({
+                "id": pattern.get("id"),
+                "title": pattern.get("title"),
+                "status": pattern.get("status"),
+                **summary,
+            })
+            seen.add(pattern.get("id"))
+    if len(summaries) < limit:
+        by_category = {}
+        for outcome in dossier.get("drill_outcomes", []):
+            category = outcome.get("error_category") or "unknown"
+            by_category.setdefault(category, []).append(outcome)
+        for category, outcomes in by_category.items():
+            if any(_drill_outcome_matches_pattern({"error_category": category}, p)
+                   for p in dossier.get("recurring_patterns", [])):
+                continue
+            synthetic_id = f"category:{category}"
+            if synthetic_id in seen:
+                continue
+            recent = outcomes[:DRILL_RECENT_WINDOW]
+            successes = sum(1 for o in outcomes if o.get("success"))
+            recent_successes = sum(1 for o in recent if o.get("success"))
+            summaries.append({
+                "id": synthetic_id,
+                "title": category.replace("_", " "),
+                "status": "drilled_only",
+                "attempts": len(outcomes),
+                "successes": successes,
+                "success_rate": round(successes / len(outcomes), 3),
+                "recent_attempts": len(recent),
+                "recent_successes": recent_successes,
+                "recent_success_rate": round(recent_successes / len(recent), 3),
+                "last_drilled": outcomes[0].get("date"),
+                "last_result": "success" if outcomes[0].get("success") else "lapse",
+                "last_verdict": outcomes[0].get("verdict"),
+                "memory": (dossier.get("drill_state") or {}).get(category) or {},
+            })
+            if len(summaries) >= limit:
+                break
+    return summaries[:limit]
+
+
 def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
     """Distill a batch run into the long-term player model. Only pattern
     summaries enter the dossier — raw per-moment findings stay in the batch
@@ -257,6 +358,9 @@ def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
         if (entry["previous_rate"] and entry["rate"] is not None
                 and entry["rate"] <= entry["previous_rate"] * 0.6):
             entry["status"] = "improving"
+        drill_summary = drill_summary_for_pattern(dossier, entry)
+        if drill_summary:
+            entry["drill_practice"] = drill_summary
         existing[pat["id"]] = entry
     for pid, p in existing.items():
         if pid not in seen_ids:

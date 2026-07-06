@@ -1,6 +1,6 @@
 from google.genai import types
 
-from app.memory import load_dossier
+from app.memory import drill_practice_summary, load_dossier
 
 
 def get_dossier_context(dossier_file: str) -> str:
@@ -8,9 +8,10 @@ def get_dossier_context(dossier_file: str) -> str:
     slide = d.get("slide_trend") or {}
     takeaways = d.get("session_takeaways", [])[:3]
     self_history = d.get("self_assessment_history", [])[-10:]
+    drill_summaries = drill_practice_summary(d)
     if (d.get("total_blunders_analyzed", 0) == 0 and not d.get("recurring_patterns")
             and slide.get("status") not in ("active", "improving") and not takeaways
-            and not self_history):
+            and not self_history and not drill_summaries):
         return "No historical data available yet. This is your first session."
     if d.get("total_blunders_analyzed", 0):
         sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
@@ -37,9 +38,29 @@ def get_dossier_context(dossier_file: str) -> str:
                     f"{p.get('games_seen')} games")
             if p.get("status") == "improving":
                 line += "; IMPROVING since the previous batch — praise this progress honestly"
+            practice = p.get("drill_practice") or {}
+            if practice:
+                line += (f"; practice: {practice.get('recent_successes', 0)}/"
+                         f"{practice.get('recent_attempts', 0)} recent solved")
             pat_lines.append(line + ")")
         context += ("\nConfirmed recurring patterns from batch analysis (connect live mistakes "
                     "to these when they genuinely match):\n- " + "\n- ".join(pat_lines))
+    if drill_summaries:
+        lines = []
+        for summary in drill_summaries:
+            line = (f"{summary.get('title')} practice: {summary.get('recent_successes', 0)}/"
+                    f"{summary.get('recent_attempts', 0)} recent solved")
+            if summary.get("attempts") != summary.get("recent_attempts"):
+                line += (f" ({summary.get('successes', 0)}/"
+                         f"{summary.get('attempts', 0)} lifetime)")
+            if summary.get("last_result"):
+                line += f"; last drill was a {summary.get('last_result')}"
+            memory = summary.get("memory") or {}
+            if memory.get("retrievability") is not None:
+                line += f"; retrievability {memory.get('retrievability')}"
+            lines.append(line)
+        context += ("\nDrill practice trend (practice evidence only; real transfer is whether later "
+                    "games show fewer matching mistakes):\n- " + "\n- ".join(lines))
     if slide.get("status") in ("active", "improving"):
         n, games = slide.get("slide_games"), slide.get("games")
         rate = f"{slide['rate']:.0%}" if slide.get("rate") is not None else "?"

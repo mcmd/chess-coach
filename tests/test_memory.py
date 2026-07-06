@@ -1,8 +1,10 @@
 import json
 from types import SimpleNamespace
 
-from app.memory import (load_dossier, record_self_assessment, record_session_takeaway,
-                        update_dossier, save_history)
+from app.drills import record_drill_outcome, record_drill_presented
+from app.memory import (drill_practice_summary, load_dossier, record_self_assessment,
+                        record_session_takeaway, update_dossier,
+                        update_dossier_with_batch, save_history)
 
 
 def test_dossier_aggregates_taxonomy_categories(tmp_path):
@@ -162,3 +164,69 @@ def test_self_assessment_history_recorded_and_added_to_context(tmp_path):
     assert "Self-assessment trend" in context
     assert "1/2 exact top-agenda matches" in context
     assert "1 near misses" in context
+
+
+def test_drill_practice_attaches_to_batch_pattern_and_context(tmp_path):
+    from app.prompts import get_dossier_context
+
+    dossier_file = str(tmp_path / "dossier.json")
+    drill = {
+        "fen": "fen1",
+        "error_category": "ignored_threat",
+        "pattern_id": "ignored_threat:opening",
+        "source": "recurring_pattern",
+    }
+    record_drill_presented(dossier_file, drill)
+    record_drill_outcome(dossier_file, drill, {
+        "verdict": "best",
+        "success": True,
+        "reveal_allowed": True,
+        "attempts_so_far": 1,
+    })
+    update_dossier_with_batch(dossier_file, {
+        "batch_id": "b1",
+        "games": 5,
+        "patterns": [{
+            "id": "ignored_threat:opening",
+            "title": "Ignored threat",
+            "count": 3,
+            "games_seen": 2,
+            "habit": "Ask what the opponent threatened.",
+            "rate": 0.6,
+            "representative_positions": [],
+        }],
+    })
+
+    dossier = load_dossier(dossier_file)
+    pattern = dossier["recurring_patterns"][0]
+    assert pattern["drill_practice"]["attempts"] == 1
+    assert pattern["drill_practice"]["successes"] == 1
+    summaries = drill_practice_summary(dossier)
+    assert summaries[0]["title"] == "Ignored threat"
+    context = get_dossier_context(dossier_file)
+    assert "practice: 1/1 recent solved" in context
+    assert "Drill practice trend" in context
+    assert "practice evidence only" in context
+
+
+def test_drill_only_dossier_context_is_not_empty(tmp_path):
+    from app.prompts import get_dossier_context
+
+    dossier_file = str(tmp_path / "dossier.json")
+    drill = {
+        "fen": "fen1",
+        "error_category": "king_safety",
+        "source": "recent_position",
+    }
+    record_drill_presented(dossier_file, drill)
+    record_drill_outcome(dossier_file, drill, {
+        "verdict": "wrong",
+        "reveal_allowed": True,
+        "attempts_so_far": 2,
+    })
+
+    context = get_dossier_context(dossier_file)
+
+    assert "No historical data available" not in context
+    assert "king safety practice: 0/1 recent solved" in context
+    assert "last drill was a lapse" in context
