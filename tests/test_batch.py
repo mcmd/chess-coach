@@ -358,8 +358,11 @@ def test_dossier_batch_update_packages_drill_sets(stub_config):
     assert drill_set["pattern_id"] == "defend_against_direct_threat:opening"
     assert drill_set["title"] == "Direct threat"
     assert drill_set["status"] == "active"
+    assert drill_set["drill_type"] == "defend"
+    assert "defends" in drill_set["drill_goal"]
     assert drill_set["source_batch_id"] == "b1"
     assert drill_set["positions"][0]["source"] == "batch_drill_set"
+    assert drill_set["positions"][0]["drill_type"] == "defend"
     assert drill_set["positions"][0]["error_category"] == "defend_against_direct_threat"
     assert drill_set["positions"][0]["played"] == "g4"
 
@@ -376,6 +379,39 @@ def test_dossier_batch_drill_sets_keep_prior_unique_positions(stub_config):
     assert [p["fen"] for p in positions] == [newer_fen, older_fen]
     assert positions[0]["source_batch_id"] == "b2"
     assert positions[1]["source_batch_id"] == "b1"
+
+
+def test_dossier_batch_drill_sets_label_capitalize_and_equalize(stub_config):
+    f = stub_config.dossier_file
+    update_dossier_with_batch(f, {
+        "batch_id": "b1",
+        "games": 4,
+        "patterns": [
+            {
+                "id": "failure_to_capitalize:middlegame",
+                "title": "Failure to capitalize",
+                "count": 3,
+                "games_seen": 2,
+                "habit": "Look for the punishment after an opponent mistake.",
+                "rate": 0.75,
+                "representative_positions": [{"fen": chess.STARTING_FEN}],
+            },
+            {
+                "id": "equalize:endgame",
+                "title": "Hold the draw",
+                "count": 3,
+                "games_seen": 2,
+                "habit": "Look for the drawing resource.",
+                "rate": 0.75,
+                "representative_positions": [{"fen": chess.STARTING_FEN}],
+            },
+        ],
+    })
+
+    by_id = {s["pattern_id"]: s for s in load_dossier(f)["drill_sets"]}
+
+    assert by_id["failure_to_capitalize:middlegame"]["drill_type"] == "capitalize"
+    assert by_id["equalize:endgame"]["drill_type"] == "equalize"
 
 
 def test_dossier_batch_update_tracks_recent_lifetime_and_slipping(stub_config):

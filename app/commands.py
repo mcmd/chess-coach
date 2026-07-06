@@ -14,7 +14,7 @@ import chess
 import chess.pgn
 
 from app.drills import record_drill_presented, reverify_drill_position, select_dossier_drill
-from app.importer import import_local_pgn_file
+from app.importer import import_configured_recent_games, import_local_pgn_file, import_remote_games
 from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata,
                         record_self_assessment, record_session_takeaway,
                         update_dossier, update_dossier_with_batch)
@@ -32,6 +32,8 @@ HELP_TEXT = """[bold]Commands[/bold]
                      and train on them (/batch alone reloads the last report)
   /import_games <path>
                      Import your analysed games from a local PGN into the dossier
+  /import_recent [platform username]
+                     Fetch recent analysed games for a configured handle and import them
   /move <san>        Play a move on the board (e.g. /move Nf3)
   /next  /prev       Step forward / back through the loaded game
   /goto <n>[b]       Jump to before White's (or Black's, with 'b') move n
@@ -93,6 +95,8 @@ class CommandProcessor:
             return self._batch(text)
         if cmd == "/import_games":
             return self._import_games(text)
+        if cmd == "/import_recent":
+            return self._import_recent(text)
         if cmd == "/move":
             return self._move(text)
         if cmd in ("/undo", "/prev"):
@@ -202,6 +206,36 @@ class CommandProcessor:
         return CommandResult(
             message=(f"[green]{result.message}[/green]\n"
                      f"[cyan]Batch id: {result.batch_id}. Use /review for dossier drills or /batch to train patterns.[/cyan]")
+        )
+
+    def _import_recent(self, text: str) -> CommandResult:
+        parts = text.split()
+        if len(parts) == 1:
+            label = "configured handles"
+            console.print("[dim yellow]↳ Fetching recent analysed games for configured handles...[/dim yellow]")
+            result = import_configured_recent_games(
+                self.config, self.engines,
+                on_progress=self.on_progress,
+                on_status=lambda s: console.print(f"[dim]· import | {s}[/dim]"),
+            )
+        elif len(parts) == 3:
+            platform, username = parts[1], parts[2]
+            label = f"{platform}:{username}"
+            console.print(f"[dim yellow]↳ Fetching recent analysed games for {label}...[/dim yellow]")
+            result = import_remote_games(
+                platform, username, self.engines, self.config,
+                on_progress=self.on_progress,
+                on_status=lambda s: console.print(f"[dim]· import | {s}[/dim]"),
+            )
+        else:
+            return CommandResult(message="Usage: /import_recent OR /import_recent <lichess|chesscom> <username>")
+        if result.error:
+            detail = (f" Seen: {result.games_seen}; matched: {result.games_matched}; "
+                      f"duplicates: {result.games_duplicate}.")
+            return CommandResult(message=f"[yellow]{result.error}{detail}[/yellow]")
+        return CommandResult(
+            message=(f"[green]Imported recent games from {label}. {result.message}[/green]\n"
+                     f"[cyan]Batch id: {result.batch_id}. Use /review for dossier drills.[/cyan]")
         )
 
     def _batch(self, text: str) -> CommandResult:
@@ -600,12 +634,15 @@ class CommandProcessor:
         self.state.active_dossier_drill = dict(pick)
         popularity = (" " + pick["popularity_note"]) if pick.get("popularity_note") else ""
         pattern = (f" Pattern focus: {pick['pattern_title']}." if pick.get("pattern_title") else "")
+        drill_kind = pick.get("drill_type") or "best_move"
+        drill_goal = pick.get("drill_goal") or "Find the best move and name the pattern."
         verification = ""
         if pick.get("verification"):
             verification = (" Backend verification: this stored position was rechecked locally before "
                             "presentation; use that only as a trust/provenance fact, not as the lesson "
                             "severity.")
         prompt = (f"DOSSIER REVIEW DRILL. Priority: {pick.get('priority_reason')}.{pattern} "
+                  f"Drill type: {drill_kind}. Drill goal: {drill_goal} "
                   f"I previously made a '{pick.get('error_category', 'unknown')}' mistake "
                   f"in this position: {pick['fen']}.{popularity} "
                   f"{verification} "
@@ -613,7 +650,8 @@ class CommandProcessor:
                   "remind me what KIND of mistake I tend to make here, and quiz me: ask me to find the best move. "
                   "Grade my answer with evaluate_student_answer.")
         return CommandResult(prompt=self._enrich(prompt),
-                             message=f"[green]Pulled a {pick.get('error_category', 'dossier')} drill from your dossier. Quiz time![/green]")
+                             message=(f"[green]Pulled a {pick.get('error_category', 'dossier')} "
+                                      f"{drill_kind} drill from your dossier. Quiz time![/green]"))
 
     # ------------------------------------------------------------------
     # CONTEXT ENRICHMENT

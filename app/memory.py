@@ -382,6 +382,8 @@ def _drill_set_for_pattern(prev: dict | None, entry: dict, pat: dict,
     seen = set()
     positions = []
 
+    drill_type = _drill_type_for_pattern(pattern_id)
+
     def add_position(pos: dict, source_batch_id: str | None):
         fen = pos.get("fen")
         key = (fen, category)
@@ -393,6 +395,7 @@ def _drill_set_for_pattern(prev: dict | None, entry: dict, pat: dict,
             "pattern_id": pattern_id,
             "pattern_title": entry.get("title"),
             "source": "batch_drill_set",
+            "drill_type": drill_type,
             "source_batch_id": source_batch_id,
             "move_label": pos.get("move_label"),
             "played": pos.get("played"),
@@ -413,12 +416,34 @@ def _drill_set_for_pattern(prev: dict | None, entry: dict, pat: dict,
         "pattern_id": pattern_id,
         "title": entry.get("title"),
         "status": entry.get("status"),
+        "drill_type": drill_type,
+        "drill_goal": _drill_goal_for_type(drill_type),
         "axis": pat.get("axis"),
         "habit": entry.get("habit"),
         "last_seen": today,
         "source_batch_id": batch_summary.get("batch_id"),
         "positions": positions[:DRILL_SET_POSITION_LIMIT],
     }
+
+
+def _drill_type_for_pattern(pattern_id: str) -> str:
+    key = _norm_key(pattern_id)
+    if key.startswith(("defendagainstdirectthreat", "ignoredthreat", "kingsafety")):
+        return "defend"
+    if key.startswith(("failuretocapitalize", "missedwinningchance", "missedtactic")):
+        return "capitalize"
+    if key.startswith(("equalize", "holdthedraw", "tablebase", "defensiveresource")):
+        return "equalize"
+    return "best_move"
+
+
+def _drill_goal_for_type(drill_type: str) -> str:
+    return {
+        "defend": "Find the move that defends or neutralizes the opponent's threat.",
+        "capitalize": "Find the move that punishes the opponent's mistake.",
+        "equalize": "Find the resource that holds or improves a difficult position.",
+        "best_move": "Find the best move and name the pattern.",
+    }.get(drill_type or "best_move", "Find the best move and name the pattern.")
 
 
 def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:

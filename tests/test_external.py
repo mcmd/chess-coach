@@ -193,6 +193,40 @@ def test_get_json_caches_responses(monkeypatch):
     external.clear_cache()
 
 
+def test_lichess_user_games_pgn_requests_analysed_evals(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        external,
+        "_fetch_text",
+        lambda url, params=None, headers=None: calls.append((url, params, headers)) or "pgn",
+    )
+
+    assert external.lichess_user_games_pgn("mcmd", max_games=12) == "pgn"
+
+    url, params, headers = calls[0]
+    assert url.endswith("/mcmd")
+    assert params["max"] == 12
+    assert params["analysed"] == "true"
+    assert params["evals"] == "true"
+    assert params["clocks"] == "true"
+    assert headers["Accept"] == "application/x-chess-pgn"
+
+
+def test_chesscom_user_games_pgn_reads_recent_archives(monkeypatch):
+    data = {
+        "archives": {"archives": ["https://api.chess.com/a/2026/05", "https://api.chess.com/a/2026/06"]},
+        "https://api.chess.com/a/2026/06": {"games": [{"pgn": "newer"}, {"pgn": "newest"}]},
+        "https://api.chess.com/a/2026/05": {"games": [{"pgn": "older"}]},
+    }
+    monkeypatch.setattr(
+        external,
+        "get_json",
+        lambda url, params=None: data["archives"] if url.endswith("/archives") else data.get(url),
+    )
+
+    assert external.chesscom_user_games_pgn("mcmd", max_games=2) == "newer\n\nnewest"
+
+
 def test_category_normalization_and_inversion():
     assert external.normalize_category("cursed-win") == "win"
     assert external.normalize_category("blessed-loss") == "loss"

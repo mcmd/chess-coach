@@ -57,6 +57,8 @@ def test_drill_selector_uses_batch_drill_sets_without_recent_positions():
                 "pattern_id": "ignored_threat:opening",
                 "pattern_title": "Ignored threat",
                 "source": "batch_drill_set",
+                "drill_type": "defend",
+                "drill_goal": "Find the defensive move.",
             }],
         }],
         "recurring_patterns": [
@@ -70,6 +72,8 @@ def test_drill_selector_uses_batch_drill_sets_without_recent_positions():
     assert drill["fen"] == fen
     assert drill["pattern_id"] == "ignored_threat:opening"
     assert drill["source"] == "batch_drill_set"
+    assert drill["drill_type"] == "defend"
+    assert drill["drill_goal"] == "Find the defensive move."
 
 
 def test_drill_selector_prioritizes_slipping_pattern():
@@ -176,6 +180,7 @@ def test_record_drill_presented_updates_history_and_state(tmp_path):
         "fen": chess.STARTING_FEN,
         "error_category": "king_safety",
         "pattern_id": "king_safety:middlegame",
+        "drill_type": "defend",
         "source": "recurring_pattern",
     }
 
@@ -184,6 +189,7 @@ def test_record_drill_presented_updates_history_and_state(tmp_path):
     dossier = load_dossier(dossier_file)
     assert dossier["drill_history"][0]["fen"] == chess.STARTING_FEN
     assert dossier["drill_history"][0]["pattern_id"] == "king_safety:middlegame"
+    assert dossier["drill_history"][0]["drill_type"] == "defend"
     assert dossier["drill_state"]["king_safety"]["seen_count"] == 1
     assert dossier["drill_state"]["king_safety"]["last_fen"] == chess.STARTING_FEN
 
@@ -194,6 +200,7 @@ def test_record_drill_outcome_updates_memory_state_after_success(tmp_path):
         "fen": chess.STARTING_FEN,
         "error_category": "king_safety",
         "pattern_id": "king_safety:middlegame",
+        "drill_type": "defend",
         "source": "recurring_pattern",
     }
     record_drill_presented(dossier_file, drill)
@@ -210,6 +217,7 @@ def test_record_drill_outcome_updates_memory_state_after_success(tmp_path):
     state = dossier["drill_state"]["king_safety"]
     assert entry["success"] is True
     assert dossier["drill_outcomes"][0]["verdict"] == "best"
+    assert dossier["drill_outcomes"][0]["drill_type"] == "defend"
     assert dossier["drill_history"][0]["outcome"] == "success"
     assert state["success_count"] == 1
     assert state["stability_days"] == 2.0

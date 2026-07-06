@@ -200,6 +200,7 @@ def test_dossier_review_uses_pattern_drill_selector(stub_config):
 
     assert "Priority: recurring pattern: Ignored threat" in result.prompt
     assert "Pattern focus: Ignored threat" in result.prompt
+    assert "Drill type: best_move" in result.prompt
     assert "Backend verification" in result.prompt
     assert "not as the lesson severity" in result.prompt
     assert "about 62% of peers" in result.prompt
@@ -225,6 +226,58 @@ def test_import_games_command_updates_dossier(stub_config, tmp_path):
     dossier = load_dossier(stub_config.dossier_file)
     assert len(dossier["imported_games"]) == 3
     assert dossier["recent_positions"]
+
+
+def test_import_recent_command_uses_configured_handles(stub_config, monkeypatch):
+    from app.importer import ImportResult
+    import app.commands as commands
+
+    calls = []
+    stub_config.usernames = {"lichess": ["mcmd"]}
+    monkeypatch.setattr(
+        commands,
+        "import_configured_recent_games",
+        lambda config, engines, on_progress=None, on_status=None:
+            calls.append(config.usernames) or ImportResult(
+                games_imported=2,
+                moments_found=4,
+                patterns=1,
+                batch_id="b1",
+                message="Imported 2 new game(s), found 4 mistake moment(s), updated 1 recurring pattern(s).",
+            ),
+    )
+    proc, _, _ = make_processor(stub_config)
+
+    result = proc.process("/import_recent")
+
+    assert calls == [{"lichess": ["mcmd"]}]
+    assert "Imported recent games from configured handles" in result.message
+    assert "Batch id: b1" in result.message
+
+
+def test_import_recent_command_accepts_explicit_platform_username(stub_config, monkeypatch):
+    from app.importer import ImportResult
+    import app.commands as commands
+
+    calls = []
+    monkeypatch.setattr(
+        commands,
+        "import_remote_games",
+        lambda platform, username, engines, config, on_progress=None, on_status=None:
+            calls.append((platform, username)) or ImportResult(
+                games_imported=1,
+                moments_found=1,
+                patterns=1,
+                batch_id="b2",
+                message="Imported 1 new game(s), found 1 mistake moment(s), updated 1 recurring pattern(s).",
+            ),
+    )
+    proc, _, _ = make_processor(stub_config)
+
+    result = proc.process("/import_recent lichess mcmd")
+
+    assert calls == [("lichess", "mcmd")]
+    assert "Imported recent games from lichess:mcmd" in result.message
 
 
 def test_p0_8_declines_full_game_annotation_in_coach_mode(stub_config):

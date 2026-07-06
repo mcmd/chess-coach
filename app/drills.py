@@ -144,6 +144,8 @@ def _verified_positions(dossier: dict, verifier=None) -> list:
             item = dict(raw)
             item.setdefault("pattern_id", drill_set.get("pattern_id"))
             item.setdefault("pattern_title", drill_set.get("title"))
+            item.setdefault("drill_type", drill_set.get("drill_type"))
+            item.setdefault("drill_goal", drill_set.get("drill_goal"))
             item.setdefault("source", "batch_drill_set")
             raw_positions.append((item, "batch_drill_set"))
 
@@ -204,6 +206,8 @@ def select_dossier_drill(dossier: dict, verifier=None) -> dict | None:
             "maia_played_prob": pick.get("maia_played_prob"),
             "pattern_id": pick.get("pattern_id") or pattern.get("id"),
             "pattern_title": pick.get("pattern_title") or pattern.get("title"),
+            "drill_type": pick.get("drill_type") or "best_move",
+            "drill_goal": pick.get("drill_goal"),
             "source": source,
             "priority_reason": f"recurring pattern: {pattern.get('title') or pattern.get('id')}",
             "popularity_note": popularity_branch(pick.get("maia_played_prob")),
@@ -225,6 +229,8 @@ def select_dossier_drill(dossier: dict, verifier=None) -> dict | None:
         "maia_played_prob": pick.get("maia_played_prob"),
         "pattern_id": None,
         "pattern_title": None,
+        "drill_type": pick.get("drill_type") or "best_move",
+        "drill_goal": pick.get("drill_goal"),
         "source": "recent_position",
         "priority_reason": "recent diagnosed position",
         "popularity_note": popularity_branch(pick.get("maia_played_prob")),
@@ -243,6 +249,7 @@ def record_drill_presented(dossier_file: str, drill: dict) -> None:
         "fen": drill.get("fen"),
         "error_category": category,
         "pattern_id": drill.get("pattern_id"),
+        "drill_type": drill.get("drill_type"),
         "source": drill.get("source"),
     }
     if not entry["fen"]:
@@ -319,6 +326,7 @@ def record_drill_outcome(dossier_file: str, drill: dict, result: dict) -> dict |
         "fen": drill.get("fen"),
         "error_category": category,
         "pattern_id": drill.get("pattern_id"),
+        "drill_type": drill.get("drill_type"),
         "source": drill.get("source"),
         **outcome,
     }

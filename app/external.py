@@ -15,7 +15,9 @@ EXPLORER_MASTERS = "https://explorer.lichess.ovh/masters"
 EXPLORER_LICHESS = "https://explorer.lichess.ovh/lichess"
 TABLEBASE = "https://tablebase.lichess.ovh/standard"
 LICHESS_USER = "https://lichess.org/api/user/{username}"
+LICHESS_USER_GAMES = "https://lichess.org/api/games/user/{username}"
 CHESSCOM_STATS = "https://api.chess.com/pub/player/{username}/stats"
+CHESSCOM_ARCHIVES = "https://api.chess.com/pub/player/{username}/games/archives"
 
 
 def _fetch_json(url: str, params: dict):
@@ -23,6 +25,15 @@ def _fetch_json(url: str, params: dict):
         r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
         return r.json()
+    except Exception:
+        return None
+
+
+def _fetch_text(url: str, params: dict = None, headers: dict = None):
+    try:
+        r = requests.get(url, params=params or {}, headers=headers or {}, timeout=20)
+        r.raise_for_status()
+        return r.text
     except Exception:
         return None
 
@@ -62,6 +73,45 @@ def chesscom_player_stats(username: str):
     if not username:
         return None
     return get_json(CHESSCOM_STATS.format(username=username), {})
+
+
+def lichess_user_games_pgn(username: str, max_games: int = 50) -> str | None:
+    """Recent analysed Lichess games as PGN, or None on any network/API failure."""
+    if not username:
+        return None
+    return _fetch_text(
+        LICHESS_USER_GAMES.format(username=username),
+        {
+            "max": max(1, int(max_games or 1)),
+            "analysed": "true",
+            "evals": "true",
+            "clocks": "true",
+            "opening": "true",
+        },
+        {"Accept": "application/x-chess-pgn"},
+    )
+
+
+def chesscom_user_games_pgn(username: str, max_games: int = 50) -> str | None:
+    """Recent Chess.com archive games as PGN, or None on any network/API failure."""
+    if not username:
+        return None
+    archives = get_json(CHESSCOM_ARCHIVES.format(username=username), {}) or {}
+    urls = list(archives.get("archives") or [])
+    if not urls:
+        return None
+    pgns = []
+    remaining = max(1, int(max_games or 1))
+    for url in reversed(urls):
+        data = get_json(url, {}) or {}
+        for game in reversed(data.get("games") or []):
+            pgn = game.get("pgn")
+            if pgn:
+                pgns.append(pgn)
+                remaining -= 1
+                if remaining <= 0:
+                    return "\n\n".join(reversed(pgns))
+    return "\n\n".join(reversed(pgns)) if pgns else None
 
 
 def clear_cache():

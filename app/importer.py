@@ -1,8 +1,9 @@
-"""Per-student local PGN importer (P1-8 first slice).
+"""Per-student PGN importer (P1-8).
 
-This module is intentionally offline-first. It reuses the existing batch review
-pipeline for local re-verification and dossier updates; remote platform fetching
-can be added on top once the import/dedup/store contract is stable.
+Local PGNs and remote platform exports share one path: parse games, match the
+configured student identity, dedup, reverify through batch review, then update
+the dossier and drill banks. Network import remains optional; failures degrade
+to a clear ImportResult error without mutating the dossier.
 """
 from dataclasses import dataclass
 from datetime import date
@@ -10,6 +11,7 @@ import io
 
 import chess.pgn
 
+from app import external
 from app.batch import batch_dossier_summary, game_key_for, run_batch_review
 from app.memory import _atomic_write_json, load_dossier, update_dossier_with_batch
 from app.review import configured_player_identities, detect_student_color
@@ -164,3 +166,60 @@ def import_local_pgn_file(path: str, engines, config, *, on_progress=None, on_st
         return ImportResult(error=f"Could not read PGN file: {exc}")
     return import_pgn_text(pgn_text, engines, config, source=path,
                            on_progress=on_progress, on_status=on_status)
+
+
+def configured_import_targets(config) -> list[tuple[str, str]]:
+    targets = []
+    for platform, handles in (getattr(config, "usernames", None) or {}).items():
+        key = str(platform or "").casefold()
+        if key in ("lichess", "chesscom", "chess.com"):
+            for handle in handles or []:
+                if handle:
+                    targets.append(("chesscom" if key == "chess.com" else key, str(handle)))
+    return targets
+
+
+def should_offer_onboarding_import(config) -> bool:
+    if not configured_import_targets(config):
+        return False
+    dossier = load_dossier(config.dossier_file)
+    return not dossier.get("imported_games") and not dossier.get("recurring_patterns")
+
+
+def _remote_pgn(platform: str, username: str, max_games: int) -> str | None:
+    if platform == "lichess":
+        return external.lichess_user_games_pgn(username, max_games=max_games)
+    if platform == "chesscom":
+        return external.chesscom_user_games_pgn(username, max_games=max_games)
+    return None
+
+
+def import_remote_games(platform: str, username: str, engines, config, *, max_games: int = None,
+                        on_progress=None, on_status=None) -> ImportResult:
+    platform = (platform or "").casefold()
+    if platform == "chess.com":
+        platform = "chesscom"
+    if platform not in ("lichess", "chesscom"):
+        return ImportResult(error=f"Unsupported import platform: {platform or 'unknown'}.")
+    max_games = int(max_games or getattr(config, "batch_max_games", 50))
+    pgn_text = _remote_pgn(platform, username, max_games)
+    if not pgn_text:
+        return ImportResult(error=f"Could not fetch recent analysed games for {platform}:{username}.")
+    return import_pgn_text(
+        pgn_text, engines, config, source=f"{platform}:{username}",
+        on_progress=on_progress, on_status=on_status,
+    )
+
+
+def import_configured_recent_games(config, engines, *, on_progress=None, on_status=None) -> ImportResult:
+    targets = configured_import_targets(config)
+    if not targets:
+        return ImportResult(error="No supported usernames configured for remote import.")
+    errors = []
+    for platform, username in targets:
+        result = import_remote_games(platform, username, engines, config,
+                                     on_progress=on_progress, on_status=on_status)
+        if not result.error:
+            return result
+        errors.append(f"{platform}:{username} -> {result.error}")
+    return ImportResult(error="Remote import failed for every configured handle. " + " | ".join(errors))

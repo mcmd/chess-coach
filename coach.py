@@ -12,6 +12,7 @@ from app.agent_loop import run_agent_turn
 from app.commands import CommandProcessor
 from app.config import load_config
 from app.engines import EngineManager, EngineStartError
+from app.importer import should_offer_onboarding_import
 from app.memory import load_history, save_history
 from app.prompts import create_chat_session
 from app.state import SessionState, TimelineManager
@@ -85,6 +86,9 @@ def main():
             f"[bold green]Chess Coach (Elo: {config.user_elo}){profile_text}[/bold green]{trace_text}\n"
             f"Type [bold cyan]/help[/bold cyan] for commands, [bold red]exit[/bold red] to save and close.",
             border_style="green"))
+        if should_offer_onboarding_import(config):
+            console.print("[cyan]Configured platform usernames found. To seed this profile with your "
+                          "recent analysed games, run [bold]/import_recent[/bold].[/cyan]")
 
         try:
             while True:
