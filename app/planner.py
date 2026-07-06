@@ -87,6 +87,74 @@ class TeachingPlan:
         return "\n".join(lines)
 
 
+@dataclass
+class TeachingPlanObedienceFinding:
+    code: str
+    detail: str
+
+
+_TAIL_REDIRECT_RESPONSE_RE = re.compile(
+    r"\b(?:now let'?s|let'?s now|next,?\s+let'?s|let'?s look at|let'?s zoom in|"
+    r"move on to|zoom in on|turn to move|your turn|what candidate moves|what would you "
+    r"(?:play|consider|do)|can you find|try to find)\b",
+    re.I,
+)
+_UNREQUESTED_QUIZ_RESPONSE_RE = re.compile(
+    r"\b(?:what (?:move|candidate|would|should|is)|which (?:move|candidate)|why (?:does|is|was)|"
+    r"can you (?:find|see|tell)|try to (?:find|explain|calculate))\b[^.?!]*\?",
+    re.I,
+)
+
+
+def assess_teaching_plan_obedience(
+    plan: TeachingPlan | dict,
+    response_text: str,
+    *,
+    withheld_answers: list[str] | None = None,
+) -> list[TeachingPlanObedienceFinding]:
+    """Deterministic transcript checks for the P0-8 mode contract.
+
+    This is not a semantic quality judge. It catches the concrete regressions the
+    plan identified: direct/no-tail turns that append a new quiz or agenda jump,
+    and Socratic turns that leak a known withheld answer token.
+    """
+    text = response_text or ""
+    if not text.strip():
+        return []
+
+    def field(name: str, default=None):
+        if isinstance(plan, dict):
+            return plan.get(name, default)
+        return getattr(plan, name, default)
+
+    findings: list[TeachingPlanObedienceFinding] = []
+    if field("no_tail_redirect", False) and _TAIL_REDIRECT_RESPONSE_RE.search(text):
+        findings.append(TeachingPlanObedienceFinding(
+            "tail_redirect",
+            "Response appended an unrequested quiz, agenda jump, or 'let us look at' redirect.",
+        ))
+
+    if ((not field("socratic_redirect", False) or not field("withhold_answer", False))
+            and _UNREQUESTED_QUIZ_RESPONSE_RE.search(text)):
+        findings.append(TeachingPlanObedienceFinding(
+            "unrequested_quiz",
+            "Response asked a Socratic question even though the plan requested directness.",
+        ))
+
+    if field("withhold_answer", False):
+        lower = text.lower()
+        for answer in withheld_answers or []:
+            token = str(answer).strip()
+            if token and re.search(rf"(?<![A-Za-z0-9_]){re.escape(token.lower())}(?![A-Za-z0-9_])", lower):
+                findings.append(TeachingPlanObedienceFinding(
+                    "withheld_answer_leak",
+                    f"Response revealed withheld answer token '{token}'.",
+                ))
+                break
+
+    return findings
+
+
 def _language_from_text(text: str, default_language: str) -> tuple[str, str | None]:
     for pattern, language in _LANGUAGE_PATTERNS:
         if pattern.search(text):

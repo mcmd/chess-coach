@@ -3,6 +3,7 @@
 import chess
 
 from app.commands import CommandProcessor, looks_like_pgn
+from app.planner import TeachingPlan, assess_teaching_plan_obedience
 from app.state import SessionState, TimelineManager
 from tests.conftest import FakeEngines
 
@@ -249,6 +250,65 @@ def test_p0_8_redundancy_ledger_is_injected_for_followup(stub_config):
     assert "12... Rc3" in result.prompt
     assert "king_safety" in result.prompt
     assert "Do not re-quiz or re-teach" in result.prompt
+
+
+def test_p0_8_obedience_fixture_accepts_direct_no_tail_transcript():
+    plan = TeachingPlan(
+        intent="explain_phase_summary",
+        language="English",
+        no_tail_redirect=True,
+    )
+    transcript = (
+        "Opening: you won material but exposed your king. Middlegame: the attack became forcing. "
+        "Endgame: there was no endgame because the mating net decided it."
+    )
+
+    assert assess_teaching_plan_obedience(plan, transcript) == []
+
+
+def test_p0_8_obedience_fixture_flags_summary_tail_redirect():
+    plan = TeachingPlan(
+        intent="explain_phase_summary",
+        language="English",
+        no_tail_redirect=True,
+    )
+    transcript = (
+        "Opening: you developed normally. Middlegame: the queen trade changed the structure. "
+        "Now let's zoom in on move 43: what candidate moves would you consider?"
+    )
+
+    findings = assess_teaching_plan_obedience(plan, transcript)
+
+    assert [f.code for f in findings] == ["tail_redirect", "unrequested_quiz"]
+
+
+def test_p0_8_obedience_fixture_flags_direct_mode_quiz():
+    plan = TeachingPlan(
+        intent="answer_directly",
+        language="English",
+        withhold_answer=False,
+        socratic_redirect=False,
+        no_tail_redirect=True,
+    )
+    transcript = "The issue is king safety. What move would you play here?"
+
+    findings = assess_teaching_plan_obedience(plan, transcript)
+
+    assert [f.code for f in findings] == ["unrequested_quiz"]
+
+
+def test_p0_8_obedience_fixture_flags_withheld_answer_leak():
+    plan = TeachingPlan(
+        intent="ask_socratic_question",
+        language="English",
+        withhold_answer=True,
+        socratic_redirect=True,
+    )
+    transcript = "Before I explain it fully, the answer is Nxd4. Why does that move work?"
+
+    findings = assess_teaching_plan_obedience(plan, transcript, withheld_answers=["Nxd4"])
+
+    assert [f.code for f in findings] == ["withheld_answer_leak"]
 
 
 def test_p0_8_wrap_up_records_verified_theme_takeaway(stub_config):
