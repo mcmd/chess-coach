@@ -392,6 +392,23 @@ def test_sparring_reply_plays_maia_move(stub_config):
     assert "Maia" in result["selected_by"]
 
 
+def test_sparring_reply_offers_post_mortem_when_game_ends(stub_config):
+    board = chess.Board()
+    for san in ("f3", "e5", "g4"):
+        board.push_san(san)
+    engines = FakeEngines(maia={board.fen(): {"d8h4": 1.0}})
+    tools, state = make_tools(stub_config, engines)
+    state.sparring_mode = True
+    state.board = board
+
+    result = tools.play_sparring_reply()
+
+    assert result["coach_played"] == "Qh4#"
+    assert result["game_over"] is True
+    assert result["result"] == "0-1"
+    assert "/review_spar" in result["post_mortem"]
+
+
 def test_explain_move_returns_verified_facts(stub_config):
     tools, _ = make_tools(stub_config)
     facts = tools.explain_move(START, "Nf3")

@@ -21,6 +21,7 @@ from app.notation import legal_san_mentions
 from app.planner import TeachingPlan, _normalize_text, plan_free_text_turn
 from app.rating import current_rating_enrichment, rating_offer_note
 from app.review import adopt_review_pov, review_game, attach_board_tokens
+from app.sparring import sparring_pgn_from_board
 from app.trace import trace
 from app.ui import console
 
@@ -33,6 +34,7 @@ HELP_TEXT = """[bold]Commands[/bold]
   /goto <n>[b]       Jump to before White's (or Black's, with 'b') move n
   /reset             Rewind to the start of the loaded game (keeps the game)
   /spar  /nospar     Enable / disable sparring mode
+  /review_spar       Review the just-played sparring game
   /review            Quiz yourself on a past mistake from your dossier
   /memorize          Save this session's diagnoses to your long-term dossier
   /clear             Wipe board, review, and the coach's conversation memory
@@ -105,6 +107,8 @@ class CommandProcessor:
             return CommandResult(message="[bold yellow]🛑 Sparring mode DISABLED.[/bold yellow]")
         if cmd == "/review":
             return self._dossier_quiz()
+        if cmd == "/review_spar":
+            return self._review_sparring_game()
         if cmd == "/clear":
             return self._clear()
         if cmd == "/memorize":
@@ -423,14 +427,35 @@ class CommandProcessor:
 
         swing_note = self._eval_swing_note(fen_before, self.state.board.fen())
         if self.state.sparring_mode:
-            prompt = (f"I played {clean_san}.{swing_note} "
-                      "Reply by calling play_sparring_reply (the backend picks your move), "
-                      "then comment on both moves in 1-3 sentences. If my move lost significant "
-                      "win%, pause the game commentary and coach me on it first.")
+            if self.state.board.is_game_over(claim_draw=True):
+                prompt = (f"I played {clean_san}.{swing_note} The sparring game is over "
+                          f"({self.state.board.result(claim_draw=True)}). Congratulate or console "
+                          "briefly, then offer a post-mortem with `/review_spar`. Do not call "
+                          "play_sparring_reply because the game has ended.")
+            else:
+                prompt = (f"I played {clean_san}.{swing_note} "
+                          "Reply by calling play_sparring_reply (the backend picks your move), "
+                          "then comment on both moves in 1-3 sentences. If my move lost significant "
+                          "win%, pause the game commentary and coach me on it first.")
         else:
             prompt = f"I have played {clean_san}.{swing_note} The new position FEN is: {self.state.board.fen()}. Please evaluate."
         return CommandResult(prompt=self._enrich(prompt),
                              message=f"[green]Played {clean_san}. Board updated.[/green]")
+
+    def _review_sparring_game(self) -> CommandResult:
+        if not self.state.sparring_mode or not self.state.board.move_stack:
+            return CommandResult(message="[yellow]No sparring game is available to review.[/yellow]")
+        pgn_text = sparring_pgn_from_board(
+            self.state.board,
+            player_name=getattr(self.config, "player_name", None) or "Student",
+        )
+        if not pgn_text:
+            return CommandResult(message="[yellow]No sparring moves are available to review.[/yellow]")
+        self.state.sparring_mode = False
+        result = self._review_and_load(pgn_text, source="sparring game")
+        if result.message:
+            result.message += "\n[cyan]Sparring post-mortem loaded through the standard review pipeline.[/cyan]"
+        return result
 
     def _step_back(self) -> CommandResult:
         try:

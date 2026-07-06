@@ -139,6 +139,24 @@ def test_move_in_sparring_requests_backend_reply(stub_config):
     assert "play_sparring_reply" in result.prompt
 
 
+def test_review_sparring_game_uses_standard_review_pipeline(stub_config):
+    engines = FakeEngines()
+    proc, state, timeline = make_processor(stub_config, engines)
+    proc.process("/spar")
+    timeline.play_san("e4")
+    timeline.play_san("e5")
+    timeline.play_san("Nf3")
+
+    result = proc.process("/review_spar")
+
+    assert state.sparring_mode is False
+    assert state.review is not None
+    assert state.review.headers["Event"] == "ChessCoach sparring"
+    assert state.review.student_color == "white"
+    assert "standard review pipeline" in result.message
+    assert "GAME REVIEW" in result.prompt
+
+
 def test_help_is_local_only(stub_config):
     proc, _, _ = make_processor(stub_config)
     result = proc.process("/help")

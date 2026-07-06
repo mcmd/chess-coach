@@ -746,6 +746,7 @@ class CoachTools:
         if self.state.board.is_game_over():
             result["game_over"] = True
             result["result"] = self.state.board.result()
+            result["post_mortem"] = "Offer /review_spar to run the standard review pipeline on this sparring game."
         return result
 
     def execute_coach_move(self, move_san: str) -> dict:
