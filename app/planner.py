@@ -5,7 +5,13 @@ free-text turn. It keeps routing decisions explicit, inspectable, and testable
 without turning the existing coach into a new pipeline.
 """
 import re
+import unicodedata
 from dataclasses import dataclass, field
+
+
+def _normalize_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text or "")
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch)).casefold()
 
 
 _LANGUAGE_PATTERNS = [
@@ -45,6 +51,66 @@ _VERBOSE_RE = re.compile(r"\b(?:in detail|detailed|thorough|step by step|deep di
 _CLOSE_RE = re.compile(
     r"\b(?:wrap up|finish(?: up)?|close(?: it| this| the session)?|done for now|that'?s enough|"
     r"what should i remember|main takeaway|one takeaway|takeaway)\b",
+    re.I,
+)
+
+# Normalized multilingual routing overrides. These regexes run against
+# _normalize_text(text), so accented input such as "español" and "inglés" is
+# matched by the ASCII forms below.
+_LANGUAGE_PATTERNS = [
+    (re.compile(r"\b(?:in|en|to|al|a)\s+(?:spanish|espanol)\b|\bespanol\b", re.I), "Spanish"),
+    (re.compile(r"\b(?:in|en|to|al|a)\s+(?:english|ingles)\b|\bingles\b", re.I), "English"),
+    (re.compile(r"\b(?:in|en|to|al|a)\s+(?:french|frances)\b|\bfrances\b", re.I), "French"),
+    (re.compile(r"\b(?:in|en|to|al|a)\s+(?:german|aleman)\b|\baleman\b", re.I), "German"),
+    (re.compile(r"\b(?:in|en|to|al|a)\s+(?:portuguese|portugues)\b|\bportugues\b", re.I), "Portuguese"),
+    (re.compile(r"\b(?:in|en|to|al|a)\s+italian\b|\bitaliano\b", re.I), "Italian"),
+]
+_QUIZ_RE = re.compile(
+    r"\b(?:quiz me|test me|ask me|socratic|withhold(?: the)? answer|"
+    r"ponme a prueba|preguntame|hazme preguntas|modo socratico)\b",
+    re.I,
+)
+_DIRECT_RE = re.compile(
+    r"\b(?:explain directly|tell me directly|don'?t quiz me|do not quiz me|just tell me|show me the answer|"
+    r"explica(?:melo)? directamente|dimelo directamente|no me preguntes|no me hagas preguntas|"
+    r"solo dime|solo cuentame|muestrame la respuesta)\b",
+    re.I,
+)
+_SUMMARY_RE = re.compile(
+    r"\b(?:summari[sz]e|summary|overview|resum(?:e|en|eme|ir)|resumen|vista general)\b"
+    r"(?:(?!\n).){0,50}\b(?:phase by phase|phase-by-phase|whole game|game|fase por fase|partida)\b",
+    re.I,
+)
+_HINT_RE = re.compile(r"\b(?:hint|nudge|clue|pista|ayuda|dame una pista)\b", re.I)
+_COMPARE_RE = re.compile(r"\b(?:compare|candidate(?:s)?|which of|between|compara|comparar|candidata(?:s)?|entre)\b", re.I)
+_STRUCTURE_RE = re.compile(r"\b(?:pawn structure|structure|plan|strategy|estructura de peones|estructura|plan|estrategia)\b", re.I)
+_TRANSLATE_RE = re.compile(
+    r"\b(?:translate|say that|repeat that|same thing|traduce(?:lo)?|dilo|repitelo|lo mismo)\b"
+    r"(?:(?!\n).){0,40}\b(?:spanish|english|french|german|portuguese|italian|"
+    r"espanol|ingles|frances|aleman|portugues|italiano)\b",
+    re.I,
+)
+_EXERCISE_RE = re.compile(
+    r"\b(?:exercise|drill|practice|train me|give me a position|make me solve|"
+    r"ejercicio|practica|entrename|dame una posicion|ponme una posicion)\b",
+    re.I,
+)
+_BLUNDER_RE = re.compile(
+    r"\b(?:why|explain|what happened|what went wrong|por que|explica|que paso|que salio mal)\b"
+    r"(?:(?!\n).){0,50}\b(?:blunder|mistake|inaccuracy|bad move|error|fallo|mala jugada|imprecision)\b",
+    re.I,
+)
+_STRENGTH_RE = re.compile(
+    r"\b(?:what did i do well|good move|best move|strong move|where was i accurate|reinforce|praise|"
+    r"que hice bien|buena jugada|mejor jugada|jugada fuerte|donde estuve preciso|refuerza|elogia)\b",
+    re.I,
+)
+_BRIEF_RE = re.compile(r"\b(?:briefly|brief|concise|short answer|quickly|tl;dr|tldr|breve|brevemente|conciso|rapido)\b", re.I)
+_VERBOSE_RE = re.compile(r"\b(?:in detail|detailed|thorough|step by step|deep dive|en detalle|detallado|paso a paso)\b", re.I)
+_CLOSE_RE = re.compile(
+    r"\b(?:wrap up|finish(?: up)?|close(?: it| this| the session)?|done for now|that'?s enough|"
+    r"what should i remember|main takeaway|one takeaway|takeaway|terminemos|acabemos|cierra(?: la sesion)?|"
+    r"por hoy basta|ya esta|que debo recordar|conclusion|idea principal)\b",
     re.I,
 )
 
@@ -156,6 +222,7 @@ def assess_teaching_plan_obedience(
 
 
 def _language_from_text(text: str, default_language: str) -> tuple[str, str | None]:
+    text = _normalize_text(text)
     for pattern, language in _LANGUAGE_PATTERNS:
         if pattern.search(text):
             return language, f"language_override:{language}"
@@ -164,20 +231,21 @@ def _language_from_text(text: str, default_language: str) -> tuple[str, str | No
 
 def plan_free_text_turn(text: str, *, default_language: str = "English") -> TeachingPlan:
     """Classify obvious free-text mode requests before the LLM sees them."""
-    language, language_reason = _language_from_text(text, default_language)
+    normalized_text = _normalize_text(text)
+    language, language_reason = _language_from_text(normalized_text, default_language)
     reasons = []
     if language_reason:
         reasons.append(language_reason)
 
     density = "normal"
-    if _BRIEF_RE.search(text):
+    if _BRIEF_RE.search(normalized_text):
         density = "brief"
         reasons.append("density:brief")
-    elif _VERBOSE_RE.search(text):
+    elif _VERBOSE_RE.search(normalized_text):
         density = "verbose"
         reasons.append("density:verbose")
 
-    if _ANNOTATE_ALL_RE.search(text):
+    if _ANNOTATE_ALL_RE.search(normalized_text):
         return TeachingPlan(
             intent="decline_full_game_annotation",
             language=language,
@@ -191,7 +259,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             reasons=reasons + ["decline:full_game_annotation"],
         )
 
-    if _CLOSE_RE.search(text):
+    if _CLOSE_RE.search(normalized_text):
         return TeachingPlan(
             intent="close_with_takeaway",
             language=language,
@@ -199,7 +267,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:close_with_takeaway"],
         )
-    if _SUMMARY_RE.search(text):
+    if _SUMMARY_RE.search(normalized_text):
         return TeachingPlan(
             intent="explain_phase_summary",
             language=language,
@@ -207,7 +275,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:phase_summary"],
         )
-    if _TRANSLATE_RE.search(text):
+    if _TRANSLATE_RE.search(normalized_text):
         return TeachingPlan(
             intent="translate_previous",
             language=language,
@@ -215,7 +283,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:translate_previous"],
         )
-    if _DIRECT_RE.search(text):
+    if _DIRECT_RE.search(normalized_text):
         return TeachingPlan(
             intent="answer_directly",
             language=language,
@@ -223,7 +291,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:direct"],
         )
-    if _QUIZ_RE.search(text):
+    if _QUIZ_RE.search(normalized_text):
         return TeachingPlan(
             intent="ask_socratic_question",
             language=language,
@@ -232,7 +300,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             socratic_redirect=True,
             reasons=reasons + ["intent:quiz"],
         )
-    if _HINT_RE.search(text):
+    if _HINT_RE.search(normalized_text):
         return TeachingPlan(
             intent="give_hint",
             language=language,
@@ -242,7 +310,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:hint"],
         )
-    if _EXERCISE_RE.search(text):
+    if _EXERCISE_RE.search(normalized_text):
         return TeachingPlan(
             intent="generate_exercise",
             language=language,
@@ -252,7 +320,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:generate_exercise"],
         )
-    if _COMPARE_RE.search(text):
+    if _COMPARE_RE.search(normalized_text):
         return TeachingPlan(
             intent="compare_candidates",
             language=language,
@@ -260,7 +328,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:compare_candidates"],
         )
-    if _BLUNDER_RE.search(text):
+    if _BLUNDER_RE.search(normalized_text):
         return TeachingPlan(
             intent="explain_blunder",
             language=language,
@@ -268,7 +336,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:explain_blunder"],
         )
-    if _STRENGTH_RE.search(text):
+    if _STRENGTH_RE.search(normalized_text):
         return TeachingPlan(
             intent="reinforce_strength",
             language=language,
@@ -276,7 +344,7 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
             no_tail_redirect=True,
             reasons=reasons + ["intent:reinforce_strength"],
         )
-    if _STRUCTURE_RE.search(text):
+    if _STRUCTURE_RE.search(normalized_text):
         return TeachingPlan(
             intent="explain_plan_or_structure",
             language=language,

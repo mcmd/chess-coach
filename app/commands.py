@@ -18,7 +18,7 @@ from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata
                         record_self_assessment, record_session_takeaway,
                         update_dossier, update_dossier_with_batch)
 from app.notation import legal_san_mentions
-from app.planner import TeachingPlan, plan_free_text_turn
+from app.planner import TeachingPlan, _normalize_text, plan_free_text_turn
 from app.review import adopt_review_pov, review_game, attach_board_tokens
 from app.trace import trace
 from app.ui import console
@@ -343,10 +343,11 @@ class CommandProcessor:
             save_lesson_metadata(lesson_file, meta)
         return CommandResult(prompt=self._enrich(prompt), message=message)
 
-    _POV_WHITE_RE = re.compile(r"\b(?:white|w)\b", re.IGNORECASE)
-    _POV_BLACK_RE = re.compile(r"\b(?:black|b)\b", re.IGNORECASE)
-    _CONSENT_SAVE_RE = re.compile(r"\b(?:save|log|memorize|remember|dossier|yes)\b", re.IGNORECASE)
-    _CONSENT_NO_RE = re.compile(r"\b(?:don'?t\s+save|do\s+not\s+save|no\s+save|no\s+dossier|borrowed only)\b",
+    _POV_WHITE_RE = re.compile(r"\b(?:white|w|blanco|blanca|blancas)\b", re.IGNORECASE)
+    _POV_BLACK_RE = re.compile(r"\b(?:black|b|negro|negra|negras)\b", re.IGNORECASE)
+    _CONSENT_SAVE_RE = re.compile(r"\b(?:save|log|memorize|remember|dossier|yes|guardar|guarda|si)\b", re.IGNORECASE)
+    _CONSENT_NO_RE = re.compile(r"\b(?:don'?t\s+save|do\s+not\s+save|no\s+save|no\s+dossier|borrowed only|"
+                                r"no\s+guardar|sin\s+guardar|solo\s+prestada)\b",
                                 re.IGNORECASE)
 
     def _resolve_unmatched_review(self, text: str) -> CommandResult:
@@ -356,10 +357,11 @@ class CommandProcessor:
             self.state.pending_unmatched_review.clear()
             return CommandResult(message="[red]No pending unmatched review is available. Load the game again.[/red]")
 
+        normalized_text = _normalize_text(text)
         color = None
-        if self._POV_WHITE_RE.search(text or ""):
+        if self._POV_WHITE_RE.search(normalized_text):
             color = "white"
-        if self._POV_BLACK_RE.search(text or ""):
+        if self._POV_BLACK_RE.search(normalized_text):
             if color:
                 return CommandResult(message="Please choose one POV only: `white` or `black`.")
             color = "black"
@@ -371,8 +373,8 @@ class CommandProcessor:
                 "Add `save` only if you want this borrowed game written to your personal dossier."
             ))
 
-        consent = bool(self._CONSENT_SAVE_RE.search(text or ""))
-        if self._CONSENT_NO_RE.search(text or ""):
+        consent = bool(self._CONSENT_SAVE_RE.search(normalized_text))
+        if self._CONSENT_NO_RE.search(normalized_text):
             consent = False
 
         try:
@@ -661,7 +663,8 @@ class CommandProcessor:
                 "Do not end your turn by announcing future actions.]")
 
     _COMPLETE_ACK_RE = re.compile(
-        r"^\s*(?:ok(?:ay)?|thanks?|thank you|great|perfect|nice|cool|done|that'?s all)\s*[.!]*\s*$",
+        r"^\s*(?:ok(?:ay)?|thanks?|thank you|great|perfect|nice|cool|done|that'?s all|"
+        r"gracias|perfecto|genial|vale|listo|hecho|terminado|ya esta)\s*[.!]*\s*$",
         re.IGNORECASE)
 
     def _completion_ack_requests_close(self, text: str, plan: TeachingPlan) -> bool:
@@ -672,7 +675,7 @@ class CommandProcessor:
             return False
         if not self.state.review:
             return False
-        return bool(self._COMPLETE_ACK_RE.match(text or ""))
+        return bool(self._COMPLETE_ACK_RE.match(_normalize_text(text)))
 
     def _dossier_write_allowed(self) -> bool:
         return bool((self.state.review_context or {}).get("dossier_consent", True))
@@ -733,8 +736,9 @@ class CommandProcessor:
         if sa.get("status") != "pending":
             return ""
         if plan.intent in {"answer_directly", "explain_phase_summary"} and re.search(
-                r"\b(?:just show me|skip|show me the agenda|don'?t quiz me|do not quiz me)\b",
-                text or "", re.I):
+                r"\b(?:just show me|skip|show me the agenda|don'?t quiz me|do not quiz me|"
+                r"solo muestrame|muestrame la agenda|ensename la agenda|no me preguntes|salta)\b",
+                _normalize_text(text), re.I):
             sa["status"] = "skipped"
             sa["result"] = "student_opted_out"
             sa["student_text"] = (text or "")[:240]

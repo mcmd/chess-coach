@@ -3,7 +3,7 @@
 import chess
 
 from app.commands import CommandProcessor, looks_like_pgn
-from app.planner import TeachingPlan, assess_teaching_plan_obedience
+from app.planner import TeachingPlan, assess_teaching_plan_obedience, plan_free_text_turn
 from app.state import SessionState, TimelineManager
 from tests.conftest import FakeEngines
 
@@ -210,6 +210,28 @@ def test_p0_8_fuzzy_intents_are_routed_without_prompt_guesswork(stub_config):
     assert state.teaching_ledger["last_plan"]["intent"] == "reinforce_strength"
 
 
+def test_p0_8_spanish_fuzzy_intents_are_routed():
+    direct = plan_free_text_turn("Explícamelo directamente y breve.")
+    assert direct.intent == "answer_directly"
+    assert direct.density == "brief"
+    assert direct.no_tail_redirect is True
+
+    summary = plan_free_text_turn("Resúmeme la partida fase por fase.")
+    assert summary.intent == "explain_phase_summary"
+    assert summary.no_tail_redirect is True
+
+    quiz = plan_free_text_turn("Ponme a prueba.")
+    assert quiz.intent == "ask_socratic_question"
+    assert quiz.withhold_answer is True
+
+    hint = plan_free_text_turn("Dame una pista.")
+    assert hint.intent == "give_hint"
+
+    translated = plan_free_text_turn("Tradúcelo al español.")
+    assert translated.intent == "translate_previous"
+    assert translated.language == "Spanish"
+
+
 def test_p0_8_fresh_review_opens_with_self_assessment(stub_config):
     from tests.test_review import PGN as RPGN, _scripted_engines
     proc, state, _ = make_processor(stub_config, _scripted_engines())
@@ -251,6 +273,20 @@ def test_p0_8_self_assessment_not_persisted_without_dossier_consent(stub_config)
     proc.process(f"I think {top.move_label} was the big mistake.")
 
     assert load_dossier(stub_config.dossier_file)["self_assessment_history"] == []
+
+
+def test_p0_8_self_assessment_spanish_opt_out_is_detected(stub_config):
+    from app.memory import load_dossier
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+
+    result = proc.process("Solo muéstrame la agenda.")
+
+    assert "student opted out" in result.prompt
+    assert state.teaching_ledger["self_assessment"]["status"] == "skipped"
+    history = load_dossier(stub_config.dossier_file)["self_assessment_history"]
+    assert history[0]["result"] == "student_opted_out"
 
 
 def test_p0_8_redundancy_ledger_is_injected_for_followup(stub_config):
@@ -391,6 +427,34 @@ def test_p0_8_lesson_complete_ack_closes_without_new_quiz(stub_config):
     assert state.teaching_ledger["last_plan"]["intent"] == "close_with_takeaway"
 
 
+def test_p0_8_spanish_lesson_complete_ack_closes_without_new_quiz(stub_config):
+    from app.review import GameReview, MoveRecord, ReviewTheme
+
+    proc, state, _ = make_processor(stub_config)
+    rec = MoveRecord(ply=0, number=1, color="white", san="e4", uci="e2e4",
+                     fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                     eval_before_cp=0, eval_after_cp=-100, drop_pct=12.0,
+                     quality="inaccuracy")
+    state.current_game_id = "game-3"
+    state.lesson_metadata = {"lesson_status": "lesson_complete", "last_agenda_index": 0}
+    state.review = GameReview(headers={}, records=[rec], student_color="white",
+                              agenda_plies=[0], themes=[
+                                  ReviewTheme(
+                                      id="king_safety:opening",
+                                      label="king safety",
+                                      plies=[0],
+                                      confidence="low",
+                                      safe_summary="a single king safety moment.",
+                                  )
+                              ])
+
+    result = proc.process("gracias")
+
+    assert "intent: close_with_takeaway" in result.prompt
+    assert "routing_reasons: intent:close_after_lesson_complete" in result.prompt
+    assert "no_tail_redirect: true" in result.prompt
+
+
 def test_memorize_annotates_diagnoses_with_typicality(stub_config):
     from app.memory import load_dossier
     from tests.test_review import PGN as RPGN, _scripted_engines
@@ -522,6 +586,29 @@ def test_unmatched_game_can_opt_into_dossier_logging(stub_config):
     assert "Dossier saving is ON" in result.message
     assert state.review_context["dossier_consent"] is True
     assert "explicitly opted into dossier logging" in result.prompt
+
+
+def test_unmatched_game_accepts_spanish_pov_and_consent(stub_config):
+    from tests.test_review import _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+
+    proc.process(_borrowed_review_pgn())
+    result = proc.process("blancas guardar")
+
+    assert "Dossier saving is ON" in result.message
+    assert state.review.student_color == "white"
+    assert state.review_context["dossier_consent"] is True
+
+
+def test_unmatched_game_spanish_no_consent_overrides_save_word(stub_config):
+    from tests.test_review import _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+
+    proc.process(_borrowed_review_pgn())
+    proc.process("negras no guardar")
+
+    assert state.review.student_color == "black"
+    assert state.review_context["dossier_consent"] is False
 
 
 def test_borrowed_game_memorize_is_blocked_without_opt_in(stub_config):
