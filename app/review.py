@@ -587,6 +587,41 @@ def has_configured_player_identity(config) -> bool:
     return bool(configured_player_identities(config))
 
 
+def adopt_review_pov(review: GameReview, student_color: str, engines, config,
+                     agenda_size: int = 4) -> GameReview:
+    """Rebuild the agenda for an explicitly chosen POV on an unmatched game.
+
+    The scan records are side-agnostic; the agenda and themes are not. When a
+    borrowed/friend/master game does not match a configured username, P0-4c asks
+    the student which side to study and then reruns the lightweight selection and
+    agenda enrichment for that side instead of coaching both players.
+    """
+    color = (student_color or "").strip().lower()
+    if color not in ("white", "black"):
+        raise ValueError("student_color must be 'white' or 'black'")
+
+    review.student_color = color
+    review.tablebase_entry = None
+    review.themes = []
+    for record in review.records:
+        record.is_agenda = False
+        record.board_token = None
+
+    online = bool(getattr(config, "use_online_databases", True))
+    forced_plies = []
+    if online:
+        try:
+            forced_plies += _tablebase_category_scan(review)
+        except Exception:
+            pass
+    forced_plies += _opening_deviation_ply(review)
+    review.agenda_plies = _select_agenda(review.records, color, agenda_size, forced_plies)
+    _enrich_agenda(review, engines, online)
+    _apply_opening_moment(review)
+    review.themes = _derive_themes(review)
+    return review
+
+
 def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: int = 4,
                 eval_time: float = None, with_maia: bool = True, enrich: bool = True):
     """Full review of the first game in `pgn_text`. Returns a GameReview, or

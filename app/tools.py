@@ -873,6 +873,12 @@ class CoachTools:
         result = {"success": True}
         if mismatch_warning:
             result["warning"] = mismatch_warning
+        if not (self.state.review_context or {}).get("dossier_consent", True):
+            result["dossier_logging"] = "disabled_for_borrowed_game_without_opt_in"
+            result["message"] = (
+                "Diagnosis logged for this session only. Do not claim it was saved to the "
+                "student's personal dossier unless they opted into borrowed-game logging."
+            )
         return result
 
     def _record_teaching_ledger_event(self, record, diagnosis: dict) -> None:
@@ -1173,9 +1179,37 @@ class CoachTools:
         review = review_game(pgn_text, self.engines, self.config, on_progress=self.on_progress)
         if review is None:
             return {"error": "Could not parse a game with moves from the downloaded PGN."}
+        if review.student_color is None:
+            self.timeline.clear()
+            self.state.pending_unmatched_review = {
+                "review": review,
+                "source": f"downloaded game {source_game_id}" if source_game_id else "downloaded game",
+                "source_game_id": source_game_id,
+            }
+            self.state.review_context = {
+                "ownership": "unmatched_pending",
+                "dossier_consent": False,
+            }
+            return {
+                "pov_choice_required": True,
+                "white": review.headers.get("White", "?"),
+                "black": review.headers.get("Black", "?"),
+                "default_dossier_consent": False,
+                "message": (
+                    "No configured username matched this game. Ask the student which POV to review "
+                    "(white or black). Tell them dossier saving is off by default for borrowed games; "
+                    "they can add 'save' if they explicitly want this game logged."
+                ),
+            }
+        self.state.pending_unmatched_review.clear()
         self.timeline.load_game(review.game)
         self.state.review = review
         self.state.current_game_id = source_game_id
+        self.state.review_context = {
+            "ownership": "own",
+            "pov": review.student_color,
+            "dossier_consent": True,
+        }
         self.state.socratic_attempts.clear()
         attach_board_tokens(review, self.state, invert=getattr(self.config, "dark_terminal", False))
         meta = dict(self.state.lesson_metadata or {})

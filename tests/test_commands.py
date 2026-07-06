@@ -401,6 +401,95 @@ def test_completed_lesson_loads_fresh(stub_config):
     assert state2.board.fen() == _chess.STARTING_FEN
 
 
+def _borrowed_review_pgn():
+    from tests.test_review import PGN as RPGN
+    return RPGN.replace('[White "mcmd"]', '[White "Alice"]')
+
+
+def test_unmatched_game_requires_pov_before_review_prompt(stub_config):
+    from tests.test_review import _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+
+    result = proc.process(_borrowed_review_pgn())
+
+    assert result.prompt is None
+    assert "don't recognize either player" in result.message
+    assert "Reply with `white` or `black`" in result.message
+    assert state.review is None
+    assert state.pending_unmatched_review
+
+    chosen = proc.process("white")
+
+    assert chosen.prompt is not None
+    assert "The STUDENT played WHITE" in chosen.prompt
+    assert "Backend borrowed-game policy - P0-4c" in chosen.prompt
+    assert "Dossier saving is OFF" in chosen.prompt
+    assert "Using WHITE POV" in chosen.message
+    assert state.review.student_color == "white"
+    assert state.review_context == {
+        "ownership": "borrowed",
+        "pov": "white",
+        "dossier_consent": False,
+    }
+    assert not state.pending_unmatched_review
+
+
+def test_unmatched_game_can_opt_into_dossier_logging(stub_config):
+    from tests.test_review import _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+
+    proc.process(_borrowed_review_pgn())
+    result = proc.process("white save")
+
+    assert "Dossier saving is ON" in result.message
+    assert state.review_context["dossier_consent"] is True
+    assert "explicitly opted into dossier logging" in result.prompt
+
+
+def test_borrowed_game_memorize_is_blocked_without_opt_in(stub_config):
+    from app.memory import load_dossier
+    from tests.test_review import _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+
+    proc.process(_borrowed_review_pgn())
+    proc.process("white")
+    state.diagnostics.append({"fen": "fen1", "error_category": "king_safety",
+                              "preventative_habit": "h"})
+
+    result = proc.process("/memorize")
+
+    assert "dossier saving was not opted in" in result.message
+    assert load_dossier(stub_config.dossier_file)["total_blunders_analyzed"] == 0
+
+
+def test_borrowed_game_takeaway_is_not_persisted_without_opt_in(stub_config):
+    from app.memory import load_dossier
+    from app.review import GameReview, MoveRecord, ReviewTheme
+
+    proc, state, _ = make_processor(stub_config)
+    rec = MoveRecord(ply=0, number=1, color="white", san="e4", uci="e2e4",
+                     fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                     eval_before_cp=0, eval_after_cp=-100, drop_pct=12.0,
+                     quality="inaccuracy")
+    state.current_game_id = "borrowed-1"
+    state.review_context = {"ownership": "borrowed", "pov": "white", "dossier_consent": False}
+    state.review = GameReview(headers={}, records=[rec], student_color="white",
+                              agenda_plies=[0], themes=[
+                                  ReviewTheme(
+                                      id="king_safety:opening",
+                                      label="king safety",
+                                      plies=[0],
+                                      confidence="low",
+                                      safe_summary="a single king safety moment.",
+                                  )
+                              ])
+
+    result = proc.process("wrap up")
+
+    assert "Backend session close" in result.prompt
+    assert load_dossier(stub_config.dossier_file)["session_takeaways"] == []
+
+
 # --- PENDING-DIAGNOSIS NUDGE (the "ok, let's go" stall observed live) ---
 
 def test_pending_diagnosis_nudge_injected_until_logged(stub_config):

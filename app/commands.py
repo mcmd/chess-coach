@@ -18,7 +18,7 @@ from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata
                         record_session_takeaway, update_dossier, update_dossier_with_batch)
 from app.notation import legal_san_mentions
 from app.planner import TeachingPlan, plan_free_text_turn
-from app.review import review_game, attach_board_tokens
+from app.review import adopt_review_pov, review_game, attach_board_tokens
 from app.trace import trace
 from app.ui import console
 
@@ -107,6 +107,9 @@ class CommandProcessor:
             return self._clear()
         if cmd == "/memorize":
             return self._memorize()
+
+        if self.state.pending_unmatched_review:
+            return self._resolve_unmatched_review(text)
 
         if looks_like_pgn(text):
             return self._load_pasted_pgn(text)
@@ -257,13 +260,46 @@ class CommandProcessor:
         if review is None:
             return CommandResult(message=f"[red]Could not parse a game with moves from {source}.[/red]")
 
+        if review.student_color is None:
+            self.timeline.clear()
+            self.state.pending_unmatched_review = {
+                "review": review,
+                "source": source,
+                "source_game_id": None,
+            }
+            self.state.review_context = {
+                "ownership": "unmatched_pending",
+                "dossier_consent": False,
+            }
+            white = review.headers.get("White", "?")
+            black = review.headers.get("Black", "?")
+            return CommandResult(message=(
+                "[yellow]I don't recognize either player as one of your configured usernames.[/yellow]\n"
+                f"White: {white} | Black: {black}\n"
+                "Reply with `white` or `black` to choose the POV for this review. "
+                "By default, nothing from this game will be saved to your personal dossier. "
+                "Add `save` if you explicitly want this borrowed game logged, e.g. `black save`."
+            ))
+
+        return self._activate_review(review, source, ownership="own",
+                                     dossier_consent=True)
+
+    def _activate_review(self, review, source: str, *, ownership: str,
+                         dossier_consent: bool, source_game_id: str = None) -> CommandResult:
+
+        self.state.pending_unmatched_review.clear()
         self.timeline.load_game(review.game)
         self.state.review = review
         self.state.socratic_attempts.clear()
         attach_board_tokens(review, self.state, invert=getattr(self.config, "dark_terminal", False))
 
-        game_id = self._local_game_id(review)
+        game_id = source_game_id or self._local_game_id(review)
         self.state.current_game_id = game_id
+        self.state.review_context = {
+            "ownership": ownership,
+            "pov": review.student_color,
+            "dossier_consent": bool(dossier_consent),
+        }
         lesson_file = getattr(self.config, "lesson_file", None)
         meta = dict(self.state.lesson_metadata or load_lesson_metadata(lesson_file))
         resumable = (meta.get("last_game_id") == game_id
@@ -296,6 +332,7 @@ class CommandProcessor:
                         "summary of the game. If the backend self-assessment note is present, ask that "
                         "single question before revealing the lesson agenda or starting Moment 1. "
                         "Do not analyze anything yet.]")
+            prompt += self._borrowed_game_note()
             prompt += self._self_assessment_open_note(review)
             message = (f"[green]Reviewed {source}: {len(review.records)} moves analyzed, "
                        f"{n} critical moment(s) found. Board set to the start.[/green]")
@@ -304,6 +341,59 @@ class CommandProcessor:
         if lesson_file:
             save_lesson_metadata(lesson_file, meta)
         return CommandResult(prompt=self._enrich(prompt), message=message)
+
+    _POV_WHITE_RE = re.compile(r"\b(?:white|w)\b", re.IGNORECASE)
+    _POV_BLACK_RE = re.compile(r"\b(?:black|b)\b", re.IGNORECASE)
+    _CONSENT_SAVE_RE = re.compile(r"\b(?:save|log|memorize|remember|dossier|yes)\b", re.IGNORECASE)
+    _CONSENT_NO_RE = re.compile(r"\b(?:don'?t\s+save|do\s+not\s+save|no\s+save|no\s+dossier|borrowed only)\b",
+                                re.IGNORECASE)
+
+    def _resolve_unmatched_review(self, text: str) -> CommandResult:
+        pending = self.state.pending_unmatched_review or {}
+        review = pending.get("review")
+        if review is None:
+            self.state.pending_unmatched_review.clear()
+            return CommandResult(message="[red]No pending unmatched review is available. Load the game again.[/red]")
+
+        color = None
+        if self._POV_WHITE_RE.search(text or ""):
+            color = "white"
+        if self._POV_BLACK_RE.search(text or ""):
+            if color:
+                return CommandResult(message="Please choose one POV only: `white` or `black`.")
+            color = "black"
+        if color is None:
+            white = review.headers.get("White", "?")
+            black = review.headers.get("Black", "?")
+            return CommandResult(message=(
+                f"Please choose the POV for this unmatched game: `white` ({white}) or `black` ({black}). "
+                "Add `save` only if you want this borrowed game written to your personal dossier."
+            ))
+
+        consent = bool(self._CONSENT_SAVE_RE.search(text or ""))
+        if self._CONSENT_NO_RE.search(text or ""):
+            consent = False
+
+        try:
+            review = adopt_review_pov(review, color, self.engines, self.config)
+        except Exception as e:
+            self.state.pending_unmatched_review.clear()
+            return CommandResult(message=f"[red]Could not adopt that POV: {e}[/red]")
+
+        source = pending.get("source") or "borrowed game"
+        source_game_id = pending.get("source_game_id")
+        self.state.pending_unmatched_review.clear()
+        result = self._activate_review(
+            review, source,
+            ownership="borrowed",
+            dossier_consent=consent,
+            source_game_id=source_game_id,
+        )
+        consent_msg = ("Dossier saving is ON for this borrowed game because you opted in."
+                       if consent else
+                       "Dossier saving is OFF for this borrowed game. Use `save` when choosing POV next time if you want opt-in logging.")
+        result.message = (result.message or "") + f"\n[cyan]Using {color.upper()} POV. {consent_msg}[/cyan]"
+        return result
 
     # ------------------------------------------------------------------
     # BOARD NAVIGATION
@@ -408,12 +498,19 @@ class CommandProcessor:
             except OSError:
                 pass
         self.state.lesson_metadata.clear()
+        self.state.pending_unmatched_review.clear()
+        self.state.review_context.clear()
         return CommandResult(message="[bold green]✨ Session memory, board state, and timeline wiped clean![/bold green]",
                              reset_chat=True)
 
     def _memorize(self) -> CommandResult:
         if not self.state.diagnostics:
             return CommandResult(message="[yellow]No diagnostics generated this session to memorize.[/yellow]")
+        if not self._dossier_write_allowed():
+            return CommandResult(message=(
+                "[yellow]This is a borrowed/unmatched game and dossier saving was not opted in. "
+                "Nothing was written to your personal dossier.[/yellow]"
+            ))
         # Enrich diagnoses with backend typicality before persisting, so the
         # dossier can track the typical->atypical progress trend.
         if self.state.review:
@@ -576,6 +673,22 @@ class CommandProcessor:
             return False
         return bool(self._COMPLETE_ACK_RE.match(text or ""))
 
+    def _dossier_write_allowed(self) -> bool:
+        return bool((self.state.review_context or {}).get("dossier_consent", True))
+
+    def _borrowed_game_note(self) -> str:
+        context = self.state.review_context or {}
+        if context.get("ownership") != "borrowed":
+            return ""
+        if context.get("dossier_consent"):
+            return ("\n\n[Backend borrowed-game policy - P0-4c: this was not recognized as the student's "
+                    "own game, but the student explicitly opted into dossier logging. Coach the chosen POV "
+                    "only and log diagnoses normally.]")
+        return ("\n\n[Backend borrowed-game policy - P0-4c: this was not recognized as the student's own "
+                "game. Coach the chosen POV only. Dossier saving is OFF by default: submit_diagnosis may "
+                "be used for session progression, but do NOT claim anything has been saved permanently to "
+                "the student's personal dossier, and do not tell the student to /memorize this session.]")
+
     def _start_self_assessment(self, review) -> None:
         if not getattr(self.config, "review_self_assessment", True):
             return
@@ -729,7 +842,8 @@ class CommandProcessor:
             return ("\n[Backend session close: no verified review theme is available. Close briefly; "
                     "do not invent a theme and do not start a new quiz.]")
         self.state.teaching_ledger["last_takeaway"] = dict(takeaway)
-        record_session_takeaway(getattr(self.config, "dossier_file", None), takeaway)
+        if self._dossier_write_allowed():
+            record_session_takeaway(getattr(self.config, "dossier_file", None), takeaway)
         return (
             "\n[Backend session close: use this verified takeaway exactly or as a very close paraphrase: "
             f"{takeaway['text']} Source: {takeaway['source']}. Close the loop in one sentence, optionally "

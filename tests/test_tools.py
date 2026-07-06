@@ -538,6 +538,22 @@ def test_continue_known_lichess_game_jumps_to_saved_agenda(stub_config, monkeypa
     assert meta["lesson_status"] == "awaiting_answer"
 
 
+def test_downloaded_unmatched_game_requires_pov_before_digest(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+
+    tools, state = make_tools(stub_config, _scripted_engines())
+    pgn = RPGN.replace('[White "mcmd"]', '[White "Alice"]')
+
+    result = tools._review_and_load(pgn, source_game_id="borrowed1")
+
+    assert result["pov_choice_required"] is True
+    assert "review_digest" not in result
+    assert result["white"] == "Alice"
+    assert result["default_dossier_consent"] is False
+    assert state.pending_unmatched_review["source_game_id"] == "borrowed1"
+    assert state.review_context["dossier_consent"] is False
+
+
 def test_explain_pawn_structure_evolution_requires_loaded_review(stub_config):
     tools, _ = make_tools(stub_config)
     result = tools.explain_pawn_structure_evolution()
