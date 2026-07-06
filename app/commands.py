@@ -15,7 +15,8 @@ import chess
 import chess.pgn
 
 from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata,
-                        record_session_takeaway, update_dossier, update_dossier_with_batch)
+                        record_self_assessment, record_session_takeaway,
+                        update_dossier, update_dossier_with_batch)
 from app.notation import legal_san_mentions
 from app.planner import TeachingPlan, plan_free_text_turn
 from app.review import adopt_review_pov, review_game, attach_board_tokens
@@ -736,6 +737,8 @@ class CommandProcessor:
                 text or "", re.I):
             sa["status"] = "skipped"
             sa["result"] = "student_opted_out"
+            sa["student_text"] = (text or "")[:240]
+            self._record_self_assessment_result(sa)
             return ("\n[Backend self-assessment - P0-8: the student opted out of the opener. "
                     "Proceed with the verified agenda normally; do not scold and do not ask the "
                     "self-assessment question again.]")
@@ -774,10 +777,27 @@ class CommandProcessor:
         sa["student_text"] = (text or "")[:240]
         if matched:
             sa["matched_ply"] = matched["ply"]
+            sa["matched_move_label"] = matched.get("move_label")
+        self._record_self_assessment_result(sa)
         return (
             "\n[Backend self-assessment result - P0-8: "
             f"{result}. {detail} Acknowledge briefly, then reveal the verified agenda and proceed "
             "normally. The student's guess must not change agenda order.]")
+
+    def _record_self_assessment_result(self, sa: dict) -> None:
+        if not self._dossier_write_allowed():
+            return
+        agenda = sa.get("agenda") or []
+        top = agenda[0] if agenda else {}
+        record_self_assessment(getattr(self.config, "dossier_file", None), {
+            "game_id": self.state.current_game_id,
+            "result": sa.get("result"),
+            "top_ply": top.get("ply"),
+            "top_move_label": top.get("move_label"),
+            "matched_ply": sa.get("matched_ply"),
+            "matched_move_label": sa.get("matched_move_label"),
+            "student_text": sa.get("student_text"),
+        })
 
     def _redundancy_note(self, plan: TeachingPlan) -> str:
         ledger = self.state.teaching_ledger or {}

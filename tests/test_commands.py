@@ -222,6 +222,7 @@ def test_p0_8_fresh_review_opens_with_self_assessment(stub_config):
 
 
 def test_p0_8_self_assessment_answer_is_deterministically_graded(stub_config):
+    from app.memory import load_dossier
     from tests.test_review import PGN as RPGN, _scripted_engines
     proc, state, _ = make_processor(stub_config, _scripted_engines())
     proc.process(RPGN)
@@ -233,6 +234,23 @@ def test_p0_8_self_assessment_answer_is_deterministically_graded(stub_config):
     assert "exact_top_agenda_match" in result.prompt
     assert state.teaching_ledger["self_assessment"]["status"] == "graded"
     assert state.teaching_ledger["self_assessment"]["matched_ply"] == top.ply
+    history = load_dossier(stub_config.dossier_file)["self_assessment_history"]
+    assert history[0]["result"] == "exact_top_agenda_match"
+    assert history[0]["top_ply"] == top.ply
+    assert history[0]["matched_ply"] == top.ply
+
+
+def test_p0_8_self_assessment_not_persisted_without_dossier_consent(stub_config):
+    from app.memory import load_dossier
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    top = state.review.agenda[0]
+    state.review_context = {"ownership": "borrowed", "pov": "white", "dossier_consent": False}
+
+    proc.process(f"I think {top.move_label} was the big mistake.")
+
+    assert load_dossier(stub_config.dossier_file)["self_assessment_history"] == []
 
 
 def test_p0_8_redundancy_ledger_is_injected_for_followup(stub_config):

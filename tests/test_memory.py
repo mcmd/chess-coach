@@ -1,7 +1,8 @@
 import json
 from types import SimpleNamespace
 
-from app.memory import load_dossier, record_session_takeaway, update_dossier, save_history
+from app.memory import (load_dossier, record_self_assessment, record_session_takeaway,
+                        update_dossier, save_history)
 
 
 def test_dossier_aggregates_taxonomy_categories(tmp_path):
@@ -130,3 +131,34 @@ def test_session_takeaway_recorded_and_added_to_context(tmp_path):
     context = get_dossier_context(dossier_file)
     assert "Recent closing takeaways" in context
     assert "ignored threat moment" in context
+
+
+def test_self_assessment_history_recorded_and_added_to_context(tmp_path):
+    from app.prompts import get_dossier_context
+    dossier_file = str(tmp_path / "dossier.json")
+    record_self_assessment(dossier_file, {
+        "game_id": "g1",
+        "result": "exact_top_agenda_match",
+        "top_ply": 30,
+        "top_move_label": "15. Re1",
+        "matched_ply": 30,
+        "matched_move_label": "15. Re1",
+        "student_text": "I think 15. Re1 was the turning point.",
+    })
+    record_self_assessment(dossier_file, {
+        "game_id": "g2",
+        "result": "near_miss",
+        "top_ply": 40,
+        "top_move_label": "20. Rxe8",
+        "matched_ply": 38,
+        "matched_move_label": "19. h3",
+        "student_text": "Maybe 19. h3.",
+    })
+
+    dossier = load_dossier(dossier_file)
+    assert len(dossier["self_assessment_history"]) == 2
+    assert dossier["self_assessment_history"][0]["game_id"] == "g2"
+    context = get_dossier_context(dossier_file)
+    assert "Self-assessment trend" in context
+    assert "1/2 exact top-agenda matches" in context
+    assert "1 near misses" in context

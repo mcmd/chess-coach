@@ -64,6 +64,7 @@ _DOSSIER_DEFAULT = {
     "recent_habits": [],
     "recent_positions": [],
     "session_takeaways": [],
+    "self_assessment_history": [],
     "typicality_history": [],
     "recurring_patterns": [],   # confirmed cross-game patterns from batch analysis
     "batch_trends": [],         # one entry per batch run: top patterns with counts
@@ -110,6 +111,7 @@ def load_dossier(dossier_file: str) -> dict:
     dossier["recent_habits"] = []
     dossier["recent_positions"] = []
     dossier["session_takeaways"] = []
+    dossier["self_assessment_history"] = []
     dossier["typicality_history"] = []
     dossier["recurring_patterns"] = []
     dossier["batch_trends"] = []
@@ -184,6 +186,36 @@ def record_session_takeaway(dossier_file: str, takeaway: dict) -> None:
     ]
     dossier["session_takeaways"] = [entry] + existing
     dossier["session_takeaways"] = dossier["session_takeaways"][:10]
+    _atomic_write_json(dossier_file, dossier)
+
+
+def record_self_assessment(dossier_file: str, assessment: dict) -> None:
+    """Persist one review-opening self-assessment result for metacognition trends."""
+    if not dossier_file or not assessment:
+        return
+    dossier = load_dossier(dossier_file)
+    entry = {
+        "date": assessment.get("date") or date.today().isoformat(),
+        "game_id": assessment.get("game_id"),
+        "result": assessment.get("result"),
+        "top_ply": assessment.get("top_ply"),
+        "top_move_label": assessment.get("top_move_label"),
+        "matched_ply": assessment.get("matched_ply"),
+        "matched_move_label": assessment.get("matched_move_label"),
+        "student_text": (assessment.get("student_text") or "")[:240],
+    }
+    if not entry["result"]:
+        return
+    existing = [
+        item for item in dossier.get("self_assessment_history", [])
+        if not (
+            item.get("game_id") == entry["game_id"]
+            and item.get("result") == entry["result"]
+            and item.get("student_text") == entry["student_text"]
+        )
+    ]
+    dossier["self_assessment_history"] = [entry] + existing
+    dossier["self_assessment_history"] = dossier["self_assessment_history"][:30]
     _atomic_write_json(dossier_file, dossier)
 
 

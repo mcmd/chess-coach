@@ -7,8 +7,10 @@ def get_dossier_context(dossier_file: str) -> str:
     d = load_dossier(dossier_file)
     slide = d.get("slide_trend") or {}
     takeaways = d.get("session_takeaways", [])[:3]
+    self_history = d.get("self_assessment_history", [])[-10:]
     if (d.get("total_blunders_analyzed", 0) == 0 and not d.get("recurring_patterns")
-            and slide.get("status") not in ("active", "improving") and not takeaways):
+            and slide.get("status") not in ("active", "improving") and not takeaways
+            and not self_history):
         return "No historical data available yet. This is your first session."
     if d.get("total_blunders_analyzed", 0):
         sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
@@ -54,6 +56,20 @@ def get_dossier_context(dossier_file: str) -> str:
     if takeaways:
         context += ("\nRecent closing takeaways (use only when genuinely relevant; do not repeat "
                     "automatically):\n- " + "\n- ".join(t.get("text", "") for t in takeaways if t.get("text")))
+    if self_history:
+        exact = sum(1 for item in self_history if item.get("result") == "exact_top_agenda_match")
+        near = sum(1 for item in self_history if item.get("result") == "near_miss")
+        opted_out = sum(1 for item in self_history if item.get("result") == "student_opted_out")
+        total = len(self_history)
+        context += (
+            "\nSelf-assessment trend (metacognition: whether the student can identify where games were "
+            f"lost before seeing the agenda): {exact}/{total} exact top-agenda matches"
+        )
+        if near:
+            context += f", {near} near misses"
+        if opted_out:
+            context += f", {opted_out} opt-outs"
+        context += ". Use as lightweight context only; never scold a miss."
     return context
 
 
