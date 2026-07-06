@@ -14,6 +14,7 @@ import chess
 import chess.pgn
 
 from app.drills import record_drill_presented, reverify_drill_position, select_dossier_drill
+from app.importer import import_local_pgn_file
 from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata,
                         record_self_assessment, record_session_takeaway,
                         update_dossier, update_dossier_with_batch)
@@ -29,6 +30,8 @@ HELP_TEXT = """[bold]Commands[/bold]
   /load_pgn <path>   Load + review a PGN file (full engine review, lesson agenda)
   /batch <path>      Scan a multi-game PGN (10-50 games) for recurring mistake patterns
                      and train on them (/batch alone reloads the last report)
+  /import_games <path>
+                     Import your analysed games from a local PGN into the dossier
   /move <san>        Play a move on the board (e.g. /move Nf3)
   /next  /prev       Step forward / back through the loaded game
   /goto <n>[b]       Jump to before White's (or Black's, with 'b') move n
@@ -88,6 +91,8 @@ class CommandProcessor:
             return self._load_pgn(text)
         if cmd == "/batch":
             return self._batch(text)
+        if cmd == "/import_games":
+            return self._import_games(text)
         if cmd == "/move":
             return self._move(text)
         if cmd in ("/undo", "/prev"):
@@ -175,6 +180,29 @@ class CommandProcessor:
     # ------------------------------------------------------------------
     # BATCH PATTERN REVIEW
     # ------------------------------------------------------------------
+
+    def _import_games(self, text: str) -> CommandResult:
+        parts = text.split(" ", 1)
+        if len(parts) < 2 or not parts[1].strip():
+            return CommandResult(message="Usage: /import_games <path-to-your-games.pgn>")
+        path = parts[1].strip().strip('"')
+        if not os.path.exists(path):
+            return CommandResult(message=f"[red]Could not find the file: {path}[/red]")
+        console.print("[dim yellow]↳ Importing local games into the dossier (deduped; existing "
+                      "batch cache is reused)...[/dim yellow]")
+        result = import_local_pgn_file(
+            path, self.engines, self.config,
+            on_progress=self.on_progress,
+            on_status=lambda s: console.print(f"[dim]· import | {s}[/dim]"),
+        )
+        if result.error:
+            detail = (f" Seen: {result.games_seen}; matched: {result.games_matched}; "
+                      f"duplicates: {result.games_duplicate}.")
+            return CommandResult(message=f"[yellow]{result.error}{detail}[/yellow]")
+        return CommandResult(
+            message=(f"[green]{result.message}[/green]\n"
+                     f"[cyan]Batch id: {result.batch_id}. Use /review for dossier drills or /batch to train patterns.[/cyan]")
+        )
 
     def _batch(self, text: str) -> CommandResult:
         from app.batch import batch_dossier_summary, load_latest_batch, run_batch_review

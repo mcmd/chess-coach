@@ -502,6 +502,7 @@ class BatchReview:
     moments_found: int
     patterns: list           # BatchPattern, ranked
     strengths: list
+    game_keys: list = field(default_factory=list)  # analyzed games, after cache/engine skips
     records: list = field(default_factory=list)   # enriched representatives, pattern-major order
     agenda_plies: list = field(default_factory=list)
     rep_pattern_idx: list = field(default_factory=list)  # records[i] belongs to patterns[rep_pattern_idx[i]]
@@ -677,6 +678,7 @@ def run_batch_review(pgn_text: str, engines, config, on_progress=None, on_status
         games_analyzed=len(scans), games_skipped=skipped, truncated=truncated,
         moments_found=moments_found, patterns=patterns,
         strengths=compute_strengths(scans),
+        game_keys=[s["game_key"] for s in scans],
         slide_signature=slide_signature,
         white_elo=getattr(config, "user_elo", DEFAULT_USER_ELO),
         black_elo=getattr(config, "user_elo", DEFAULT_USER_ELO),
@@ -718,6 +720,7 @@ def _save_report(cache_dir: str, batch: BatchReview) -> None:
         "batch_id": batch.batch_id, "created": batch.created,
         "games_analyzed": batch.games_analyzed, "games_skipped": batch.games_skipped,
         "truncated": batch.truncated, "moments_found": batch.moments_found,
+        "game_keys": batch.game_keys,
         "strengths": batch.strengths,
         "slide_signature": batch.slide_signature,
         "rep_pattern_idx": batch.rep_pattern_idx,
@@ -768,6 +771,7 @@ def load_latest_batch(config):
         truncated=data.get("truncated", False),
         moments_found=data.get("moments_found", 0),
         patterns=patterns, strengths=data.get("strengths", []),
+        game_keys=data.get("game_keys", []),
         slide_signature=data.get("slide_signature"),
         records=[_record_from_dict(d) for d in data.get("records", [])],
         rep_pattern_idx=data.get("rep_pattern_idx", []),

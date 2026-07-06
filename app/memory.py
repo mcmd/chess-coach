@@ -72,6 +72,7 @@ _DOSSIER_DEFAULT = {
     "drill_history": [],
     "drill_outcomes": [],
     "drill_state": {},
+    "imported_games": [],
     "typicality_history": [],
     "recurring_patterns": [],   # confirmed cross-game patterns from batch analysis
     "batch_trends": [],         # one entry per batch run: top patterns with counts
@@ -122,6 +123,7 @@ def load_dossier(dossier_file: str) -> dict:
     dossier["drill_history"] = []
     dossier["drill_outcomes"] = []
     dossier["drill_state"] = {}
+    dossier["imported_games"] = []
     dossier["typicality_history"] = []
     dossier["recurring_patterns"] = []
     dossier["batch_trends"] = []

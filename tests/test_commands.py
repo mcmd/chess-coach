@@ -210,6 +210,23 @@ def test_dossier_review_uses_pattern_drill_selector(stub_config):
     assert updated["drill_state"]["ignored_threat"]["seen_count"] == 1
 
 
+def test_import_games_command_updates_dossier(stub_config, tmp_path):
+    from app.memory import load_dossier
+    from tests.test_batch import _fixture
+
+    pgn, engines = _fixture()
+    pgn_file = tmp_path / "games.pgn"
+    pgn_file.write_text(pgn, encoding="utf-8")
+    proc, _, _ = make_processor(stub_config, engines)
+
+    result = proc.process(f"/import_games {pgn_file}")
+
+    assert "Imported 3 new game" in result.message
+    dossier = load_dossier(stub_config.dossier_file)
+    assert len(dossier["imported_games"]) == 3
+    assert dossier["recent_positions"]
+
+
 def test_p0_8_declines_full_game_annotation_in_coach_mode(stub_config):
     proc, state, _ = make_processor(stub_config)
     result = proc.process("Can you annotate every move in this game?")
