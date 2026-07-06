@@ -19,6 +19,7 @@ from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata
                         update_dossier, update_dossier_with_batch)
 from app.notation import legal_san_mentions
 from app.planner import TeachingPlan, _normalize_text, plan_free_text_turn
+from app.rating import current_rating_enrichment, rating_offer_note
 from app.review import adopt_review_pov, review_game, attach_board_tokens
 from app.trace import trace
 from app.ui import console
@@ -301,6 +302,11 @@ class CommandProcessor:
             "pov": review.student_color,
             "dossier_consent": bool(dossier_consent),
         }
+        rating_enrichment = None
+        if ownership == "own":
+            rating_enrichment = current_rating_enrichment(review, self.config)
+            if rating_enrichment:
+                self.state.review_context["rating_enrichment"] = rating_enrichment
         lesson_file = getattr(self.config, "lesson_file", None)
         meta = dict(self.state.lesson_metadata or load_lesson_metadata(lesson_file))
         resumable = (meta.get("last_game_id") == game_id
@@ -316,6 +322,7 @@ class CommandProcessor:
             meta.update({"last_game_id": game_id, "last_agenda_index": idx,
                          "lesson_status": "awaiting_answer"})
             prompt = (review.digest()
+                      + rating_offer_note(rating_enrichment)
                       + f"\n\n[System: This game was recognized from a previous session. The lesson "
                         f"RESUMES at Moment {idx + 1} ({record.move_label}); the board is already at "
                         "that position. Greet the student briefly, remind them where the lesson left "
@@ -328,6 +335,7 @@ class CommandProcessor:
                          "lesson_status": "fresh_review"})
             self._start_self_assessment(review)
             prompt = (review.digest()
+                      + rating_offer_note(rating_enrichment)
                       + "\n\n[System: The game is loaded with the board at the STARTING position. "
                         "The student steps through moves with /next. Greet the student with a one-paragraph "
                         "summary of the game. If the backend self-assessment note is present, ask that "

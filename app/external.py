@@ -14,6 +14,8 @@ from app.trace import trace
 EXPLORER_MASTERS = "https://explorer.lichess.ovh/masters"
 EXPLORER_LICHESS = "https://explorer.lichess.ovh/lichess"
 TABLEBASE = "https://tablebase.lichess.ovh/standard"
+LICHESS_USER = "https://lichess.org/api/user/{username}"
+CHESSCOM_STATS = "https://api.chess.com/pub/player/{username}/stats"
 
 
 def _fetch_json(url: str, params: dict):
@@ -48,6 +50,18 @@ def lichess_moves(fen: str, ratings: str, speeds: str = "blitz,rapid"):
 
 def tablebase_probe(fen: str):
     return get_json(TABLEBASE, {"fen": fen})
+
+
+def lichess_user_profile(username: str):
+    if not username:
+        return None
+    return get_json(LICHESS_USER.format(username=username), {})
+
+
+def chesscom_player_stats(username: str):
+    if not username:
+        return None
+    return get_json(CHESSCOM_STATS.format(username=username), {})
 
 
 def clear_cache():

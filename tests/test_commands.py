@@ -543,6 +543,26 @@ def test_completed_lesson_loads_fresh(stub_config):
     assert state2.board.fen() == _chess.STARTING_FEN
 
 
+def test_p0_4d_current_rating_offer_is_injected_without_applying(stub_config, monkeypatch):
+    from app import external
+    from tests.test_review import PGN as RPGN, _scripted_engines
+
+    monkeypatch.setattr(external, "lichess_user_profile",
+                        lambda username: {"perfs": {"rapid": {"rating": 1420}}})
+    pgn = RPGN.replace('[Event "Test"]',
+                       '[Event "Test"]\n[Site "https://lichess.org/abc12345"]\n[TimeControl "600+0"]')
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+
+    result = proc.process(pgn)
+
+    assert "Backend rating enrichment - P0-4d" in result.prompt
+    assert "current rapid rating ~1420" in result.prompt
+    assert "Do NOT change conversation_elo silently" in result.prompt
+    assert stub_config.user_elo == 1150
+    assert state.review.conversation_elo == 1150
+    assert state.review_context["rating_enrichment"]["current_rating"] == 1420
+
+
 def _borrowed_review_pgn():
     from tests.test_review import PGN as RPGN
     return RPGN.replace('[White "mcmd"]', '[White "Alice"]')

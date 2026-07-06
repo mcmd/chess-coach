@@ -554,6 +554,24 @@ def test_downloaded_unmatched_game_requires_pov_before_digest(stub_config):
     assert state.review_context["dossier_consent"] is False
 
 
+def test_downloaded_own_game_includes_current_rating_offer(stub_config, monkeypatch):
+    from app import external
+    from tests.test_review import PGN as RPGN, _scripted_engines
+
+    monkeypatch.setattr(external, "lichess_user_profile",
+                        lambda username: {"perfs": {"rapid": {"rating": 1420}}})
+    pgn = RPGN.replace('[Event "Test"]',
+                       '[Event "Test"]\n[Site "https://lichess.org/abc12345"]\n[TimeControl "600+0"]')
+    tools, state = make_tools(stub_config, _scripted_engines())
+
+    result = tools._review_and_load(pgn, source_game_id="abc12345")
+
+    assert "Backend rating enrichment - P0-4d" in result["review_digest"]
+    assert "current rapid rating ~1420" in result["review_digest"]
+    assert state.review_context["rating_enrichment"]["current_rating"] == 1420
+    assert state.review.conversation_elo == 1150
+
+
 def test_explain_pawn_structure_evolution_requires_loaded_review(stub_config):
     tools, _ = make_tools(stub_config)
     result = tools.explain_pawn_structure_evolution()

@@ -12,6 +12,7 @@ from app.concepts import extract_board_features, see_exchange_gain
 from app.memory import load_lesson_metadata, save_lesson_metadata
 from app.motifs import detect_motifs_in_line
 from app.pawn_story import analyze_pawn_structure_evolution
+from app.rating import current_rating_enrichment, rating_offer_note
 from app.render import render_board_token
 from app.review import review_game, attach_board_tokens, cp_to_win_pct, MATE_CP, _wdl_risk_profile
 from app.ui import console
@@ -1210,6 +1211,9 @@ class CoachTools:
             "pov": review.student_color,
             "dossier_consent": True,
         }
+        rating_enrichment = current_rating_enrichment(review, self.config)
+        if rating_enrichment:
+            self.state.review_context["rating_enrichment"] = rating_enrichment
         self.state.socratic_attempts.clear()
         attach_board_tokens(review, self.state, invert=getattr(self.config, "dark_terminal", False))
         meta = dict(self.state.lesson_metadata or {})
@@ -1227,7 +1231,7 @@ class CoachTools:
                 save_lesson_metadata(self.config.lesson_file, meta)
             record = review.agenda[agenda_index] if review.agenda else None
             return {
-                "review_digest": review.digest(),
+                "review_digest": review.digest() + rating_offer_note(rating_enrichment),
                 "resume": {
                     "agenda_index": agenda_index,
                     "moment_number": agenda_index + 1,
@@ -1243,7 +1247,7 @@ class CoachTools:
         self.state.lesson_metadata = meta
         if source_game_id and getattr(self.config, "lesson_file", None):
             save_lesson_metadata(self.config.lesson_file, meta)
-        return {"review_digest": review.digest(),
+        return {"review_digest": review.digest() + rating_offer_note(rating_enrichment),
                 "board_state": "Loaded at the STARTING position. The user steps through with /next."}
 
     def get_tool_list(self):
