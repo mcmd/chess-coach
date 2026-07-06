@@ -136,11 +136,30 @@ def _choose_varied(candidates: list, history: list) -> dict:
 
 
 def _verified_positions(dossier: dict, verifier=None) -> list:
-    positions = []
+    raw_positions = []
     for raw in dossier.get("recent_positions", []):
+        raw_positions.append((raw, "recent_position"))
+    for drill_set in dossier.get("drill_sets", []):
+        for raw in drill_set.get("positions", []):
+            item = dict(raw)
+            item.setdefault("pattern_id", drill_set.get("pattern_id"))
+            item.setdefault("pattern_title", drill_set.get("title"))
+            item.setdefault("source", "batch_drill_set")
+            raw_positions.append((item, "batch_drill_set"))
+
+    positions = []
+    seen = set()
+    for raw, default_source in raw_positions:
         if not _valid_position(raw):
             continue
         pos = dict(raw)
+        category = pos.get("error_category") or "unknown"
+        key = (pos.get("fen"), category)
+        if key in seen:
+            continue
+        seen.add(key)
+        pos["error_category"] = category
+        pos.setdefault("source", default_source)
         if verifier:
             verification = verifier(pos)
             if not verification:
@@ -162,14 +181,14 @@ def select_dossier_drill(dossier: dict, verifier=None) -> dict | None:
     history = list(dossier.get("drill_history") or [])
     pattern_options = []
     for pattern in dossier.get("recurring_patterns", []):
-        if pattern.get("status") not in ("active", "improving"):
+        if pattern.get("status") not in ("active", "slipping", "improving"):
             continue
         for category, candidates in by_category.items():
             if _pattern_matches_category(pattern, category):
                 pattern_options.append((pattern, category, candidates))
     pattern_options.sort(
         key=lambda item: (
-            item[0].get("status") != "active",
+            {"slipping": 0, "active": 1, "improving": 2}.get(item[0].get("status"), 3),
             _category_retrievability(dossier, item[1]),
             -(item[0].get("evidence_count") or 0),
         )
@@ -177,14 +196,15 @@ def select_dossier_drill(dossier: dict, verifier=None) -> dict | None:
     if pattern_options:
         pattern, category, candidates = pattern_options[0]
         pick = _choose_varied(candidates, history)
+        source = "batch_drill_set" if pick.get("source") == "batch_drill_set" else "recurring_pattern"
         return {
             "fen": pick["fen"],
             "error_category": category,
             "error_typicality": pick.get("error_typicality"),
             "maia_played_prob": pick.get("maia_played_prob"),
-            "pattern_id": pattern.get("id"),
-            "pattern_title": pattern.get("title"),
-            "source": "recurring_pattern",
+            "pattern_id": pick.get("pattern_id") or pattern.get("id"),
+            "pattern_title": pick.get("pattern_title") or pattern.get("title"),
+            "source": source,
             "priority_reason": f"recurring pattern: {pattern.get('title') or pattern.get('id')}",
             "popularity_note": popularity_branch(pick.get("maia_played_prob")),
             "retrievability": _category_retrievability(dossier, category),

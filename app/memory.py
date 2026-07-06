@@ -17,6 +17,7 @@ MAX_HISTORY_MESSAGES = 80
 # falls below this lower multiple of baseline, and hold it in the dead-band. (issue #4)
 SLIDE_ABOVE_BASELINE_OFF = 1.2
 DRILL_RECENT_WINDOW = 10
+DRILL_SET_POSITION_LIMIT = 12
 PATTERN_RECENT_BATCHES = 3
 PATTERN_IMPROVING_FACTOR = 0.6
 PATTERN_SLIPPING_FACTOR = 1.4
@@ -72,6 +73,7 @@ _DOSSIER_DEFAULT = {
     "drill_history": [],
     "drill_outcomes": [],
     "drill_state": {},
+    "drill_sets": [],
     "imported_games": [],
     "typicality_history": [],
     "recurring_patterns": [],   # confirmed cross-game patterns from batch analysis
@@ -123,6 +125,7 @@ def load_dossier(dossier_file: str) -> dict:
     dossier["drill_history"] = []
     dossier["drill_outcomes"] = []
     dossier["drill_state"] = {}
+    dossier["drill_sets"] = []
     dossier["imported_games"] = []
     dossier["typicality_history"] = []
     dossier["recurring_patterns"] = []
@@ -370,6 +373,54 @@ def _pattern_recurrence_fields(prev: dict | None, pat: dict, batch_summary: dict
     }
 
 
+def _drill_set_for_pattern(prev: dict | None, entry: dict, pat: dict,
+                           batch_summary: dict, today: str) -> dict:
+    """Build/update a ready drill bank for one recurring batch pattern."""
+    pattern_id = entry.get("id") or pat.get("id")
+    category = (pattern_id or "").split(":", 1)[0] or "unknown"
+    previous_positions = list((prev or {}).get("positions") or [])
+    seen = set()
+    positions = []
+
+    def add_position(pos: dict, source_batch_id: str | None):
+        fen = pos.get("fen")
+        key = (fen, category)
+        if not fen or key in seen:
+            return
+        item = {
+            "fen": fen,
+            "error_category": category,
+            "pattern_id": pattern_id,
+            "pattern_title": entry.get("title"),
+            "source": "batch_drill_set",
+            "source_batch_id": source_batch_id,
+            "move_label": pos.get("move_label"),
+            "played": pos.get("played"),
+            "better": pos.get("better"),
+        }
+        for optional in ("error_typicality", "maia_played_prob"):
+            if pos.get(optional) is not None:
+                item[optional] = pos[optional]
+        positions.append(item)
+        seen.add(key)
+
+    for pos in pat.get("representative_positions", []):
+        add_position(pos, batch_summary.get("batch_id"))
+    for pos in previous_positions:
+        add_position(pos, pos.get("source_batch_id") or pos.get("batch_id"))
+
+    return {
+        "pattern_id": pattern_id,
+        "title": entry.get("title"),
+        "status": entry.get("status"),
+        "axis": pat.get("axis"),
+        "habit": entry.get("habit"),
+        "last_seen": today,
+        "source_batch_id": batch_summary.get("batch_id"),
+        "positions": positions[:DRILL_SET_POSITION_LIMIT],
+    }
+
+
 def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
     """Distill a batch run into the long-term player model. Only pattern
     summaries enter the dossier — raw per-moment findings stay in the batch
@@ -378,6 +429,7 @@ def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
     consecutive batches goes 'stale' (no permanent accusations)."""
     dossier = load_dossier(dossier_file)
     existing = {p.get("id"): dict(p) for p in dossier.get("recurring_patterns", [])}
+    drill_sets = {s.get("pattern_id"): dict(s) for s in dossier.get("drill_sets", [])}
     today = date.today().isoformat()
     seen_ids = set()
     for pat in batch_summary.get("patterns", []):
@@ -408,14 +460,24 @@ def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
         if drill_summary:
             entry["drill_practice"] = drill_summary
         existing[pat["id"]] = entry
+        drill_sets[pat["id"]] = _drill_set_for_pattern(
+            drill_sets.get(pat["id"]), entry, pat, batch_summary, today
+        )
     for pid, p in existing.items():
         if pid not in seen_ids:
             p["missed_batches"] = p.get("missed_batches", 0) + 1
             if p["missed_batches"] >= 2:
                 p["status"] = "stale"
+            if pid in drill_sets:
+                drill_sets[pid]["status"] = p.get("status")
     ranked = sorted(existing.values(),
                     key=lambda p: (p.get("status") == "stale", -(p.get("evidence_count") or 0)))
     dossier["recurring_patterns"] = ranked[:8]
+    active_pattern_ids = [p.get("id") for p in dossier["recurring_patterns"]]
+    dossier["drill_sets"] = [
+        drill_sets[pid] for pid in active_pattern_ids
+        if pid in drill_sets and drill_sets[pid].get("positions")
+    ][:8]
     dossier["batch_trends"].append({
         "date": today,
         "batch_id": batch_summary.get("batch_id"),

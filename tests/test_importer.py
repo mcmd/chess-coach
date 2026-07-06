@@ -16,6 +16,7 @@ def test_import_local_pgn_updates_dossier_and_seeds_drills(stub_config):
     dossier = load_dossier(stub_config.dossier_file)
     assert len(dossier["imported_games"]) == 3
     assert dossier["recurring_patterns"]
+    assert dossier["drill_sets"]
     assert any(p.get("source") == "imported_batch_representative"
                for p in dossier["recent_positions"])
 

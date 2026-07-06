@@ -43,6 +43,54 @@ def test_drill_selector_prioritizes_recurring_pattern_and_varies_instance():
     assert drill["source"] == "recurring_pattern"
 
 
+def test_drill_selector_uses_batch_drill_sets_without_recent_positions():
+    fen = _after("e4")
+    dossier = {
+        "recent_positions": [],
+        "drill_sets": [{
+            "pattern_id": "ignored_threat:opening",
+            "title": "Ignored threat",
+            "status": "active",
+            "positions": [{
+                "fen": fen,
+                "error_category": "ignored_threat",
+                "pattern_id": "ignored_threat:opening",
+                "pattern_title": "Ignored threat",
+                "source": "batch_drill_set",
+            }],
+        }],
+        "recurring_patterns": [
+            {"id": "ignored_threat:opening", "title": "Ignored threat", "status": "active",
+             "evidence_count": 4},
+        ],
+    }
+
+    drill = select_dossier_drill(dossier)
+
+    assert drill["fen"] == fen
+    assert drill["pattern_id"] == "ignored_threat:opening"
+    assert drill["source"] == "batch_drill_set"
+
+
+def test_drill_selector_prioritizes_slipping_pattern():
+    dossier = {
+        "recent_positions": [
+            {"fen": chess.STARTING_FEN, "error_category": "ignored_threat"},
+            {"fen": _after("e4"), "error_category": "king_safety"},
+        ],
+        "recurring_patterns": [
+            {"id": "ignored_threat:opening", "title": "Ignored threat", "status": "active",
+             "evidence_count": 10},
+            {"id": "king_safety:opening", "title": "King safety", "status": "slipping",
+             "evidence_count": 2},
+        ],
+    }
+
+    drill = select_dossier_drill(dossier)
+
+    assert drill["error_category"] == "king_safety"
+
+
 def test_drill_selector_prefers_due_theme_over_fresh_theme():
     today = date.today()
     dossier = {
@@ -210,3 +258,4 @@ def test_old_dossier_loads_with_drill_defaults(tmp_path):
     assert dossier["drill_history"] == []
     assert dossier["drill_outcomes"] == []
     assert dossier["drill_state"] == {}
+    assert dossier["drill_sets"] == []

@@ -307,6 +307,28 @@ def _summary(batch_id, rate, include=True):
     return {"batch_id": batch_id, "games": 10, "patterns": patterns}
 
 
+def _summary_with_representatives(batch_id, fen=chess.STARTING_FEN):
+    return {
+        "batch_id": batch_id,
+        "games": 10,
+        "patterns": [{
+            "id": "defend_against_direct_threat:opening",
+            "title": "Direct threat",
+            "count": 4,
+            "games_seen": 3,
+            "habit": "Check direct threats before moving.",
+            "axis": "knowledge",
+            "rate": 0.4,
+            "representative_positions": [{
+                "fen": fen,
+                "move_label": "2. g4",
+                "played": "g4",
+                "better": "Nf3",
+            }],
+        }],
+    }
+
+
 def test_dossier_batch_update_tracks_trend_and_status(stub_config):
     f = stub_config.dossier_file
     update_dossier_with_batch(f, _summary("b1", 1.4))
@@ -324,6 +346,36 @@ def test_dossier_batch_update_tracks_trend_and_status(stub_config):
     d = load_dossier(f)
     assert d["recurring_patterns"][0]["status"] == "stale"
     assert len(d["batch_trends"]) == 4
+
+
+def test_dossier_batch_update_packages_drill_sets(stub_config):
+    f = stub_config.dossier_file
+    update_dossier_with_batch(f, _summary_with_representatives("b1"))
+
+    dossier = load_dossier(f)
+    drill_set = dossier["drill_sets"][0]
+
+    assert drill_set["pattern_id"] == "defend_against_direct_threat:opening"
+    assert drill_set["title"] == "Direct threat"
+    assert drill_set["status"] == "active"
+    assert drill_set["source_batch_id"] == "b1"
+    assert drill_set["positions"][0]["source"] == "batch_drill_set"
+    assert drill_set["positions"][0]["error_category"] == "defend_against_direct_threat"
+    assert drill_set["positions"][0]["played"] == "g4"
+
+
+def test_dossier_batch_drill_sets_keep_prior_unique_positions(stub_config):
+    f = stub_config.dossier_file
+    older_fen = chess.STARTING_FEN
+    newer_fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    update_dossier_with_batch(f, _summary_with_representatives("b1", older_fen))
+    update_dossier_with_batch(f, _summary_with_representatives("b2", newer_fen))
+
+    positions = load_dossier(f)["drill_sets"][0]["positions"]
+
+    assert [p["fen"] for p in positions] == [newer_fen, older_fen]
+    assert positions[0]["source_batch_id"] == "b2"
+    assert positions[1]["source_batch_id"] == "b1"
 
 
 def test_dossier_batch_update_tracks_recent_lifetime_and_slipping(stub_config):
