@@ -58,6 +58,8 @@ def _send_with_spinner(chat, payload):
 def run_agent_turn(chat, coach_tools, message) -> None:
     """Send `message`, execute any tool calls until the model stops asking,
     then render the final response."""
+    if hasattr(coach_tools.state, "claim_gate_extra_fens"):
+        coach_tools.state.claim_gate_extra_fens.clear()
     response = _send_with_spinner(chat, message)
     full_text = ""
     rounds = 0
@@ -105,6 +107,7 @@ def run_agent_turn(chat, coach_tools, message) -> None:
                     result = {"error": f"Tool execution failed: {e}"}
             else:
                 result = {"error": f"Tool {fn_call.name} not found."}
+            _record_tool_candidate_fens(coach_tools.state, fn_call.name, args_dict, result)
             trace(f"tool result: {fn_call.name} in {time.monotonic() - started:.1f}s -> {_summarize_result(result)}")
 
             tool_parts.append(types.Part.from_function_response(name=fn_call.name, response={"result": result}))
@@ -112,6 +115,81 @@ def run_agent_turn(chat, coach_tools, message) -> None:
         response = _send_with_spinner(chat, tool_parts)
 
     _render(full_text, coach_tools.state, getattr(coach_tools, "config", None))
+    if hasattr(coach_tools.state, "claim_gate_extra_fens"):
+        coach_tools.state.claim_gate_extra_fens.clear()
+
+
+def _record_tool_candidate_fens(state, tool_name: str, args: dict, result) -> None:
+    """Register positions licensed by live tool results for this turn's L1 gate.
+
+    The static gate knows the live board and review agenda lines. A same-turn tool
+    may return a fresh PV or threat line from another position; without these FENs,
+    a legal move deep in that returned line can be redacted as "unverified".
+    """
+    if not isinstance(result, dict) or "error" in result:
+        return
+    if not hasattr(state, "claim_gate_extra_fens"):
+        return
+    fens = []
+    start = args.get("fen") if isinstance(args, dict) else None
+    if not start:
+        return
+
+    if tool_name == "analyze_position":
+        board = _board_after_moves(start, args.get("moves_to_apply") or [])
+        if board is None:
+            return
+        fens.append(board.fen())
+        for line in result.get("top_stockfish_lines") or []:
+            fens.extend(_line_position_fens(board.fen(), (line.get("expected_engine_line") or "").split()))
+    elif tool_name == "evaluate_student_answer":
+        if result.get("best_line"):
+            fens.extend(_line_position_fens(start, str(result["best_line"]).split()))
+    elif tool_name == "evaluate_threat_answer":
+        board = _null_move_board(start)
+        if board is None:
+            return
+        fens.append(board.fen())
+        for line in _threat_lines_from_result(result):
+            fens.extend(_line_position_fens(board.fen(), line.split()))
+
+    seen = set(state.claim_gate_extra_fens)
+    for fen in fens:
+        if fen and fen not in seen:
+            state.claim_gate_extra_fens.append(fen)
+            seen.add(fen)
+
+
+def _board_after_moves(fen: str, moves: list) -> chess.Board | None:
+    try:
+        board = chess.Board(fen)
+        for san in (moves or [])[:10]:
+            board.push_san(str(san))
+        return board
+    except (ValueError, TypeError):
+        return None
+
+
+def _null_move_board(fen: str) -> chess.Board | None:
+    try:
+        board = chess.Board(fen)
+        board.push(chess.Move.null())
+        return board
+    except (ValueError, TypeError):
+        return None
+
+
+def _threat_lines_from_result(result: dict) -> list[str]:
+    lines = []
+    if result.get("threat_line"):
+        lines.append(result["threat_line"])
+    comparison = result.get("comparison") or {}
+    if comparison.get("engine_main_threat_line"):
+        lines.append(comparison["engine_main_threat_line"])
+    for threat in result.get("actual_threats") or []:
+        if threat.get("threat_line"):
+            lines.append(threat["threat_line"])
+    return lines
 
 
 def _summarize_result(result) -> str:
@@ -225,6 +303,9 @@ def candidate_boards(state) -> list:
     board = getattr(state, "board", None)
     if board is not None:
         fens.add(board.fen())
+    for f in getattr(state, "claim_gate_extra_fens", []) or []:
+        if f:
+            fens.add(f)
     review = getattr(state, "review", None)
     for r in (getattr(review, "agenda", None) or []):
         for f in (getattr(r, "fen_before", None), getattr(r, "fen_after", None)):

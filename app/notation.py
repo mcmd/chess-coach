@@ -4,8 +4,8 @@ import re
 import chess
 
 _SAN_RE = re.compile(
-    r"\b(?:O-O-O|O-O|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?|"
-    r"[a-h]x?[a-h][1-8](?:=[QRBN])?[+#]?)[!?]*\b")
+    r"(?<![A-Za-z0-9_])(?:O-O-O|O-O|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?|"
+    r"[a-h]x?[a-h][1-8](?:=[QRBN])?[+#]?)[!?]*(?![A-Za-z0-9_])")
 
 
 def san_mentions(text: str) -> list:

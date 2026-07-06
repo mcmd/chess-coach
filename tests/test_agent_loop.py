@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import chess
 
 from app.agent_loop import (run_agent_turn, find_illegal_moves, apply_claim_gate,
-                            candidate_boards)
+                            candidate_boards, _record_tool_candidate_fens)
 from app.state import SessionState, TimelineManager
 from app.tools import CoachTools
 from tests.conftest import FakeEngines
@@ -69,6 +69,37 @@ def test_candidate_boards_include_verified_line_positions_for_l1_gate():
                                               student_color="white", agenda_plies=[0]))
     boards = candidate_boards(state)
     assert find_illegal_moves("The line can continue Qh5.", boards) == []
+
+
+def test_candidate_boards_include_tool_returned_pv_positions():
+    state = SessionState()
+    _record_tool_candidate_fens(
+        state,
+        "analyze_position",
+        {"fen": chess.STARTING_FEN},
+        {"top_stockfish_lines": [{"rank": 1, "expected_engine_line": "e4 e5 Qh5"}]},
+    )
+
+    boards = candidate_boards(state)
+
+    assert find_illegal_moves("The returned line continues Qh5.", boards) == []
+
+
+def test_candidate_boards_include_tool_returned_threat_null_move_positions():
+    board = chess.Board()
+    for san in ("f3", "e5"):
+        board.push_san(san)
+    state = SessionState()
+
+    _record_tool_candidate_fens(
+        state,
+        "evaluate_threat_answer",
+        {"fen": board.fen()},
+        {"actual_threats": [{"threat": "queen check", "threat_line": "Qh4+"}]},
+    )
+
+    boards = candidate_boards(state)
+    assert find_illegal_moves("Black was threatening Qh4+.", boards) == []
 
 
 class FakeChat:
