@@ -175,14 +175,18 @@ def test_dossier_review_uses_pattern_drill_selector(stub_config):
     }
     with open(stub_config.dossier_file, "w", encoding="utf-8") as handle:
         json.dump(dossier, handle)
-    proc, _, _ = make_processor(stub_config)
+    engines = FakeEngines()
+    proc, _, _ = make_processor(stub_config, engines)
 
     result = proc.process("/review")
 
     assert "Priority: recurring pattern: Ignored threat" in result.prompt
     assert "Pattern focus: Ignored threat" in result.prompt
+    assert "Backend verification" in result.prompt
+    assert "not as the lesson severity" in result.prompt
     assert "about 62% of peers" in result.prompt
     assert chess.STARTING_FEN in result.prompt
+    assert engines.quick_eval_calls >= 1
     updated = load_dossier(stub_config.dossier_file)
     assert updated["drill_history"][0]["fen"] == chess.STARTING_FEN
     assert updated["drill_state"]["ignored_threat"]["seen_count"] == 1

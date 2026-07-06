@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import chess
 import chess.pgn
 
-from app.drills import record_drill_presented, select_dossier_drill
+from app.drills import record_drill_presented, reverify_drill_position, select_dossier_drill
 from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata,
                         record_self_assessment, record_session_takeaway,
                         update_dossier, update_dossier_with_batch)
@@ -537,16 +537,25 @@ class CommandProcessor:
 
     def _dossier_quiz(self) -> CommandResult:
         dossier = load_dossier(self.config.dossier_file)
-        pick = select_dossier_drill(dossier)
+        pick = select_dossier_drill(
+            dossier,
+            verifier=lambda position: reverify_drill_position(position, self.engines),
+        )
         if not pick:
-            return CommandResult(message="[yellow]No valid stored mistakes to review yet. Use /memorize after a session to build your dossier.[/yellow]")
+            return CommandResult(message="[yellow]No locally verified stored mistakes to review yet. Use /memorize after a session to build your dossier, or check that Stockfish is available.[/yellow]")
         record_drill_presented(self.config.dossier_file, pick)
         self.state.active_dossier_drill = dict(pick)
         popularity = (" " + pick["popularity_note"]) if pick.get("popularity_note") else ""
         pattern = (f" Pattern focus: {pick['pattern_title']}." if pick.get("pattern_title") else "")
+        verification = ""
+        if pick.get("verification"):
+            verification = (" Backend verification: this stored position was rechecked locally before "
+                            "presentation; use that only as a trust/provenance fact, not as the lesson "
+                            "severity.")
         prompt = (f"DOSSIER REVIEW DRILL. Priority: {pick.get('priority_reason')}.{pattern} "
                   f"I previously made a '{pick.get('error_category', 'unknown')}' mistake "
                   f"in this position: {pick['fen']}.{popularity} "
+                  f"{verification} "
                   "Set the scene with analyze_position (do not reveal the answer), "
                   "remind me what KIND of mistake I tend to make here, and quiz me: ask me to find the best move. "
                   "Grade my answer with evaluate_student_answer.")

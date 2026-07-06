@@ -32,6 +32,40 @@ def _valid_position(position: dict) -> bool:
     return not board.is_game_over() and any(board.legal_moves)
 
 
+def reverify_drill_position(position: dict, engines, time_limit: float = 0.5) -> dict | None:
+    """Return shallow local verification metadata, or None if the drill is stale.
+
+    This is a presentation guard only: local shallow eval proves the FEN is
+    analyzable now, but it must not become calibrated severity.
+    """
+    if not _valid_position(position):
+        return None
+    try:
+        board = chess.Board(position.get("fen", ""))
+        score, best_uci = engines.quick_eval(board.fen(), time_limit)
+    except Exception:
+        return None
+    verification = {
+        "source": "local_quick_eval",
+        "time_limit": time_limit,
+        "engine_verified": True,
+        "usage": "Presentation guard only; do not narrate this shallow local eval as calibrated severity.",
+    }
+    try:
+        verification["eval_cp_white"] = score.white().score(mate_score=100000)
+    except Exception:
+        pass
+    if best_uci:
+        try:
+            move = chess.Move.from_uci(best_uci)
+            if move in board.legal_moves:
+                verification["best_move_uci"] = best_uci
+                verification["best_move_san"] = board.san(move)
+        except ValueError:
+            return None
+    return verification
+
+
 def _pattern_matches_category(pattern: dict, category: str) -> bool:
     cat = _norm(category)
     if not cat:
@@ -101,8 +135,23 @@ def _choose_varied(candidates: list, history: list) -> dict:
     return max(candidates, key=lambda pos: _last_seen_index(history, category, pos.get("fen")) or -1)
 
 
-def select_dossier_drill(dossier: dict) -> dict | None:
-    positions = [dict(p) for p in dossier.get("recent_positions", []) if _valid_position(p)]
+def _verified_positions(dossier: dict, verifier=None) -> list:
+    positions = []
+    for raw in dossier.get("recent_positions", []):
+        if not _valid_position(raw):
+            continue
+        pos = dict(raw)
+        if verifier:
+            verification = verifier(pos)
+            if not verification:
+                continue
+            pos["verification"] = verification
+        positions.append(pos)
+    return positions
+
+
+def select_dossier_drill(dossier: dict, verifier=None) -> dict | None:
+    positions = _verified_positions(dossier, verifier)
     if not positions:
         return None
     by_category = {}
@@ -139,6 +188,7 @@ def select_dossier_drill(dossier: dict) -> dict | None:
             "priority_reason": f"recurring pattern: {pattern.get('title') or pattern.get('id')}",
             "popularity_note": popularity_branch(pick.get("maia_played_prob")),
             "retrievability": _category_retrievability(dossier, category),
+            "verification": pick.get("verification"),
         }
 
     frequencies = dossier.get("error_frequencies") or {}
@@ -159,6 +209,7 @@ def select_dossier_drill(dossier: dict) -> dict | None:
         "priority_reason": "recent diagnosed position",
         "popularity_note": popularity_branch(pick.get("maia_played_prob")),
         "retrievability": _category_retrievability(dossier, category),
+        "verification": pick.get("verification"),
     }
 
 

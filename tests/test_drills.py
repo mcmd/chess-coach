@@ -5,8 +5,10 @@ import chess
 
 from app.drills import (popularity_branch, record_drill_outcome,
                         record_drill_presented, retrievability,
+                        reverify_drill_position,
                         select_dossier_drill)
 from app.memory import load_dossier
+from tests.conftest import FakeEngines
 
 
 def _after(*sans):
@@ -80,6 +82,37 @@ def test_drill_selector_skips_invalid_stale_fens():
 
     assert drill["fen"] == chess.STARTING_FEN
     assert drill["error_category"] == "hanging_piece"
+
+
+def test_drill_selector_skips_positions_rejected_by_verifier():
+    dossier = {
+        "recent_positions": [
+            {"fen": chess.STARTING_FEN, "error_category": "ignored_threat"},
+            {"fen": _after("e4"), "error_category": "hanging_piece"},
+        ],
+        "error_frequencies": {"ignored_threat": 10, "hanging_piece": 1},
+    }
+
+    drill = select_dossier_drill(
+        dossier,
+        verifier=lambda pos: None if pos["error_category"] == "ignored_threat"
+        else {"engine_verified": True},
+    )
+
+    assert drill["error_category"] == "hanging_piece"
+    assert drill["verification"] == {"engine_verified": True}
+
+
+def test_reverify_drill_position_records_local_engine_metadata():
+    engines = FakeEngines(evals={chess.STARTING_FEN: 42}, bests={chess.STARTING_FEN: "e2e4"})
+
+    verification = reverify_drill_position({"fen": chess.STARTING_FEN}, engines)
+
+    assert verification["engine_verified"] is True
+    assert verification["source"] == "local_quick_eval"
+    assert verification["eval_cp_white"] == 42
+    assert verification["best_move_san"] == "e4"
+    assert "not narrate" in verification["usage"]
 
 
 def test_popularity_branch_uses_probability_not_severity():
