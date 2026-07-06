@@ -372,11 +372,39 @@ def apply_claim_gate(text: str, boards: list, level: int) -> tuple:
     return text, findings
 
 
+def _claim_gate_excerpt(text: str, limit: int = 240) -> str:
+    compact = re.sub(r"\s+", " ", text or "").strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit - 1].rstrip() + "…"
+
+
+def _record_claim_gate_event(state, *, level: int, boards: list, before: str, after: str, findings: list) -> None:
+    if not findings or not hasattr(state, "claim_gate_events"):
+        return
+    event = {
+        "level": level,
+        "mode": "shadow" if level < 1 else "redacted",
+        "redacted": level >= 1,
+        "tokens": [f.get("token") for f in findings if f.get("token")],
+        "findings": [dict(f) for f in findings],
+        "candidate_board_count": len(boards),
+        "game_id": getattr(state, "current_game_id", None),
+        "move_index": getattr(state, "move_index", None),
+        "before_excerpt": _claim_gate_excerpt(before),
+        "after_excerpt": _claim_gate_excerpt(after),
+    }
+    state.claim_gate_events.append(event)
+    state.claim_gate_events[:] = state.claim_gate_events[-50:]
+
+
 def _run_claim_gate(output_text: str, state, config) -> str:
     level = int(getattr(config, "claim_gate_level", 0)) if config else 0
     boards = candidate_boards(state)
     new_text, findings = apply_claim_gate(output_text, boards, level)
     if findings:
+        _record_claim_gate_event(state, level=level, boards=boards,
+                                 before=output_text, after=new_text, findings=findings)
         tokens = ", ".join(f["token"] for f in findings)
         trace(f"claim-gate (L{level}): {len(findings)} illegal-move finding(s): {tokens} "
               + ("[shadow: not modified]" if level < 1 else "[redacted]"))

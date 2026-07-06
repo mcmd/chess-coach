@@ -20,6 +20,7 @@ class SessionState:
     pending_unmatched_review: dict = field(default_factory=dict)  # P0-4c: review awaiting POV/consent
     review_context: dict = field(default_factory=dict)      # ownership, adopted POV, dossier consent
     claim_gate_extra_fens: list[str] = field(default_factory=list)  # transient tool-returned line positions
+    claim_gate_events: list[dict] = field(default_factory=list)  # structured L1/shadow observability
     # Board diagram theme (set from config at startup; defaults = lichess green).
     board_light_color: str = "#eeeed2"
     board_dark_color: str = "#769656"
@@ -51,6 +52,7 @@ class TimelineManager:
         self.state.pending_unmatched_review.clear()
         self.state.review_context.clear()
         self.state.claim_gate_extra_fens.clear()
+        self.state.claim_gate_events.clear()
         self.pgn_nodes = []
 
     def load_game(self, game: chess.pgn.Game):

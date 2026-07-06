@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import chess
 
 from app.agent_loop import (run_agent_turn, find_illegal_moves, apply_claim_gate,
-                            candidate_boards, _record_tool_candidate_fens)
+                            candidate_boards, _record_tool_candidate_fens,
+                            _run_claim_gate)
 from app.state import SessionState, TimelineManager
 from app.tools import CoachTools
 from tests.conftest import FakeEngines
@@ -44,6 +45,53 @@ def test_claim_gate_shadow_is_log_only():
 def test_claim_gate_level1_redacts_illegal_move():
     out, findings = apply_claim_gate("Try Qh5 here.", [chess.Board()], level=1)
     assert "Qh5" not in out and "unverified move" in out and findings
+
+
+def test_claim_gate_records_structured_l1_observability():
+    state = SessionState()
+    state.current_game_id = "game-1"
+    state.move_index = 3
+    config = SimpleNamespace(claim_gate_level=1)
+
+    out = _run_claim_gate("Try Qh5 here.", state, config)
+
+    assert "unverified move" in out
+    assert len(state.claim_gate_events) == 1
+    event = state.claim_gate_events[0]
+    assert event["level"] == 1
+    assert event["mode"] == "redacted"
+    assert event["redacted"] is True
+    assert event["tokens"] == ["Qh5"]
+    assert event["candidate_board_count"] >= 1
+    assert event["game_id"] == "game-1"
+    assert event["move_index"] == 3
+    assert "Qh5" in event["before_excerpt"]
+    assert "unverified move" in event["after_excerpt"]
+
+
+def test_claim_gate_records_shadow_observability_without_redacting():
+    state = SessionState()
+    config = SimpleNamespace(claim_gate_level=0)
+
+    out = _run_claim_gate("Try Qh5 here.", state, config)
+
+    assert out == "Try Qh5 here."
+    assert state.claim_gate_events[0]["mode"] == "shadow"
+    assert state.claim_gate_events[0]["redacted"] is False
+    assert state.claim_gate_events[0]["before_excerpt"] == "Try Qh5 here."
+    assert state.claim_gate_events[0]["after_excerpt"] == "Try Qh5 here."
+
+
+def test_claim_gate_observability_is_capped():
+    state = SessionState()
+    config = SimpleNamespace(claim_gate_level=1)
+
+    for i in range(55):
+        _run_claim_gate(f"Try Qh5 here {i}.", state, config)
+
+    assert len(state.claim_gate_events) == 50
+    assert state.claim_gate_events[0]["before_excerpt"].endswith("5.")
+    assert state.claim_gate_events[-1]["before_excerpt"].endswith("54.")
 
 
 def test_candidate_boards_includes_board_and_agenda():
