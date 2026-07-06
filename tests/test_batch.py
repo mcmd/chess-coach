@@ -326,6 +326,23 @@ def test_dossier_batch_update_tracks_trend_and_status(stub_config):
     assert len(d["batch_trends"]) == 4
 
 
+def test_dossier_batch_update_tracks_recent_lifetime_and_slipping(stub_config):
+    f = stub_config.dossier_file
+    update_dossier_with_batch(f, _summary("b1", 0.4))
+    update_dossier_with_batch(f, _summary("b2", 0.9))
+
+    p = load_dossier(f)["recurring_patterns"][0]
+
+    assert p["status"] == "slipping"
+    assert p["previous_rate"] == 0.4
+    assert len(p["recurrence_history"]) == 2
+    assert p["lifetime_moments"] == 13
+    assert p["lifetime_games"] == 20
+    assert p["lifetime_rate"] == 0.65
+    assert p["recent_rate"] == 0.65
+    assert p["previous_recent_rate"] == 0.4
+
+
 def test_dossier_context_surfaces_batch_patterns(stub_config):
     from app.prompts import get_dossier_context
     update_dossier_with_batch(stub_config.dossier_file, _summary("b1", 1.4))
@@ -333,6 +350,18 @@ def test_dossier_context_surfaces_batch_patterns(stub_config):
     assert "Confirmed recurring patterns" in ctx and "T (14 moments across 5 games" in ctx
     update_dossier_with_batch(stub_config.dossier_file, _summary("b2", 0.5))
     assert "IMPROVING" in get_dossier_context(stub_config.dossier_file)
+
+
+def test_dossier_context_surfaces_slipping_transfer_trend(stub_config):
+    from app.prompts import get_dossier_context
+    update_dossier_with_batch(stub_config.dossier_file, _summary("b1", 0.4))
+    update_dossier_with_batch(stub_config.dossier_file, _summary("b2", 0.9))
+
+    ctx = get_dossier_context(stub_config.dossier_file)
+
+    assert "SLIPPING" in ctx
+    assert "re-emerging leak" in ctx
+    assert "recent 0.65/game vs lifetime 0.65/game" in ctx
 
 
 def _slide_summary(batch_id, rate, present=True):

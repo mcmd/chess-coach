@@ -17,6 +17,9 @@ MAX_HISTORY_MESSAGES = 80
 # falls below this lower multiple of baseline, and hold it in the dead-band. (issue #4)
 SLIDE_ABOVE_BASELINE_OFF = 1.2
 DRILL_RECENT_WINDOW = 10
+PATTERN_RECENT_BATCHES = 3
+PATTERN_IMPROVING_FACTOR = 0.6
+PATTERN_SLIPPING_FACTOR = 1.4
 
 
 def _atomic_write_json(path: str, data) -> None:
@@ -328,6 +331,43 @@ def drill_practice_summary(dossier: dict, limit: int = 3) -> list:
     return summaries[:limit]
 
 
+def _pattern_recurrence_fields(prev: dict | None, pat: dict, batch_summary: dict,
+                               today: str) -> dict:
+    history = list((prev or {}).get("recurrence_history") or [])
+    current = {
+        "date": today,
+        "batch_id": batch_summary.get("batch_id"),
+        "games": int(batch_summary.get("games") or 0),
+        "moments": int(pat.get("count") or 0),
+        "rate": pat.get("rate"),
+    }
+    history.append(current)
+    history = history[-12:]
+
+    lifetime_games = sum(int(h.get("games") or 0) for h in history)
+    lifetime_moments = sum(int(h.get("moments") or 0) for h in history)
+    recent = history[-PATTERN_RECENT_BATCHES:]
+    recent_games = sum(int(h.get("games") or 0) for h in recent)
+    recent_moments = sum(int(h.get("moments") or 0) for h in recent)
+    previous_recent = history[:-1][-PATTERN_RECENT_BATCHES:]
+    previous_recent_games = sum(int(h.get("games") or 0) for h in previous_recent)
+    previous_recent_moments = sum(int(h.get("moments") or 0) for h in previous_recent)
+
+    def rate(moments, games):
+        return round(moments / games, 3) if games else None
+
+    return {
+        "recurrence_history": history,
+        "lifetime_moments": lifetime_moments,
+        "lifetime_games": lifetime_games,
+        "lifetime_rate": rate(lifetime_moments, lifetime_games),
+        "recent_moments": recent_moments,
+        "recent_games": recent_games,
+        "recent_rate": rate(recent_moments, recent_games),
+        "previous_recent_rate": rate(previous_recent_moments, previous_recent_games),
+    }
+
+
 def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
     """Distill a batch run into the long-term player model. Only pattern
     summaries enter the dossier — raw per-moment findings stay in the batch
@@ -355,9 +395,13 @@ def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
             "status": "active",
             "missed_batches": 0,
         }
+        entry.update(_pattern_recurrence_fields(prev, pat, batch_summary, today))
         if (entry["previous_rate"] and entry["rate"] is not None
-                and entry["rate"] <= entry["previous_rate"] * 0.6):
+                and entry["rate"] <= entry["previous_rate"] * PATTERN_IMPROVING_FACTOR):
             entry["status"] = "improving"
+        elif (entry["previous_rate"] and entry["rate"] is not None
+              and entry["rate"] >= entry["previous_rate"] * PATTERN_SLIPPING_FACTOR):
+            entry["status"] = "slipping"
         drill_summary = drill_summary_for_pattern(dossier, entry)
         if drill_summary:
             entry["drill_practice"] = drill_summary

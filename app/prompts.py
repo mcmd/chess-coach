@@ -30,7 +30,7 @@ def get_dossier_context(dossier_file: str) -> str:
         context += (f"\nError-typicality trend (improvement shows as FEWER peer-common errors "
                     f"over time — mention progress when you see it): {trend}")
     live = [p for p in d.get("recurring_patterns", [])
-            if p.get("status") in ("active", "improving")][:3]
+            if p.get("status") in ("active", "improving", "slipping")][:3]
     if live:
         pat_lines = []
         for p in live:
@@ -38,6 +38,11 @@ def get_dossier_context(dossier_file: str) -> str:
                     f"{p.get('games_seen')} games")
             if p.get("status") == "improving":
                 line += "; IMPROVING since the previous batch — praise this progress honestly"
+            if p.get("recent_rate") is not None and p.get("lifetime_rate") is not None:
+                line += (f"; recent {p.get('recent_rate'):.2f}/game vs "
+                         f"lifetime {p.get('lifetime_rate'):.2f}/game")
+            if p.get("status") == "slipping":
+                line += "; SLIPPING since the previous batch - treat as a re-emerging leak, not a moral failure"
             practice = p.get("drill_practice") or {}
             if practice:
                 line += (f"; practice: {practice.get('recent_successes', 0)}/"
