@@ -311,6 +311,9 @@ def candidate_boards(state) -> list:
         for f in (getattr(r, "fen_before", None), getattr(r, "fen_after", None)):
             if f:
                 fens.add(f)
+        prev_fen = _previous_move_origin_fen(r)
+        if prev_fen:
+            fens.add(prev_fen)
         for f in _line_position_fens(getattr(r, "fen_before", None), getattr(r, "best_line", None)):
             fens.add(f)
         for f in _line_position_fens(getattr(r, "fen_after", None), getattr(r, "punishment_line", None)):
@@ -321,6 +324,24 @@ def candidate_boards(state) -> list:
         except ValueError:
             pass
     return boards
+
+
+def _previous_move_origin_fen(record) -> str | None:
+    """Board where record.prev_move_san was legal.
+
+    Orientation text often says "Black has just played 19...Rfe8". The agenda
+    FEN is after that move, so include the position before the previous move.
+    """
+    history = list(getattr(record, "history_uci", None) or [])
+    if not history or not getattr(record, "prev_move_san", None):
+        return None
+    try:
+        board = chess.Board()
+        for uci in history[:-1]:
+            board.push(chess.Move.from_uci(uci))
+        return board.fen()
+    except (ValueError, TypeError):
+        return None
 
 
 def _line_position_fens(start_fen: str, san_line: list) -> list:
@@ -356,8 +377,32 @@ def find_illegal_moves(text: str, boards: list) -> list:
     if not boards:
         return []  # no known positions to check against — never flag blind
     clean = _BOARD_TOKEN_RE.sub(" ", text)
+    clean = _mask_non_claim_move_mentions(clean)
     return [san for san in san_mentions(clean)
             if not any(_parses(b, san) for b in boards)]
+
+
+def _mask_non_claim_move_mentions(text: str) -> str:
+    """Mask square references and invalid-move discussion before SAN checks."""
+    if not text:
+        return ""
+    square_context = (
+        r"\b(?:on|onto|to|from|at|square|squares|pawn|piece|king|queen|rook|bishop|"
+        r"knight|file|rank)\s+"
+    )
+    masked = re.sub(square_context + r"`?[a-h][1-8]`?", lambda m: " " * len(m.group(0)),
+                    text, flags=re.IGNORECASE)
+    negative_context = (
+        r"\b(?:not|isn't|isnt|wasn't|wasnt|doesn't|doesnt|don't|dont|can't|cant|"
+        r"cannot|couldn't|couldnt|illegal|invalid|no)\b"
+        r"[^.\n]{0,80}?"
+    )
+    move_core = (
+        r"`?(?:O-O-O|O-O|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?|"
+        r"[a-h]x?[a-h][1-8](?:=[QRBN])?[+#]?)`?"
+    )
+    return re.sub(negative_context + move_core, lambda m: " " * len(m.group(0)),
+                  masked, flags=re.IGNORECASE)
 
 
 def apply_claim_gate(text: str, boards: list, level: int) -> tuple:

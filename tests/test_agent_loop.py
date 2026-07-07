@@ -32,6 +32,12 @@ def test_find_illegal_moves_ignores_board_tokens():
     assert find_illegal_moves("Here [[BOARD_a1b2c3d4]] then e4.", [chess.Board()]) == []
 
 
+def test_find_illegal_moves_ignores_square_and_invalid_move_explanations():
+    text = ("Black doesn't actually have a pawn on e5 to play exd4 here, "
+            "and no pawn can move to d4 either.")
+    assert find_illegal_moves(text, [chess.Board()]) == []
+
+
 def test_find_illegal_moves_never_flags_without_known_positions():
     assert find_illegal_moves("Qh5 Nf3 Zz9", []) == []
 
@@ -104,6 +110,21 @@ def test_candidate_boards_includes_board_and_agenda():
                                               student_color="white", agenda_plies=[0]))
     fens = {b.fen() for b in candidate_boards(state)}
     assert chess.Board().fen() in fens and _AFTER_E4E5 in fens
+
+
+def test_candidate_boards_include_previous_move_origin_for_orientation_text():
+    from app.review import GameReview, MoveRecord
+    rec = MoveRecord(ply=1, number=1, color="black", san="e5", uci="e7e5",
+                     fen_before=_AFTER_E4E5, fen_after=_AFTER_E4E5,
+                     eval_before_cp=0, eval_after_cp=0, drop_pct=0.0, quality="best",
+                     prev_move_san="e5", history_uci=["e2e4", "e7e5"])
+    state = SimpleNamespace(board=chess.Board(),
+                            review=GameReview(headers={}, records=[rec],
+                                              student_color="white", agenda_plies=[0]))
+
+    boards = candidate_boards(state)
+
+    assert find_illegal_moves("Black has just played e5.", boards) == []
 
 
 def test_candidate_boards_include_verified_line_positions_for_l1_gate():
