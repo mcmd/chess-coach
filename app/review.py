@@ -39,16 +39,19 @@ def cp_to_win_pct(cp: float) -> float:
 def classify_move(drop_pct: float, is_best: bool, is_only: bool, is_forced: bool) -> str:
     if is_forced:
         return "forced"
-    if is_only:
-        return "only_move"
-    if is_best:
-        return "best"
+    # The calibrated win%-loss stream owns severity. Local best-move flags can
+    # disagree with PGN evals or shallow searches; they must not relabel a large
+    # measured loss as praise.
     if drop_pct >= 30:
         return "blunder"
     if drop_pct >= 20:
         return "mistake"
     if drop_pct >= 10:
         return "inaccuracy"
+    if is_only:
+        return "only_move"
+    if is_best:
+        return "best"
     if drop_pct <= 2:
         return "good"
     return "ok"

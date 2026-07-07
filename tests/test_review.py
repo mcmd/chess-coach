@@ -29,6 +29,15 @@ def test_classify_thresholds():
     assert classify_move(50, False, False, True) == "forced"
 
 
+def test_classify_severity_overrides_best_move_flags():
+    # Local best-move flags can disagree with the calibrated eval stream
+    # (especially when a shallow local best meets Lichess PGN evals). The coach
+    # must not produce contradictions like "31.Kh1 (best, -33.7 win%)".
+    assert classify_move(33.7, True, False, False) == "blunder"
+    assert classify_move(21.0, True, True, False) == "mistake"
+    assert classify_move(12.0, False, True, False) == "inaccuracy"
+
+
 def test_time_flags():
     assert time_flag_for("blunder", 4, 300, False) == "hope_chess"
     assert time_flag_for("blunder", 4, 15, False) == "time_scramble"
@@ -84,6 +93,34 @@ def test_review_finds_the_blunder_and_builds_agenda():
     assert review.agenda_plies == [4]
     assert blunder.is_agenda
     assert blunder.maia_played_prob == 0.45  # the played move was Maia's top pick
+
+
+def test_review_pgn_eval_severity_overrides_shallow_best_flag():
+    # Regression for live game 2dtDqQgRy2OD: a shallow local best flag disagreed
+    # with the calibrated PGN eval stream, producing "best, -33.7 win%".
+    pgn = """[Event "Test"]
+[White "mcmd"]
+[Black "Opponent"]
+[WhiteElo "1150"]
+[BlackElo "1200"]
+[Result "0-1"]
+
+1. e4 { [%eval 0.00] } e5 { [%eval 0.00] } 2. Qh5 { [%eval 0.00] } Nc6 { [%eval 0.00] } 3. Qxf7+ { [%eval -7.00] } Kxf7 { [%eval -7.00] } 0-1
+"""
+    game = chess.pgn.read_game(io.StringIO(pgn))
+    board = game.board()
+    fens = []
+    for node in game.mainline():
+        fens.append(board.fen())
+        board.push(node.move)
+
+    engines = FakeEngines(bests={fens[4]: "h5f7"})
+    review = review_game(pgn, engines, _Cfg(), with_maia=False)
+    record = review.records[4]
+
+    assert record.san == "Qxf7+"
+    assert record.drop_pct >= 30
+    assert record.quality == "blunder"
 
 
 def test_digest_contains_agenda_and_withholds_answer():
