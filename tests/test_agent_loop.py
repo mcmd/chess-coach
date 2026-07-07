@@ -38,6 +38,16 @@ def test_find_illegal_moves_ignores_square_and_invalid_move_explanations():
     assert find_illegal_moves(text, [chess.Board()]) == []
 
 
+def test_find_illegal_moves_ignores_square_adjective_piece_references():
+    fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
+    text = ("Ne4 defends your passed pawn on d5. After Nxb5, Black gets pressure "
+            "against your d5 pawn.")
+    assert find_illegal_moves(text, [chess.Board(fen)]) == []
+    out, findings = apply_claim_gate(text, [chess.Board(fen)], level=1)
+    assert findings == []
+    assert out == text
+
+
 def test_find_illegal_moves_never_flags_without_known_positions():
     assert find_illegal_moves("Qh5 Nf3 Zz9", []) == []
 

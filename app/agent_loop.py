@@ -392,6 +392,12 @@ def _mask_non_claim_move_mentions(text: str) -> str:
     )
     masked = re.sub(square_context + r"`?[a-h][1-8]`?", lambda m: " " * len(m.group(0)),
                     text, flags=re.IGNORECASE)
+    piece_context = (
+        r"\b`?[a-h][1-8]`?(?:-|\s+)"
+        r"(?:pawn|piece|king|queen|rook|bishop|knight|file|rank|square)\b"
+    )
+    masked = re.sub(piece_context, lambda m: " " * len(m.group(0)),
+                    masked, flags=re.IGNORECASE)
     negative_context = (
         r"\b(?:not|isn't|isnt|wasn't|wasnt|doesn't|doesnt|don't|dont|can't|cant|"
         r"cannot|couldn't|couldnt|illegal|invalid|no)\b"
