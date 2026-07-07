@@ -678,6 +678,54 @@ def test_correct_threat_identified(stub_config):
     assert result["reveal_allowed"] is True
 
 
+def test_student_answer_routes_opponent_only_move_to_threat_grading(stub_config):
+    from app.review import GameReview, MoveRecord
+    fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
+    tools, state = make_tools(stub_config, FakeEngines(threats={fen: [
+        {"threat": "opponent gains space and attacks the knight", "threat_line": "e4"},
+    ]}))
+    record = MoveRecord(
+        ply=38, number=20, color="white", san="Nxb5", uci="c3b5",
+        fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-100,
+        drop_pct=18.0, quality="inaccuracy",
+        initial_question="White to move. What candidate moves would you consider, and what is Black threatening?",
+    )
+    state.review = GameReview(headers={}, records=[record], student_color="white", agenda_plies=[0])
+    state.lesson_metadata = {"last_agenda_index": 0, "lesson_status": "awaiting_answer"}
+
+    result = tools.evaluate_student_answer(fen, "e4")
+
+    assert result["verdict"] == "correct_threat"
+    assert result["routed_from"] == "evaluate_student_answer"
+    assert result["interpreted_as"] == "opponent_threat"
+    assert result["threat_line"] == "e4"
+    assert state.socratic_attempts.get(f"threat:{fen}") == 1
+    assert state.socratic_attempts.get(fen) is None
+
+
+def test_explicit_own_illegal_move_does_not_route_to_threat_grading(stub_config):
+    from app.review import GameReview, MoveRecord
+    fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
+    tools, state = make_tools(stub_config, FakeEngines(threats={fen: [
+        {"threat": "opponent gains space and attacks the knight", "threat_line": "e4"},
+    ]}))
+    record = MoveRecord(
+        ply=38, number=20, color="white", san="Nxb5", uci="c3b5",
+        fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-100,
+        drop_pct=18.0, quality="inaccuracy",
+        initial_question="White to move. What candidate moves would you consider, and what is Black threatening?",
+    )
+    state.review = GameReview(headers={}, records=[record], student_color="white", agenda_plies=[0])
+    state.lesson_metadata = {"last_agenda_index": 0, "lesson_status": "awaiting_answer"}
+
+    result = tools.evaluate_student_answer(fen, "I would play e4")
+
+    assert result["verdict"] == "illegal"
+    assert "routed_from" not in result
+    assert state.socratic_attempts.get(fen) == 1
+    assert state.socratic_attempts.get(f"threat:{fen}") is None
+
+
 def test_wrong_threat_withheld_then_revealed(stub_config):
     tools, _ = make_tools(stub_config, _threat_engines())
     first = tools.evaluate_threat_answer(THREAT_FEN, "a5")

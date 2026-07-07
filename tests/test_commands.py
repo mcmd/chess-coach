@@ -626,6 +626,45 @@ def test_single_move_answer_gets_no_note(stub_config):
     assert "multiple legal candidate moves" not in result.prompt
 
 
+def test_opponent_only_move_answer_gets_threat_routing_note(stub_config):
+    from app.review import GameReview, MoveRecord
+    fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
+    proc, state, _ = make_processor(stub_config)
+    record = MoveRecord(
+        ply=38, number=20, color="white", san="Nxb5", uci="c3b5",
+        fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-100,
+        drop_pct=18.0, quality="inaccuracy",
+        initial_question="White to move. What candidate moves would you consider, and what is Black threatening?",
+    )
+    state.review = GameReview(headers={}, records=[record], student_color="white", agenda_plies=[0])
+    state.lesson_metadata = {"last_agenda_index": 0, "lesson_status": "awaiting_answer"}
+
+    result = proc.process("e4")
+
+    assert "legal only for the opponent" in result.prompt
+    assert "evaluate_threat_answer" in result.prompt
+    assert "threat_move_san='e4'" in result.prompt
+    assert "Do NOT call evaluate_student_answer" in result.prompt
+
+
+def test_explicit_own_illegal_move_gets_no_threat_routing_note(stub_config):
+    from app.review import GameReview, MoveRecord
+    fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
+    proc, state, _ = make_processor(stub_config)
+    record = MoveRecord(
+        ply=38, number=20, color="white", san="Nxb5", uci="c3b5",
+        fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-100,
+        drop_pct=18.0, quality="inaccuracy",
+        initial_question="White to move. What candidate moves would you consider, and what is Black threatening?",
+    )
+    state.review = GameReview(headers={}, records=[record], student_color="white", agenda_plies=[0])
+    state.lesson_metadata = {"last_agenda_index": 0, "lesson_status": "awaiting_answer"}
+
+    result = proc.process("I would play e4")
+
+    assert "legal only for the opponent" not in result.prompt
+
+
 def test_no_note_outside_lesson_or_sparring_context(stub_config):
     proc, state, _ = make_processor(stub_config)
     result = proc.process("should I study e4 or d4 openings?")

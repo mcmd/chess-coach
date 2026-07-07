@@ -18,7 +18,7 @@ from app.importer import import_configured_recent_games, import_local_pgn_file, 
 from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata,
                         record_self_assessment, record_session_takeaway,
                         update_dossier, update_dossier_with_batch)
-from app.notation import legal_san_mentions
+from app.notation import legal_san_mentions, san_mentions
 from app.planner import TeachingPlan, _normalize_text, plan_free_text_turn
 from app.rating import current_rating_enrichment, rating_offer_note
 from app.review import adopt_review_pov, review_game, attach_board_tokens
@@ -158,6 +158,7 @@ class CommandProcessor:
         if plan.intent == "close_with_takeaway":
             planned += self._takeaway_note()
         return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
+                             + self._opponent_threat_routing_note(text)
                              + self._give_up_note(text) + self._pending_diagnosis_note())
 
     # ------------------------------------------------------------------
@@ -719,6 +720,68 @@ class CommandProcessor:
                 "(e.g. 'X is better'); if they did not commit to one, do NOT grade — ask which ONE "
                 "they choose. NEVER pick the best candidate for them. If you did not ask a "
                 "find-the-move question, ignore this note.]")
+
+    def _opponent_threat_routing_note(self, text: str) -> str:
+        """Route terse opponent-only SAN answers in two-part agenda prompts.
+
+        Observed live: the agenda prompt asked for White candidate moves and
+        Black's threat; the student answered "e4". That is illegal for White in
+        the position but legal for Black after a null move, so treating it as a
+        White candidate produced false feedback before the student clarified.
+        """
+        record = self._active_unresolved_agenda_record()
+        if not record:
+            return ""
+        board = chess.Board(record.fen_before)
+        if board.is_check() or legal_san_mentions(board, text):
+            return ""
+        if self._frames_as_own_candidate(text):
+            return ""
+        mentions = san_mentions(text)
+        if len(mentions) != 1:
+            return ""
+        probe = board.copy(stack=False)
+        probe.push(chess.Move.null())
+        opponent_mentions = legal_san_mentions(probe, text)
+        if len(opponent_mentions) != 1:
+            return ""
+        threat = opponent_mentions[0]
+        return (f"\n[Backend: the student's answer `{threat}` is legal only for the opponent, "
+                "not for the side to move. The current agenda prompt asks what the opponent is "
+                f"threatening, so treat this as a threat answer: call evaluate_threat_answer("
+                f"fen='{record.fen_before}', threat_move_san='{threat}'). Do NOT call "
+                "evaluate_student_answer or tell the student it is illegal as their move unless "
+                "they explicitly framed it as their own candidate move.]")
+
+    def _active_unresolved_agenda_record(self):
+        if not self.state.review:
+            return None
+        meta = self.state.lesson_metadata or {}
+        if meta.get("lesson_status") in ("lesson_complete", "awaiting_diagnosis"):
+            return None
+        agenda = self.state.review.agenda
+        idx = int(meta.get("last_agenda_index") or 0)
+        if not 0 <= idx < len(agenda):
+            return None
+        record = agenda[idx]
+        if any(d.get("fen") == record.fen_before for d in self.state.diagnostics):
+            return None
+        question_text = " ".join(
+            [record.initial_question or ""]
+            + [str(v) for v in (record.question_ladder or {}).values()]
+        ).lower()
+        if "threat" not in question_text:
+            return None
+        return record
+
+    _OWN_CANDIDATE_RE = re.compile(
+        r"\b(?:i|we|white|black)\s*(?:would|will|want|can|could|should|try|play|move|choose|go)\b|"
+        r"\b(?:my|our|white'?s|black'?s)\s+move\b|"
+        r"\b(?:candidate|answer)\s+is\b",
+        re.IGNORECASE)
+
+    def _frames_as_own_candidate(self, text: str) -> bool:
+        return bool(self._OWN_CANDIDATE_RE.search(text or ""))
 
     _GIVE_UP_RE = re.compile(
         r"\b(?:i\s*(?:don'?t|do\s*not)\s*know|no\s+idea|i\s*give\s*up|idk|not\s+a\s+clue)\b",

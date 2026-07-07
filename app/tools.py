@@ -270,6 +270,17 @@ class CoachTools:
         try:
             move = board.parse_san(student_move_san)
         except ValueError:
+            threat_san = self._opponent_only_threat_answer(board, student_move_san, fen)
+            if threat_san:
+                result = self.evaluate_threat_answer(fen, threat_san)
+                result["routed_from"] = "evaluate_student_answer"
+                result["interpreted_as"] = "opponent_threat"
+                result["routing_note"] = (
+                    "The student's answer was illegal for the side to move but legal for the "
+                    "opponent after a null move in a threat-aware agenda prompt, so it was "
+                    "graded as an opponent threat instead of an illegal candidate move."
+                )
+                return result
             attempts[fen] = attempts.get(fen, 0) + 1
             n = attempts[fen]
             result = {"verdict": "illegal",
@@ -394,6 +405,43 @@ class CoachTools:
         self._record_active_drill_outcome(fen, result)
         self._persist_lesson_progress(fen, "awaiting_diagnosis" if reveal else "awaiting_answer")
         return result
+
+    def _opponent_only_threat_answer(self, board: chess.Board, text: str, fen: str) -> str | None:
+        """If a wrong-tool call submits an opponent-only SAN in a threat prompt,
+        return the normalized opponent SAN so evaluate_student_answer can route
+        to threat grading instead of falsely marking it as an illegal student
+        move."""
+        record = self._agenda_record_for_fen(fen)
+        if not record or board.is_check():
+            return None
+        question_text = " ".join(
+            [getattr(record, "initial_question", None) or ""]
+            + [str(v) for v in (getattr(record, "question_ladder", None) or {}).values()]
+        ).lower()
+        if "threat" not in question_text:
+            return None
+        if self._frames_as_own_candidate(text):
+            return None
+        if _legal_san_mentions(board, text):
+            return None
+        mentions = _san_mentions(text)
+        if len(mentions) != 1:
+            return None
+        probe = board.copy(stack=False)
+        probe.push(chess.Move.null())
+        opponent_mentions = _legal_san_mentions(probe, text)
+        if len(opponent_mentions) != 1:
+            return None
+        return opponent_mentions[0]
+
+    _OWN_CANDIDATE_RE = re.compile(
+        r"\b(?:i|we|white|black)\s*(?:would|will|want|can|could|should|try|play|move|choose|go)\b|"
+        r"\b(?:my|our|white'?s|black'?s)\s+move\b|"
+        r"\b(?:candidate|answer)\s+is\b",
+        re.IGNORECASE)
+
+    def _frames_as_own_candidate(self, text: str) -> bool:
+        return bool(self._OWN_CANDIDATE_RE.search(text or ""))
 
     def _record_active_drill_outcome(self, fen: str, result: dict) -> None:
         drill = getattr(self.state, "active_dossier_drill", None) or {}
