@@ -5,6 +5,7 @@ import chess.pgn
 
 from app.review import (
     cp_to_win_pct, classify_move, time_flag_for, review_game,
+    _initial_question,
 )
 from tests.conftest import FakeEngines
 
@@ -131,6 +132,15 @@ def test_digest_contains_agenda_and_withholds_answer():
     assert "Qxf7+" in digest
     assert "WITHHELD ANSWER" in digest
     assert "evaluate_student_answer" in digest
+
+
+def test_initial_question_switches_template_when_side_is_in_check():
+    board = chess.Board("4k3/8/8/8/8/8/8/4K2r w - - 0 1")
+
+    question = _initial_question(board)
+
+    assert question == "White to move. You're in check - what are your options, and which keeps your winning chances?"
+    assert "threatening" not in question
 
 
 def test_forced_recapture_classified_forced():

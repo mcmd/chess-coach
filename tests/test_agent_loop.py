@@ -6,7 +6,10 @@ import chess
 
 from app.agent_loop import (run_agent_turn, find_illegal_moves, apply_claim_gate,
                             candidate_boards, _record_tool_candidate_fens,
-                            _run_claim_gate, _run_ambiguous_piece_lint)
+                            _run_claim_gate, _run_ambiguous_piece_lint,
+                            _run_grader_verdict_lint,
+                            _run_verdict_contradiction_lint,
+                            _run_deliberation_lint)
 from app.notation import ambiguous_piece_references
 from app.state import SessionState, TimelineManager
 from app.tools import CoachTools
@@ -139,6 +142,69 @@ def test_claim_gate_observability_is_capped():
     assert len(state.claim_gate_events) == 50
     assert state.claim_gate_events[0]["before_excerpt"].endswith("5.")
     assert state.claim_gate_events[-1]["before_excerpt"].endswith("54.")
+
+
+def test_grader_verdict_lint_flags_unreported_verdict():
+    state = SessionState()
+    state._turn_grading_results = [
+        {"tool": "evaluate_threat_answer", "args": {"threat_move_san": "Qg6"},
+         "result": {"verdict": "not_a_real_threat", "reveal_allowed": True}}
+    ]
+
+    _run_grader_verdict_lint("Let's move on to the next critical moment.", state)
+
+    assert state.grader_verdict_events
+    assert state.grader_verdict_events[0]["type"] == "grader_verdict_unreported"
+    assert state.grader_verdict_events[0]["verdict"] == "not_a_real_threat"
+
+
+def test_grader_verdict_lint_accepts_reported_verdict():
+    state = SessionState()
+    state._turn_grading_results = [
+        {"tool": "evaluate_student_answer", "args": {"student_move_san": "Rd4"},
+         "result": {"verdict": "best", "reveal_allowed": True}}
+    ]
+
+    _run_grader_verdict_lint("Yes, Rd4 is the best move here.", state)
+
+    assert state.grader_verdict_events == []
+
+
+def test_verdict_contradiction_lint_flags_praised_blunder():
+    from app.review import GameReview, MoveRecord
+    fen = "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26"
+    state = SessionState()
+    state.review = GameReview(headers={}, records=[
+        MoveRecord(ply=60, number=31, color="white", san="Kh1", uci="g2h1",
+                   fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-600,
+                   drop_pct=33.7, quality="blunder", best_move_san="Rd4")
+    ], student_color="white", agenda_plies=[0])
+
+    _run_verdict_contradiction_lint("31. Kh1 is the best move and holds the position.", state)
+
+    assert state.verdict_contradiction_events
+    assert state.verdict_contradiction_events[0]["claim"] == "praised_played_mistake"
+
+
+def test_deliberation_lint_flags_raw_thought_and_fake_checking():
+    state = SessionState()
+    state._turn_tool_names = []
+
+    _run_deliberation_lint("But wait, that's confusing. Let me check the engine line again.", state)
+
+    event_types = [event["type"] for event in state.deliberation_events]
+    assert "deliberation_marker" in event_types
+    assert "claimed_verification_without_tool" in event_types
+
+
+def test_deliberation_lint_allows_checking_language_after_tool_call():
+    state = SessionState()
+    state._turn_tool_names = ["analyze_position"]
+
+    _run_deliberation_lint("I checked the engine line and the point is Qxg4+.", state)
+
+    assert not any(event["type"] == "claimed_verification_without_tool"
+                   for event in state.deliberation_events)
 
 
 def test_candidate_boards_includes_board_and_agenda():

@@ -53,6 +53,16 @@ app/config.py        config.json + profiles + CLI args
 - **Student clarification questions take priority.** If the latest student turn asks
   a question, answer it from verified facts before probing, calling `submit_diagnosis`,
   or advancing to the next moment.
+- **WHY probes must be backend-authored.** If `evaluate_explanation` returns
+  `probe_question`, ask that question verbatim or near-verbatim and use only
+  `probe_facts`; do not invent the missing detail or a new conceptual distinction.
+  If the tool returns no `probe_question`, teach directly from the verified packet.
+- **Grader verdicts must be narrated.** After any grading tool returns, state the
+  verdict plainly before probing, closing a moment, or advancing. Do not bury or skip
+  `not_a_real_threat`, `best`, `wrong`, `illegal`, or similar verdicts.
+- **No raw deliberation or fake verification.** Never render phrases like "but wait"
+  or "that's confusing", and never claim to check/re-check an engine line unless a
+  tool was actually called in that turn.
 - **`submit_diagnosis` accepts only the closed taxonomy** in
   `app/tools.py::ERROR_TAXONOMY` — that is what makes the dossier aggregate.
 - **`TimelineManager.reset()` rewinds but keeps the loaded game**;

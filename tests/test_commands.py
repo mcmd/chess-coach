@@ -530,6 +530,26 @@ def test_p0_8_obedience_fixture_accepts_question_answered_before_redirect():
     assert assess_teaching_plan_obedience(plan, transcript, student_text=student) == []
 
 
+def test_burn_in_style_reference_accepts_clean_threat_grade_beat():
+    # 2026-06-13 burn-in shape reference: threat -> grade -> verified-line
+    # explanation -> habit -> clean transition. This predates explanation gating,
+    # so it is intentionally not a full flow contract.
+    plan = TeachingPlan(
+        intent="ask_socratic_question",
+        language="English",
+        withhold_answer=True,
+        socratic_redirect=True,
+    )
+    transcript = (
+        "Correct: Black is threatening Qxg4+, which would check your king and attack the rook. "
+        "The verified defensive move is Rd4, because the rook controls g4 along the fourth rank. "
+        "The habit is to check direct king threats before taking material. "
+        "Next, look at the position and name your candidate moves."
+    )
+
+    assert assess_teaching_plan_obedience(plan, transcript) == []
+
+
 def test_p0_8_wrap_up_records_verified_theme_takeaway(stub_config):
     from app.memory import load_dossier
     from app.review import GameReview, MoveRecord, ReviewTheme

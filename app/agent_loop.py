@@ -58,8 +58,11 @@ def _send_with_spinner(chat, payload):
 def run_agent_turn(chat, coach_tools, message) -> None:
     """Send `message`, execute any tool calls until the model stops asking,
     then render the final response."""
+    coach_tools.state.latest_user_text = message
     if hasattr(coach_tools.state, "claim_gate_extra_fens"):
         coach_tools.state.claim_gate_extra_fens.clear()
+    turn_grading_results = []
+    turn_tool_names = []
     response = _send_with_spinner(chat, message)
     full_text = ""
     rounds = 0
@@ -92,6 +95,7 @@ def run_agent_turn(chat, coach_tools, message) -> None:
         tool_parts = []
         for fn_call in f_calls:
             args_dict = dict(fn_call.args) if fn_call.args else {}
+            turn_tool_names.append(fn_call.name)
             console.print(TOOL_MESSAGES.get(fn_call.name, f"[dim cyan]↳ Executing {fn_call.name}...[/dim cyan]"))
             trace(f"tool call: {fn_call.name}({fmt_args(args_dict)})")
 
@@ -108,13 +112,21 @@ def run_agent_turn(chat, coach_tools, message) -> None:
             else:
                 result = {"error": f"Tool {fn_call.name} not found."}
             _record_tool_candidate_fens(coach_tools.state, fn_call.name, args_dict, result)
+            if fn_call.name in ("evaluate_student_answer", "evaluate_threat_answer", "evaluate_explanation"):
+                turn_grading_results.append({"tool": fn_call.name, "args": args_dict, "result": result})
             trace(f"tool result: {fn_call.name} in {time.monotonic() - started:.1f}s -> {_summarize_result(result)}")
 
             tool_parts.append(types.Part.from_function_response(name=fn_call.name, response={"result": result}))
 
         response = _send_with_spinner(chat, tool_parts)
 
+    coach_tools.state._turn_grading_results = turn_grading_results
+    coach_tools.state._turn_tool_names = turn_tool_names
     _render(full_text, coach_tools.state, getattr(coach_tools, "config", None))
+    if hasattr(coach_tools.state, "_turn_grading_results"):
+        coach_tools.state._turn_grading_results = []
+    if hasattr(coach_tools.state, "_turn_tool_names"):
+        coach_tools.state._turn_tool_names = []
     if hasattr(coach_tools.state, "claim_gate_extra_fens"):
         coach_tools.state.claim_gate_extra_fens.clear()
 
@@ -498,6 +510,119 @@ def _run_ambiguous_piece_lint(output_text: str, state) -> None:
                   f"{', '.join(finding.candidate_squares)}")
 
 
+def _event_append(state, attr: str, event: dict) -> None:
+    if not hasattr(state, attr):
+        return
+    events = getattr(state, attr)
+    events.append(event)
+    events[:] = events[-50:]
+
+
+_VERDICT_ACK_TOKENS = {
+    "correct_threat": ("correct", "yes", "spot on", "right", "threatening"),
+    "real_but_secondary_threat": ("secondary", "not the main", "not black's main", "legal", "real threat"),
+    "not_a_real_threat": ("not a real threat", "not the threat", "doesn't threaten", "does not threaten"),
+    "no_significant_threat_exists": ("no significant threat", "no immediate threat", "no forcing threat"),
+    "not_a_legal_opponent_move": ("not legal", "illegal", "not a legal reply"),
+    "best": ("best", "correct", "yes", "right"),
+    "excellent_alternative": ("excellent alternative", "good alternative"),
+    "reasonable_but_imprecise": ("reasonable", "imprecise"),
+    "inaccurate": ("inaccurate", "not quite"),
+    "wrong": ("wrong", "doesn't work", "does not work"),
+    "illegal": ("illegal", "not legal"),
+    "needs_commitment": ("which one", "commit", "choose one"),
+}
+
+
+def _verdict_acknowledged(text: str, verdict: str) -> bool:
+    lower = (text or "").lower()
+    return any(token in lower for token in _VERDICT_ACK_TOKENS.get(verdict, (str(verdict).lower(),)))
+
+
+def _run_grader_verdict_lint(output_text: str, state) -> None:
+    for item in getattr(state, "_turn_grading_results", []) or []:
+        result = item.get("result") or {}
+        verdict = result.get("verdict")
+        if not verdict or result.get("error"):
+            continue
+        if _verdict_acknowledged(output_text, verdict):
+            continue
+        _event_append(state, "grader_verdict_events", {
+            "type": "grader_verdict_unreported",
+            "tool": item.get("tool"),
+            "verdict": verdict,
+            "args": dict(item.get("args") or {}),
+            "game_id": getattr(state, "current_game_id", None),
+        })
+        trace(f"grader-verdict lint: verdict {verdict} from {item.get('tool')} was not acknowledged")
+
+
+def _move_mentioned_near_label(text: str, move: str, label_pattern: str) -> bool:
+    if not move:
+        return False
+    return bool(re.search(
+        rf"`?{re.escape(move)}`?[^.?!\n]{{0,80}}\b{label_pattern}\b|"
+        rf"\b{label_pattern}\b[^.?!\n]{{0,80}}`?{re.escape(move)}`?",
+        text,
+        flags=re.IGNORECASE,
+    ))
+
+
+def _run_verdict_contradiction_lint(output_text: str, state) -> None:
+    review = getattr(state, "review", None)
+    if not review:
+        return
+    for record in getattr(review, "agenda", []) or []:
+        bad_quality = getattr(record, "quality", None) in ("blunder", "mistake", "inaccuracy")
+        if bad_quality and _move_mentioned_near_label(output_text, record.san, r"(?:best|good|correct|holds)"):
+            _event_append(state, "verdict_contradiction_events", {
+                "type": "verdict_contradiction",
+                "move": record.san,
+                "move_label": record.move_label,
+                "verified_quality": record.quality,
+                "claim": "praised_played_mistake",
+            })
+            trace(f"verdict-contradiction lint: {record.san} praised despite {record.quality}")
+        if getattr(record, "best_move_san", None):
+            if _move_mentioned_near_label(output_text, record.best_move_san, r"(?:blunder|mistake|bad|wrong)"):
+                _event_append(state, "verdict_contradiction_events", {
+                    "type": "verdict_contradiction",
+                    "move": record.best_move_san,
+                    "move_label": record.best_move_label,
+                    "verified_quality": "best_move",
+                    "claim": "criticized_verified_best",
+                })
+                trace(f"verdict-contradiction lint: best move {record.best_move_san} was criticized")
+
+
+_DELIBERATION_RE = re.compile(
+    r"\b(?:but wait|wait,?\s+that'?s confusing|ah,?\s+i see|let me think|"
+    r"thinking out loud|scratch that)\b",
+    re.IGNORECASE,
+)
+_VERIFY_LANGUAGE_RE = re.compile(
+    r"\b(?:let me|i(?:'ll| will| need to)?)\s+(?:check|verify|re-check|recheck)\b|"
+    r"\b(?:checking|verifying|rechecking)\s+(?:the\s+)?(?:engine|line|position|variation)\b",
+    re.IGNORECASE,
+)
+
+
+def _run_deliberation_lint(output_text: str, state) -> None:
+    for match in _DELIBERATION_RE.finditer(output_text or ""):
+        _event_append(state, "deliberation_events", {
+            "type": "deliberation_marker",
+            "marker": match.group(0),
+            "game_id": getattr(state, "current_game_id", None),
+        })
+        trace(f"deliberation lint: marker '{match.group(0)}'")
+    if _VERIFY_LANGUAGE_RE.search(output_text or "") and not (getattr(state, "_turn_tool_names", []) or []):
+        _event_append(state, "deliberation_events", {
+            "type": "claimed_verification_without_tool",
+            "game_id": getattr(state, "current_game_id", None),
+        })
+        trace("deliberation lint: claimed verification without tool call")
+
+
 def _render(full_text: str, state, config=None) -> None:
     if not full_text:
         console.print("\n[bold red]Error: Received no text response from the model.[/bold red]")
@@ -508,6 +633,9 @@ def _render(full_text: str, state, config=None) -> None:
 
     output_text = _run_claim_gate(output_text, state, config)
     _run_ambiguous_piece_lint(output_text, state)
+    _run_grader_verdict_lint(output_text, state)
+    _run_verdict_contradiction_lint(output_text, state)
+    _run_deliberation_lint(output_text, state)
     output_text = normalize_move_styling(output_text)
     segments, scrubbed = _split_board_segments(output_text, state.board_visuals)
     if scrubbed:

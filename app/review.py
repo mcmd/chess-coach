@@ -91,6 +91,7 @@ class MoveRecord:
     punisher_uci: str = None     # engine's best reply to the played move (free from the scan)
     history_uci: list = field(default_factory=list)  # UCI moves reaching fen_before (history-aware maia3)
     prev_move_san: str = None    # the opponent's move that led into fen_before (game orientation)
+    in_check: bool = False       # side to move is already in check at fen_before
     # Agenda enrichment (populated only for critical moments):
     is_agenda: bool = False
     best_line: list = field(default_factory=list)
@@ -685,6 +686,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         is_capture = board.is_capture(move)
         is_forced = board.legal_moves.count() == 1
         is_best = best_uci is not None and uci == best_uci
+        in_check = board.is_check()
         phase = get_game_phase(board)
 
         # Clock data: a player's previous clock reading is two plies back.
@@ -778,7 +780,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             is_capture=is_capture, time_spent=time_spent, clock_remaining=clock_remaining,
             time_flag=time_flag_for(quality, time_spent, clock_remaining, is_forced),
             punisher_uci=next_best, history_uci=history_before or [],
-            prev_move_san=prev_move_san,
+            prev_move_san=prev_move_san, in_check=in_check,
             maia_top=maia_top, maia_played_prob=maia_played_prob,
             was_maia_top=was_maia_top, avoided_natural_mistake=avoided,
             brilliancy_note=brilliancy, error_typicality=typicality,
@@ -1441,6 +1443,8 @@ def _is_simple_capture_punishment(r: MoveRecord) -> bool:
 
 def _initial_question(board_before: chess.Board) -> str:
     side = "White" if board_before.turn == chess.WHITE else "Black"
+    if board_before.is_check():
+        return f"{side} to move. You're in check - what are your options, and which keeps your winning chances?"
     opponent = "Black" if side == "White" else "White"
     return f"{side} to move. What candidate moves would you consider, and what is {opponent} threatening?"
 

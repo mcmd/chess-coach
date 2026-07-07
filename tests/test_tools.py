@@ -457,7 +457,10 @@ def test_evaluate_explanation_probes_when_key_reason_missing(stub_config):
     assert result["reveal_allowed"] is False
     assert "missing_key_reason" not in result
     assert "key_reason" not in result
-    assert "h2" in result["guidance"]  # the probe is anchored on the tactical square
+    assert result["probe_question"] == "After the best move, what forcing threat on h2 is being stopped?"
+    assert result["probe_facts"]["target_squares"] == ["h2"]
+    assert result["probe_facts"]["focus"] == "forcing_threat"
+    assert "probe_question" in result["guidance"]
 
 
 def test_evaluate_explanation_passes_when_key_reason_named(stub_config):
@@ -479,6 +482,94 @@ def test_evaluate_explanation_stops_probing_after_two_misses(stub_config):
     assert "key_reason" not in r1
     assert r2["probes_so_far"] == 2 and r2.get("reveal_allowed") is True
     assert "teach it directly" in r2["guidance"]
+
+
+def test_evaluate_explanation_provenance_rejects_stale_student_text(stub_config):
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    state.latest_user_text = "that makes sense, let's go back to your agenda"
+
+    result = tools.evaluate_explanation(START, "not sure")
+
+    assert result["verdict"] == "stale_or_fabricated_student_input"
+    assert state.socratic_attempts == {}
+    assert state.grading_integrity_events
+    assert state.grading_integrity_events[0]["tool"] == "evaluate_explanation"
+
+
+def test_evaluate_student_answer_provenance_rejects_fabricated_answer(stub_config):
+    tools, state = make_tools(stub_config, _answer_engines())
+    state.latest_user_text = "What is the best move here?"
+
+    result = tools.evaluate_student_answer(START, "e4")
+
+    assert result["verdict"] == "stale_or_fabricated_student_input"
+    assert state.socratic_attempts == {}
+    assert state.grading_integrity_events[0]["tool"] == "evaluate_student_answer"
+
+
+def test_evaluate_threat_answer_provenance_allows_current_student_text(stub_config):
+    tools, state = make_tools(stub_config, _threat_engines())
+    state.latest_user_text = "Black is threatening Qh4, I think."
+
+    result = tools.evaluate_threat_answer(THREAT_FEN, "Qh4")
+
+    assert result["verdict"] == "correct_threat"
+    assert state.grading_integrity_events == []
+
+
+def test_evaluate_threat_answer_provenance_rejects_fabricated_answer(stub_config):
+    tools, state = make_tools(stub_config, _threat_engines())
+    state.latest_user_text = "What is Black threatening?"
+
+    result = tools.evaluate_threat_answer(THREAT_FEN, "Qh4")
+
+    assert result["verdict"] == "stale_or_fabricated_student_input"
+    assert state.socratic_attempts == {}
+    assert state.grading_integrity_events[0]["tool"] == "evaluate_threat_answer"
+
+
+def test_evaluate_explanation_accepts_live_pawn_defense_paraphrase(stub_config):
+    tools, state = make_tools(stub_config)
+    from app.review import GameReview, MoveRecord
+    fen = "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26"
+    rec = MoveRecord(ply=50, number=26, color="white", san="Qxa7", uci="c5a7",
+                     fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-500,
+                     drop_pct=41.9, quality="blunder", best_move_san="Rd4")
+    rec.explanation_primitives = {"reasons": [
+        {"text": "Rd4 defends the g4 pawn by controlling g4 along the fourth rank",
+         "key": True, "squares": ["g4"], "keywords": ["defends", "pawn", "rank"]},
+    ]}
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+
+    result = tools.evaluate_explanation(fen, "because that one actually defends my g pawn")
+
+    assert result["key_reason_named"] is True
+    assert result["reveal_allowed"] is True
+
+
+def test_evaluate_explanation_keeps_ne4_partial_credit_incomplete(stub_config):
+    tools, state = make_tools(stub_config)
+    from app.review import GameReview, MoveRecord
+    fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
+    rec = MoveRecord(ply=38, number=20, color="white", san="Nxb5", uci="c3b5",
+                     fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-100,
+                     drop_pct=18.0, quality="inaccuracy", best_move_san="Ne4")
+    rec.explanation_primitives = {"reasons": [
+        {"text": "Ne4 keeps pressure on the b5 pawn instead of trading the active knight for it",
+         "key": True, "squares": ["b5"], "keywords": ["pressure", "pawn", "trade"]},
+        {"text": "Ne4 blocks e4 and attacks the queen with tempo",
+         "key": False, "squares": ["e4", "d6"], "keywords": ["blocks", "queen", "tempo"]},
+    ]}
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+
+    result = tools.evaluate_explanation(
+        fen, "because it blocks the advance of their e pawn, attacks the queen, and gains tempo")
+
+    assert result["key_reason_named"] is False
+    assert result["also_named"] == ["Ne4 blocks e4 and attacks the queen with tempo"]
+    assert result["reveal_allowed"] is False
+    assert "probe_question" in result
 
 
 def test_evaluate_explanation_give_up_exhausts_probe_budget_and_allows_diagnosis(stub_config):

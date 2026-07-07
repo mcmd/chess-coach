@@ -79,7 +79,19 @@ def _valid_diagnosis_override(reason: str, recommended: str, chosen: str) -> boo
     return len(residue.split()) >= 5
 
 
+def _file_pawn_named(text: str, square: str) -> bool:
+    if not square or not re.match(r"^[a-h][1-8]$", square):
+        return False
+    return bool(re.search(rf"\b{square[0]}\s*[- ]?\s*pawn\b", text or ""))
+
+
 _BARE_SQUARE_RE = re.compile(r"[a-h][1-8]")
+
+_GENERIC_REASON_KEYWORDS = {
+    "move", "moves", "piece", "pieces", "pawn", "pawns", "king", "queen",
+    "rook", "rooks", "bishop", "bishops", "knight", "knights", "file",
+    "rank", "square", "squares",
+}
 
 
 def _ungrounded_diagnosis_moves(record, explanation: str) -> list:
@@ -266,6 +278,9 @@ class CoachTools:
             board = chess.Board(fen)
         except ValueError as e:
             return {"error": f"Invalid FEN: {e}"}
+        provenance_error = self._verify_latest_student_input("evaluate_student_answer", "student_move_san", student_move_san)
+        if provenance_error:
+            return provenance_error
 
         attempts = self.state.socratic_attempts
         mentioned = _legal_san_mentions(board, student_move_san)
@@ -452,6 +467,36 @@ class CoachTools:
     def _frames_as_own_candidate(self, text: str) -> bool:
         return bool(self._OWN_CANDIDATE_RE.search(text or ""))
 
+    @staticmethod
+    def _compact_student_text(text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", _normalize_text(text or ""))
+
+    def _verify_latest_student_input(self, tool_name: str, field_name: str, submitted: str) -> dict | None:
+        latest = getattr(self.state, "latest_user_text", None)
+        if not latest or not submitted:
+            return None
+        submitted_compact = self._compact_student_text(submitted)
+        latest_compact = self._compact_student_text(latest)
+        if submitted_compact and submitted_compact in latest_compact:
+            return None
+        event = {
+            "type": "stale_or_fabricated_student_input",
+            "tool": tool_name,
+            "field": field_name,
+            "submitted": (submitted or "")[:160],
+            "latest_user_text": (latest or "")[:240],
+            "game_id": getattr(self.state, "current_game_id", None),
+        }
+        if hasattr(self.state, "grading_integrity_events"):
+            self.state.grading_integrity_events.append(event)
+            self.state.grading_integrity_events[:] = self.state.grading_integrity_events[-50:]
+        return {
+            "verdict": "stale_or_fabricated_student_input",
+            "error": ("The submitted grading text does not match the student's latest message. "
+                      "Do not grade or spend attempts using stale, summarized, or invented student input."),
+            "required_action": "answer_or_clarify_without_grading",
+        }
+
     def _record_active_drill_outcome(self, fen: str, result: dict) -> None:
         drill = getattr(self.state, "active_dossier_drill", None) or {}
         if not drill or drill.get("fen") != fen or not result.get("reveal_allowed"):
@@ -516,6 +561,9 @@ class CoachTools:
             board = chess.Board(fen)
         except ValueError as e:
             return {"error": f"Invalid FEN: {e}"}
+        provenance_error = self._verify_latest_student_input("evaluate_threat_answer", "threat_move_san", threat_move_san)
+        if provenance_error:
+            return provenance_error
         if board.is_check():
             return {"note": "The side to move is in check — the question here is how to MEET the check, "
                             "not what is threatened next."}
@@ -616,6 +664,10 @@ class CoachTools:
         record = self._agenda_record_for_fen(fen)
         if record is None:
             return {"error": "No agenda moment matches that FEN. Use the exact fen_before from the digest."}
+        provenance_error = self._verify_latest_student_input(
+            "evaluate_explanation", "student_explanation", student_explanation)
+        if provenance_error:
+            return provenance_error
         reasons = (getattr(record, "explanation_primitives", None) or {}).get("reasons") or []
         key_reasons = [r for r in reasons if r.get("key")]
         if not key_reasons:
@@ -623,13 +675,22 @@ class CoachTools:
                     "guidance": "No single load-bearing reason is pinned for this moment; if the "
                                 "explanation is sound, affirm it and proceed to submit_diagnosis."}
 
-        text = (student_explanation or "").lower()
+        text = _normalize_text(student_explanation or "")
         squares_in = set(re.findall(r"[a-h][1-8]", text))
         words_in = set(re.findall(r"[a-z]+", text))
 
         def named(reason):
+            reason_text = str(reason.get("text") or "").lower()
+            keywords = {str(k).lower() for k in reason.get("keywords", [])}
+            meaningful_keywords = keywords - _GENERIC_REASON_KEYWORDS
+            reason_words = set(re.findall(r"[a-z]+", reason_text)) | keywords
+            defense_reason = bool(reason_words & {"defend", "defends", "defended", "guard", "guards",
+                                                  "protect", "protects", "cover", "covers", "control",
+                                                  "controls"})
+            if defense_reason and any(_file_pawn_named(text, sq) for sq in reason.get("squares", [])):
+                return True
             return (bool(set(reason.get("squares", [])) & squares_in)
-                    or any(k in words_in for k in reason.get("keywords", [])))
+                    or any(k in words_in for k in meaningful_keywords))
 
         key = key_reasons[0]
         key_named = named(key)
@@ -687,6 +748,7 @@ class CoachTools:
             self._persist_lesson_progress(fen, "awaiting_diagnosis")
         else:
             result["reveal_allowed"] = False
+            result.update(self._explanation_probe_packet(record, key))
             result["guidance"] = (
                 "The student's explanation did NOT address the load-bearing reason. Do not "
                 "rubber-stamp it and do not reveal the reason outright — PROBE it: ask a focused "
@@ -694,8 +756,44 @@ class CoachTools:
                 + (f"the {anchor} square / " if anchor else "")
                 + "the key idea, so the student finds it. Re-check with evaluate_explanation after "
                 "their reply.")
+            result["guidance"] = (
+                "The student's explanation did NOT address the load-bearing reason. Do not "
+                "rubber-stamp it and do not reveal the reason outright. Ask probe_question "
+                "verbatim or near-verbatim, using only probe_facts. Re-check with "
+                "evaluate_explanation after their reply.")
             self._persist_lesson_progress(fen, "awaiting_explanation")
         return result
+
+    def _explanation_probe_packet(self, record, key_reason: dict) -> dict:
+        squares = list(key_reason.get("squares") or [])
+        keywords = list(key_reason.get("keywords") or [])
+        best = getattr(record, "best_move_label", None) or getattr(record, "best_move_san", None) or "the best move"
+        square_text = squares[0] if squares else "the critical square"
+        reason_text = " ".join([str(key_reason.get("text") or "").lower()] + [k.lower() for k in keywords])
+        if any(word in reason_text for word in ("defend", "guard", "protect", "cover", "control")):
+            question = (f"After {best}, look at {square_text}. What piece covers it, "
+                        "and along which line?")
+            focus = "defense_relation"
+        elif any(word in reason_text for word in ("mate", "check", "forcing")):
+            question = f"After {best}, what forcing threat on {square_text} is being stopped?"
+            focus = "forcing_threat"
+        elif any(word in reason_text for word in ("fork", "pin", "skewer", "tactic")):
+            question = f"After {best}, what tactical idea around {square_text} changes?"
+            focus = "tactical_relation"
+        else:
+            question = f"After {best}, what changes around {square_text}?"
+            focus = "key_square"
+        return {
+            "probe_question": question,
+            "probe_facts": {
+                "best_move": best,
+                "target_squares": squares,
+                "keywords": keywords,
+                "focus": focus,
+                "usage": ("Use these facts only to ask the probe_question. Do not invent a "
+                          "new missing detail or conceptual distinction."),
+            },
+        }
 
     def explain_move(self, fen: str, move_san: str) -> dict:
         """

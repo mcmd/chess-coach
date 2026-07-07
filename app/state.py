@@ -20,9 +20,14 @@ class SessionState:
     pending_unmatched_review: dict = field(default_factory=dict)  # P0-4c: review awaiting POV/consent
     review_context: dict = field(default_factory=dict)      # ownership, adopted POV, dossier consent
     active_dossier_drill: dict = field(default_factory=dict)  # current /review drill, if any
+    latest_user_text: str = None                 # exact latest user turn for grader-input provenance
+    grading_integrity_events: list[dict] = field(default_factory=list)  # stale/fabricated tool args
     claim_gate_extra_fens: list[str] = field(default_factory=list)  # transient tool-returned line positions
     claim_gate_events: list[dict] = field(default_factory=list)  # structured L1/shadow observability
     ambiguous_piece_events: list[dict] = field(default_factory=list)  # shadow prose-fidelity observability
+    grader_verdict_events: list[dict] = field(default_factory=list)  # shadow verdict-report observability
+    verdict_contradiction_events: list[dict] = field(default_factory=list)  # shadow review-packet contradictions
+    deliberation_events: list[dict] = field(default_factory=list)  # shadow raw-thought/fake-verification lint
     # Board diagram theme (set from config at startup; defaults = lichess green).
     board_light_color: str = "#eeeed2"
     board_dark_color: str = "#769656"
@@ -54,9 +59,14 @@ class TimelineManager:
         self.state.pending_unmatched_review.clear()
         self.state.review_context.clear()
         self.state.active_dossier_drill.clear()
+        self.state.latest_user_text = None
+        self.state.grading_integrity_events.clear()
         self.state.claim_gate_extra_fens.clear()
         self.state.claim_gate_events.clear()
         self.state.ambiguous_piece_events.clear()
+        self.state.grader_verdict_events.clear()
+        self.state.verdict_contradiction_events.clear()
+        self.state.deliberation_events.clear()
         self.pgn_nodes = []
 
     def load_game(self, game: chess.pgn.Game):
