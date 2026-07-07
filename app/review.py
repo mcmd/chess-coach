@@ -1248,8 +1248,7 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
                 board_before, multipv=3,
                 depth=int(_engine_setting(engines, "agenda_best_depth", 20)),
                 time_cap=float(_engine_setting(engines, "agenda_best_time", 6.0)))
-            pv = infos[0].get("pv") or []
-            r.best_line = _pv_to_san(board_before, pv[:8])
+            r.best_line = _select_best_line_for_record(r, board_before, infos)
             r.best_line_motifs = detect_motifs_in_line(board_before, r.best_line)
             # The deep multipv PV is more authoritative than the shallow scan eval
             # that first set best_move_san. When they disagree on the FIRST move,
@@ -1261,6 +1260,8 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
             # the same. Done before the lesson primitives / diagnosis read best_move.
             if r.best_line:
                 r.best_move_san = r.best_line[0]
+            elif r.quality in ("inaccuracy", "mistake", "blunder"):
+                r.best_move_san = None
         except Exception:
             pass
 
@@ -1283,6 +1284,35 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
         # Per-move Maia data was already collected during the main scan.
         _anticipate_wrong_answer(r, engines, board_before)
         _aspirational_instinct(r, engines, review)
+
+
+def _same_san(a: str, b: str) -> bool:
+    def norm(s: str) -> str:
+        return re.sub(r"[+#?!]+$", "", str(s or "").strip())
+    return bool(a and b and norm(a) == norm(b))
+
+
+def _select_best_line_for_record(r: MoveRecord, board_before: chess.Board, infos: list) -> list:
+    """Return the PV line used as the teachable improvement.
+
+    Calibrated PGN evals can mark the played move as a blunder while a shallow or
+    locally unstable Stockfish PV still starts with that played move. For agenda
+    records, never teach a bad played move as its own improvement; use the best
+    non-played MultiPV line when available, otherwise leave the answer unset.
+    """
+    candidate_lines = []
+    for info in infos or []:
+        line = _pv_to_san(board_before, (info.get("pv") or [])[:8])
+        if line:
+            candidate_lines.append(line)
+    if not candidate_lines:
+        return []
+    if r.quality not in ("inaccuracy", "mistake", "blunder"):
+        return candidate_lines[0]
+    for line in candidate_lines:
+        if not _same_san(line[0], r.san):
+            return line
+    return []
 
 
 def _assess_practicality(r: MoveRecord, engines, review: GameReview, deep_after_white_cp) -> None:
@@ -1432,7 +1462,17 @@ def _is_simple_capture_punishment(r: MoveRecord) -> bool:
         return False
     try:
         board_after = chess.Board(r.fen_after)
-        reply = board_after.parse_san(r.punishment_line[0])
+        try:
+            reply = board_after.parse_san(r.punishment_line[0])
+        except ValueError:
+            reply = next(
+                (move for move in board_after.legal_moves
+                 if board_after.is_capture(move)
+                 and board_after.san(move).rstrip("+#?!") == str(r.punishment_line[0]).rstrip("+#?!")),
+                None,
+            )
+            if reply is None:
+                return False
         if board_after.gives_check(reply) or not board_after.is_capture(reply):
             return False
         played = chess.Move.from_uci(r.uci)
@@ -1499,7 +1539,24 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
         except ValueError:
             pass
 
-    forcing = _first_forcing_punishment(board_after, r.punishment_line)
+    simple_capture_trade = _is_simple_capture_punishment(r)
+    if simple_capture_trade:
+        first = r.punishment_line[0] if r.punishment_line else "a recapture"
+        data["why_wrong_move_fails"] = (
+            f"{r.san} wins material but allows {first}, trading away the active piece "
+            "instead of improving the position.")
+        if r.best_move_san:
+            activity = _best_move_activity_data(board_before, r.best_move_san)
+            if activity:
+                data["why_best_move_works"] = activity["text"]
+                data["best_move_reason_squares"] = activity["squares"]
+                data["best_move_keywords"] = activity["keywords"]
+            else:
+                data["why_best_move_works"] = (
+                    f"{r.best_move_san} was the engine-verified improvement because it keeps the "
+                    "piece active instead of trading it for material.")
+                data["best_move_keywords"] = ["active", "trade", "material"]
+    forcing = None if simple_capture_trade else _first_forcing_punishment(board_after, r.punishment_line)
     if forcing:
         san, move = forcing
         consequences = _forcing_move_consequences(board_after, san, move)
@@ -1513,7 +1570,7 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
             works = _best_move_answer_to_target(board_before, r.best_move_san, move.to_square)
             if works:
                 data["why_best_move_works"] = works
-    elif r.best_move_san:
+    elif not simple_capture_trade and r.best_move_san:
         data["why_best_move_works"] = (
             f"{r.best_move_san} was the engine-verified improvement; use the line "
             f"{' '.join(r.best_line)} to explain the concrete consequence." if r.best_line
@@ -1579,13 +1636,16 @@ def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
         })
     elif data.get("why_best_move_works") and r.best_move_san:
         dest = _san_dest_square(board_before, r.best_move_san)
+        squares = list(data.get("best_move_reason_squares") or ([dest] if dest else []))
+        keywords = sorted(set(_motif_keywords(r.best_line_motifs)
+                              + list(data.get("best_move_keywords") or [])))
         # Positional point: weak to tokenise, so it is "key" only when we have a
         # concrete square to anchor on; otherwise leave it ungraded (no false probe).
         reasons.append({
             "text": data["why_best_move_works"],
-            "key": bool(dest),
-            "squares": [dest] if dest else [],
-            "keywords": _motif_keywords(r.best_line_motifs),
+            "key": bool(squares or keywords),
+            "squares": squares,
+            "keywords": keywords,
         })
     if data.get("human_temptation"):
         m = re.search(r" on ([a-h][1-8])", data["human_temptation"])
@@ -1653,6 +1713,49 @@ def _forcing_move_consequences(board: chess.Board, san: str, move: chess.Move) -
             attacked.append(f"{chess.piece_name(piece.piece_type)} on {chess.square_name(sq)}")
     consequences["also_attacks"] = sorted(attacked)
     return consequences
+
+
+def _best_move_activity_data(board_before: chess.Board, best_san: str) -> dict | None:
+    try:
+        best = board_before.parse_san(best_san)
+    except ValueError:
+        return None
+    piece = board_before.piece_at(best.from_square)
+    if not piece:
+        return None
+    after = board_before.copy(stack=False)
+    after.push(best)
+    moved_piece = after.piece_at(best.to_square)
+    if not moved_piece:
+        return None
+    attacked = []
+    keywords = ["active"]
+    for sq in after.attacks(best.to_square):
+        target = after.piece_at(sq)
+        if not target or target.color == moved_piece.color or target.piece_type == chess.PAWN:
+            continue
+        attacked.append((sq, target))
+        keywords.append(chess.piece_name(target.piece_type))
+    if attacked:
+        square, target = attacked[0]
+        target_name = chess.piece_name(target.piece_type)
+        if target.piece_type in (chess.QUEEN, chess.ROOK, chess.KING):
+            keywords.append("tempo")
+        return {
+            "text": (f"After {best_san}, the {chess.piece_name(piece.piece_type)} moves to "
+                     f"{chess.square_name(best.to_square)} and attacks the {target_name} on "
+                     f"{chess.square_name(square)} with tempo, keeping the piece active instead "
+                     "of trading it for material."),
+            "squares": [chess.square_name(best.to_square), chess.square_name(square)],
+            "keywords": sorted(set(keywords)),
+        }
+    return {
+        "text": (f"After {best_san}, the {chess.piece_name(piece.piece_type)} improves to "
+                 f"{chess.square_name(best.to_square)}, keeping the piece active instead of "
+                 "trading it for material."),
+        "squares": [chess.square_name(best.to_square)],
+        "keywords": ["active", "trade", "material"],
+    }
 
 
 def _best_move_answer_to_target(board_before: chess.Board, best_san: str, target_sq: chess.Square) -> str:

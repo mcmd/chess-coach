@@ -184,6 +184,35 @@ def test_diagnosis_rejects_mismatched_backend_recommendation_without_override(st
     result = tools.submit_diagnosis(fen, wrong, "x", "y")
     assert "error" in result
     assert result["recommended_diagnosis"] == rec
+
+
+def test_submit_diagnosis_rejects_played_bad_move_as_needed(stub_config):
+    from app.review import GameReview, MoveRecord
+
+    fen = "1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31"
+    tools, state = make_tools(stub_config)
+    rec = MoveRecord(
+        ply=60, number=31, color="white", san="Kh1", uci="g1h1",
+        fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-600,
+        drop_pct=33.7, quality="blunder", best_move_san="Kh2",
+        recommended_diagnosis="ignored_threat",
+    )
+    rec.explanation_primitives = {"diagnosis_sentence": "Played 31. Kh1; 31. Kh2 was the verified improvement."}
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+    state.socratic_attempts[f"explain-complete:{fen}"] = True
+
+    result = tools.submit_diagnosis(
+        fen,
+        "ignored_threat",
+        "Played 31. Kh1 without stopping Qh3+; 31. Kh1 was needed to meet that forcing threat.",
+        "Name the urgent priority before choosing a natural move.",
+    )
+
+    assert "error" in result
+    assert "contradicts the verified agenda" in result["error"]
+    assert result["played_move"] == "Kh1"
+    assert result["best_move"] == "Kh2"
+    assert state.diagnostics == []
     assert state.diagnostics == []
 
 
@@ -548,7 +577,7 @@ def test_evaluate_explanation_accepts_live_pawn_defense_paraphrase(stub_config):
     assert result["reveal_allowed"] is True
 
 
-def test_evaluate_explanation_keeps_ne4_partial_credit_incomplete(stub_config):
+def test_evaluate_explanation_accepts_ne4_tempo_for_simple_trade(stub_config):
     tools, state = make_tools(stub_config)
     from app.review import GameReview, MoveRecord
     fen = "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20"
@@ -556,20 +585,17 @@ def test_evaluate_explanation_keeps_ne4_partial_credit_incomplete(stub_config):
                      fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-100,
                      drop_pct=18.0, quality="inaccuracy", best_move_san="Ne4")
     rec.explanation_primitives = {"reasons": [
-        {"text": "Ne4 keeps pressure on the b5 pawn instead of trading the active knight for it",
-         "key": True, "squares": ["b5"], "keywords": ["pressure", "pawn", "trade"]},
-        {"text": "Ne4 blocks e4 and attacks the queen with tempo",
-         "key": False, "squares": ["e4", "d6"], "keywords": ["blocks", "queen", "tempo"]},
+        {"text": "Ne4 attacks the queen on d6 with tempo and keeps the knight active",
+         "key": True, "squares": ["e4", "d6"], "keywords": ["active", "tempo"]},
     ]}
     state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
 
     result = tools.evaluate_explanation(
         fen, "because it blocks the advance of their e pawn, attacks the queen, and gains tempo")
 
-    assert result["key_reason_named"] is False
-    assert result["also_named"] == ["Ne4 blocks e4 and attacks the queen with tempo"]
-    assert result["reveal_allowed"] is False
-    assert "probe_question" in result
+    assert result["key_reason_named"] is True
+    assert result["reveal_allowed"] is True
+    assert "probe_question" not in result
 
 
 def test_evaluate_explanation_give_up_exhausts_probe_budget_and_allows_diagnosis(stub_config):

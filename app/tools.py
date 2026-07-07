@@ -145,6 +145,26 @@ def _weak_diagnosis_text(text: str) -> bool:
     return any(lowered.endswith(word) for word in dangling)
 
 
+def _contradictory_diagnosis_text(record, explanation: str) -> bool:
+    if not record or getattr(record, "quality", None) not in ("inaccuracy", "mistake", "blunder"):
+        return False
+    text = _normalize_text(explanation or "")
+    played = _normalize_text(getattr(record, "san", None) or "")
+    label = _normalize_text(getattr(record, "move_label", None) or "")
+    if not played:
+        return False
+    move_patterns = [re.escape(played)]
+    if label:
+        move_patterns.append(re.escape(label))
+    move = r"(?:`?\b(?:" + "|".join(move_patterns) + r")\b`?)"
+    praise = r"(?:was|is)\s+(?:needed|required|best|correct|the\s+engine[- ]verified\s+improvement)"
+    if re.search(move + r"[^.?!;\n]{0,80}\b" + praise, text):
+        return True
+    if re.search(r"\b" + praise + r"[^.?!;\n]{0,80}" + move, text):
+        return True
+    return False
+
+
 def _backend_diagnosis_sentence(record) -> str:
     primitives = getattr(record, "explanation_primitives", None) or {}
     sentence = primitives.get("diagnosis_sentence")
@@ -1023,6 +1043,17 @@ class CoachTools:
                         "lesson_objective": getattr(record, "lesson_objective", None)}
 
         if record:
+            if _contradictory_diagnosis_text(record, error_explanation):
+                return {
+                    "error": ("error_explanation contradicts the verified agenda: it describes the "
+                              "played mistake as the needed/best move. Rebuild the explanation using "
+                              "the backend diagnosis sentence below."),
+                    "played_move": record.san,
+                    "played_move_label": record.move_label,
+                    "verified_quality": record.quality,
+                    "best_move": record.best_move_san,
+                    "backend_diagnosis_sentence": _backend_diagnosis_sentence(record),
+                }
             ungrounded = _ungrounded_diagnosis_moves(record, error_explanation)
             if ungrounded:
                 self._diagnosis_rejections[fen] = self._diagnosis_rejections.get(fen, 0) + 1

@@ -143,6 +143,18 @@ def _record_tool_candidate_fens(state, tool_name: str, args: dict, result) -> No
     if not hasattr(state, "claim_gate_extra_fens"):
         return
     fens = []
+    if tool_name == "explain_pawn_structure_evolution":
+        review = getattr(state, "review", None)
+        for record in getattr(review, "records", []) or []:
+            for fen in (getattr(record, "fen_before", None), getattr(record, "fen_after", None)):
+                if fen:
+                    fens.append(fen)
+        seen = set(state.claim_gate_extra_fens)
+        for fen in fens:
+            if fen and fen not in seen:
+                state.claim_gate_extra_fens.append(fen)
+                seen.add(fen)
+        return
     start = args.get("fen") if isinstance(args, dict) else None
     if not start:
         return
@@ -410,6 +422,12 @@ def _mask_non_claim_move_mentions(text: str) -> str:
     )
     masked = re.sub(piece_context, lambda m: " " * len(m.group(0)),
                     masked, flags=re.IGNORECASE)
+    square_list_context = (
+        r"\b(?:[a-h][1-8]\s*(?:,|and|or)?\s*){1,6}"
+        r"(?=(?:pawns?|pieces?|squares?|files?|ranks?)\b)"
+    )
+    masked = re.sub(square_list_context, lambda m: " " * len(m.group(0)),
+                    masked, flags=re.IGNORECASE)
     negative_context = (
         r"\b(?:not|isn't|isnt|wasn't|wasnt|doesn't|doesnt|don't|dont|can't|cant|"
         r"cannot|couldn't|couldnt|illegal|invalid|no)\b"
@@ -557,6 +575,29 @@ def _run_grader_verdict_lint(output_text: str, state) -> None:
         trace(f"grader-verdict lint: verdict {verdict} from {item.get('tool')} was not acknowledged")
 
 
+def _run_grading_integrity_guard(output_text: str, state) -> str:
+    stale = []
+    for item in getattr(state, "_turn_grading_results", []) or []:
+        result = item.get("result") or {}
+        if result.get("verdict") == "stale_or_fabricated_student_input":
+            stale.append(item)
+    if not stale:
+        return output_text
+    for item in stale:
+        _event_append(state, "grading_integrity_events", {
+            "type": "stale_grading_response_blocked",
+            "tool": item.get("tool"),
+            "args": dict(item.get("args") or {}),
+            "game_id": getattr(state, "current_game_id", None),
+        })
+    trace("grading-integrity guard: blocked response after stale/fabricated grading input")
+    return (
+        "I need to correct the flow: I tried to grade a move or threat that was not actually in your "
+        "latest message, so I will not treat it as verified. Please restate the candidate move or "
+        "threat you want me to check, or ask me to explain the position directly."
+    )
+
+
 def _move_mentioned_near_label(text: str, move: str, label_pattern: str) -> bool:
     if not move:
         return False
@@ -631,6 +672,7 @@ def _render(full_text: str, state, config=None) -> None:
     output_text = strip_think_blocks(full_text.strip())
     output_text = re.sub(r"^(?:(?:Output|Done|End|Yes|I will output now)\.\s*)+", "", output_text, flags=re.IGNORECASE).strip()
 
+    output_text = _run_grading_integrity_guard(output_text, state)
     output_text = _run_claim_gate(output_text, state, config)
     _run_ambiguous_piece_lint(output_text, state)
     _run_grader_verdict_lint(output_text, state)

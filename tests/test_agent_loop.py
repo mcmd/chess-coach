@@ -8,6 +8,7 @@ from app.agent_loop import (run_agent_turn, find_illegal_moves, apply_claim_gate
                             candidate_boards, _record_tool_candidate_fens,
                             _run_claim_gate, _run_ambiguous_piece_lint,
                             _run_grader_verdict_lint,
+                            _run_grading_integrity_guard,
                             _run_verdict_contradiction_lint,
                             _run_deliberation_lint)
 from app.notation import ambiguous_piece_references
@@ -50,6 +51,11 @@ def test_find_illegal_moves_ignores_square_adjective_piece_references():
     out, findings = apply_claim_gate(text, [chess.Board(fen)], level=1)
     assert findings == []
     assert out == text
+
+
+def test_find_illegal_moves_ignores_square_lists_before_piece_words():
+    text = "This left your king with only the f2 and g4 pawns nearby, while the d5 pawn needed support."
+    assert find_illegal_moves(text, [chess.Board()]) == []
 
 
 def test_find_illegal_moves_never_flags_without_known_positions():
@@ -170,6 +176,27 @@ def test_grader_verdict_lint_accepts_reported_verdict():
     assert state.grader_verdict_events == []
 
 
+def test_grading_integrity_guard_blocks_affirming_fabricated_answer():
+    state = SessionState()
+    state._turn_grading_results = [
+        {
+            "tool": "evaluate_threat_answer",
+            "args": {"threat_move_san": "Nf6"},
+            "result": {
+                "verdict": "stale_or_fabricated_student_input",
+                "error": "submitted grading text does not match latest message",
+            },
+        }
+    ]
+
+    output = _run_grading_integrity_guard("Yes, Nf6 is exactly what Black wants to do.", state)
+
+    assert "Nf6 is exactly" not in output
+    assert "not actually in your latest message" in output
+    assert state.grading_integrity_events
+    assert state.grading_integrity_events[0]["type"] == "stale_grading_response_blocked"
+
+
 def test_verdict_contradiction_lint_flags_praised_blunder():
     from app.review import GameReview, MoveRecord
     fen = "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26"
@@ -276,6 +303,26 @@ def test_candidate_boards_include_tool_returned_threat_null_move_positions():
 
     boards = candidate_boards(state)
     assert find_illegal_moves("Black was threatening Qh4+.", boards) == []
+
+
+def test_candidate_boards_include_pawn_story_game_history_positions():
+    from app.review import GameReview, MoveRecord
+    board = chess.Board()
+    for san in ("e4", "d5", "Nf3"):
+        board.push_san(san)
+    before = board.fen()  # black can play dxe4 here
+    after = board.copy(stack=False)
+    after.push_san("dxe4")
+    rec = MoveRecord(ply=3, number=2, color="black", san="dxe4", uci="d5e4",
+                     fen_before=before, fen_after=after.fen(),
+                     eval_before_cp=0, eval_after_cp=0, drop_pct=0.0, quality="ok")
+    state = SessionState()
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[])
+
+    _record_tool_candidate_fens(state, "explain_pawn_structure_evolution", {}, {"events": []})
+
+    boards = candidate_boards(state)
+    assert find_illegal_moves("Black played 2... dxe4, and the f2 and g4 pawns mattered.", boards) == []
 
 
 class FakeChat:

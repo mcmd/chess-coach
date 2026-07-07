@@ -124,6 +124,40 @@ def test_review_pgn_eval_severity_overrides_shallow_best_flag():
     assert record.quality == "blunder"
 
 
+def test_agenda_bad_move_uses_non_played_deep_best_line():
+    # If calibrated PGN evals make the played move a blunder but local MultiPV
+    # still lists the played move first, the agenda must teach the best non-played
+    # alternative instead of saying the blunder was also "better".
+    pgn = """[Event "Test"]
+[White "mcmd"]
+[Black "Opponent"]
+[WhiteElo "1150"]
+[BlackElo "1200"]
+[Result "0-1"]
+
+1. e4 { [%eval 0.00] } e5 { [%eval 0.00] } 2. Qh5 { [%eval 0.00] } Nc6 { [%eval 0.00] } 3. Qxf7+ { [%eval -7.00] } Kxf7 { [%eval -7.00] } 0-1
+"""
+    game = chess.pgn.read_game(io.StringIO(pgn))
+    board = game.board()
+    fens = []
+    for node in game.mainline():
+        fens.append(board.fen())
+        board.push(node.move)
+
+    engines = FakeEngines(
+        bests={fens[4]: "h5f7"},
+        multipv={fens[4]: [("h5f7", 100), ("g1f3", 80)]},
+    )
+
+    review = review_game(pgn, engines, _Cfg(), with_maia=False)
+    record = review.records[4]
+
+    assert record.quality == "blunder"
+    assert record.san == "Qxf7+"
+    assert record.best_move_san == "Nf3"
+    assert record.best_line[0] == "Nf3"
+
+
 def test_digest_contains_agenda_and_withholds_answer():
     review = review_game(PGN, _scripted_engines(), _Cfg())
     digest = review.digest()
@@ -930,7 +964,8 @@ def test_forcing_check_punishment_recommends_ignored_threat():
 
 
 def test_material_grab_recaptured_is_not_taught_as_standing_square_threat():
-    from app.review import MoveRecord, suggest_error_categories, _infer_lesson_objective, _recommended_diagnosis
+    from app.review import (MoveRecord, suggest_error_categories, _infer_lesson_objective,
+                            _recommended_diagnosis, _explanation_primitives)
     before = chess.Board("r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 0 20")
     after = before.copy(stack=False)
     after.push_san("Nxb5")
@@ -949,6 +984,15 @@ def test_material_grab_recaptured_is_not_taught_as_standing_square_threat():
     assert _infer_lesson_objective(r) == "material_vs_activity"
     r.lesson_objective = "material_vs_activity"
     assert _recommended_diagnosis(r) == "bad_trade"
+    r.recommended_diagnosis = "bad_trade"
+
+    primitives = _explanation_primitives(r, before, after)
+
+    key = [reason for reason in primitives["reasons"] if reason.get("key")][0]
+    assert key["squares"] == ["e4", "d6"]
+    assert "tempo" in key["keywords"]
+    assert "forcing threat on b5" not in key["text"]
+    assert "attacks the queen on d6" in key["text"]
 
 
 def test_pawn_push_to_avoid_tension_is_not_missed_fork():

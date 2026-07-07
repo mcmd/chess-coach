@@ -60,6 +60,10 @@ app/config.py        config.json + profiles + CLI args
 - **Grader verdicts must be narrated.** After any grading tool returns, state the
   verdict plainly before probing, closing a moment, or advancing. Do not bury or skip
   `not_a_real_threat`, `best`, `wrong`, `illegal`, or similar verdicts.
+- **Stale grading errors are hard stops.** If a grading tool returns
+  `stale_or_fabricated_student_input`, do not affirm the submitted move/threat.
+  Tell the student it was not their latest answer and ask them to restate it or
+  answer directly without grading.
 - **No raw deliberation or fake verification.** Never render phrases like "but wait"
   or "that's confusing", and never claim to check/re-check an engine line unless a
   tool was actually called in that turn.
