@@ -170,12 +170,19 @@ _UNREQUESTED_QUIZ_RESPONSE_RE = re.compile(
     r"can you (?:find|see|tell)|try to (?:find|explain|calculate))\b[^.?!]*\?",
     re.I,
 )
+_QUESTION_IGNORED_OPENING_RE = re.compile(
+    r"^\s*(?:wait,?\s+)?(?:before we|before I|let'?s|now let'?s|we need to|"
+    r"first,?\s+(?:tell|explain|try|find)|in your own words|what candidate moves|"
+    r"why does|why is|which move|submit_diagnosis|recording diagnosis)\b",
+    re.I,
+)
 
 
 def assess_teaching_plan_obedience(
     plan: TeachingPlan | dict,
     response_text: str,
     *,
+    student_text: str | None = None,
     withheld_answers: list[str] | None = None,
 ) -> list[TeachingPlanObedienceFinding]:
     """Deterministic transcript checks for the P0-8 mode contract.
@@ -194,6 +201,12 @@ def assess_teaching_plan_obedience(
         return getattr(plan, name, default)
 
     findings: list[TeachingPlanObedienceFinding] = []
+    if student_text and "?" in student_text and _QUESTION_IGNORED_OPENING_RE.search(text[:240]):
+        findings.append(TeachingPlanObedienceFinding(
+            "question_ignored",
+            "Student asked a question, but the response opened with a probe, diagnosis, or moment advance.",
+        ))
+
     if field("no_tail_redirect", False) and _TAIL_REDIRECT_RESPONSE_RE.search(text):
         findings.append(TeachingPlanObedienceFinding(
             "tail_redirect",

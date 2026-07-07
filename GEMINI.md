@@ -47,6 +47,12 @@ app/config.py        config.json + profiles + CLI args
   eval/record fields change incompatibly.
 - **Socratic withholding is backend-enforced**: `evaluate_student_answer` counts
   attempts per FEN and only includes the engine answer when `reveal_allowed`.
+- **Verified-line moves must be named by exact SAN.** If a tool or digest line says
+  `Rad8`, prose must say `Rad8`, not "rook to d8" or `Rd8`; ambiguous piece prose is
+  shadow-linted at render time.
+- **Student clarification questions take priority.** If the latest student turn asks
+  a question, answer it from verified facts before probing, calling `submit_diagnosis`,
+  or advancing to the next moment.
 - **`submit_diagnosis` accepts only the closed taxonomy** in
   `app/tools.py::ERROR_TAXONOMY` — that is what makes the dossier aggregate.
 - **`TimelineManager.reset()` rewinds but keeps the loaded game**;

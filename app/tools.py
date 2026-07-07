@@ -13,9 +13,11 @@ from app.drills import record_drill_outcome
 from app.memory import load_lesson_metadata, save_lesson_metadata
 from app.motifs import detect_motifs_in_line
 from app.pawn_story import analyze_pawn_structure_evolution
+from app.planner import _normalize_text
 from app.rating import current_rating_enrichment, rating_offer_note
 from app.render import render_board_token
 from app.review import review_game, attach_board_tokens, cp_to_win_pct, MATE_CP, _wdl_risk_profile
+from app.self_assessment import start_self_assessment, self_assessment_open_note
 from app.ui import console
 
 # The closed mistake taxonomy. Diagnoses outside this list are rejected so the
@@ -38,6 +40,13 @@ ERROR_TAXONOMY = [
     "time_management",
     "calculation_error",
 ]
+
+_EXPLANATION_GIVE_UP_RE = re.compile(
+    r"\b(?:i\s*(?:don'?t|do\s*not)\s*know|no\s+idea|i\s*give\s*up|idk|"
+    r"just\s+tell\s+me|tell\s+me|show\s+me|no\s+se|ni\s+idea|dimelo|"
+    r"solo\s+dime|dime(?:lo)?|paso)\b",
+    re.IGNORECASE,
+)
 
 
 def _score_to_str(score: chess.engine.PovScore) -> str:
@@ -636,6 +645,21 @@ class CoachTools:
             "also_named": [r["text"] for r in reasons if not r.get("key") and named(r)],
         }
         complete_key = f"explain-complete:{fen}"
+        if _EXPLANATION_GIVE_UP_RE.search(_normalize_text(student_explanation or "")):
+            attempts[akey] = 2
+            attempts[complete_key] = True
+            result["probes_so_far"] = 2
+            result["reveal_allowed"] = True
+            result["key_reason"] = key["text"]
+            result["missing_key_reason"] = key["text"]
+            result["student_passed"] = True
+            result["guidance"] = (
+                "The student explicitly passed on explaining the reason. Stop probing: teach the "
+                "load-bearing reason directly and kindly, then submit_diagnosis."
+            )
+            self._persist_lesson_progress(fen, "awaiting_diagnosis")
+            return result
+
         if key_named:
             attempts.pop(akey, None)
             attempts[complete_key] = True
@@ -877,11 +901,17 @@ class CoachTools:
         if any(reason.get("key") for reason in (reasons or [])):
             complete_key = f"explain-complete:{fen}"
             if not self.state.socratic_attempts.get(complete_key):
+                attempts_used = int(self.state.socratic_attempts.get(f"explain:{fen}", 0) or 0)
+                remaining = max(1, 2 - attempts_used)
+                plural = "" if remaining == 1 else "s"
                 return {
-                    "error": ("Explanation grading is not complete for this position. Ask the "
-                              "student why the move works, then call evaluate_explanation before "
-                              "submitting the diagnosis."),
+                    "error": (f"Explanation grading is not complete for this position. "
+                              f"{remaining} more explanation attempt{plural} required, or the "
+                              "student may pass. Ask why the move works, then call "
+                              "evaluate_explanation before submitting the diagnosis."),
                     "required_action": "evaluate_explanation",
+                    "remaining_explanation_attempts": remaining,
+                    "student_may_pass": True,
                 }
         mismatch_warning = None
         if recommended and category != recommended:
@@ -1310,10 +1340,13 @@ class CoachTools:
             }
         meta.setdefault("last_agenda_index", 0)
         meta["lesson_status"] = "fresh_review"
+        start_self_assessment(self.state, self.config, review)
         self.state.lesson_metadata = meta
         if source_game_id and getattr(self.config, "lesson_file", None):
             save_lesson_metadata(self.config.lesson_file, meta)
-        return {"review_digest": review.digest() + rating_offer_note(rating_enrichment),
+        opener = self_assessment_open_note(self.state, review)
+        return {"review_digest": review.digest() + rating_offer_note(rating_enrichment) + opener,
+                "self_assessment_opener": opener,
                 "board_state": "Loaded at the STARTING position. The user steps through with /next."}
 
     def get_tool_list(self):

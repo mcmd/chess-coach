@@ -481,6 +481,48 @@ def test_evaluate_explanation_stops_probing_after_two_misses(stub_config):
     assert "teach it directly" in r2["guidance"]
 
 
+def test_evaluate_explanation_give_up_exhausts_probe_budget_and_allows_diagnosis(stub_config):
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+
+    result = tools.evaluate_explanation(START, "I don't know, just tell me")
+
+    assert result["student_passed"] is True
+    assert result["reveal_allowed"] is True
+    assert state.socratic_attempts[f"explain:{START}"] == 2
+    assert state.socratic_attempts[f"explain-complete:{START}"] is True
+    submitted = tools.submit_diagnosis(
+        START,
+        "ignored_threat",
+        "Played Re1 without stopping the mate threat on h2.",
+        "Ask what forcing threat the opponent has before moving.",
+    )
+    assert submitted["success"] is True
+
+
+def test_evaluate_explanation_spanish_give_up_exhausts_probe_budget(stub_config):
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+
+    result = tools.evaluate_explanation(START, "No sé, dímelo")
+
+    assert result["student_passed"] is True
+    assert result["reveal_allowed"] is True
+    assert state.socratic_attempts[f"explain-complete:{START}"] is True
+
+
+def test_submit_diagnosis_names_remaining_explanation_attempt(stub_config):
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    tools.evaluate_explanation(START, "it gains tempo")
+
+    result = tools.submit_diagnosis(START, "ignored_threat", "x", "y")
+
+    assert "error" in result
+    assert result["remaining_explanation_attempts"] == 1
+    assert "1 more explanation attempt required, or the student may pass" in result["error"]
+
+
 def test_evaluate_explanation_no_key_reason_is_not_gradable(stub_config):
     tools, state = make_tools(stub_config)
     state.review = _review_with_reasons([_TACTIC_REASONS[1]])  # only the secondary (key=False)
@@ -560,6 +602,8 @@ def test_restart_known_lichess_game_loads_from_start(stub_config, monkeypatch):
     meta = load_lesson_metadata(stub_config.lesson_file)
     assert meta["last_game_id"] == "2dtDqQgR"
     assert meta["lesson_status"] == "fresh_review"
+    assert state.teaching_ledger["self_assessment"]["status"] == "pending"
+    assert "Backend self-assessment opener - P0-8" in result["review_digest"]
 
 
 def test_continue_known_lichess_game_jumps_to_saved_agenda(stub_config, monkeypatch):
@@ -610,6 +654,16 @@ def test_downloaded_own_game_includes_current_rating_offer(stub_config, monkeypa
     assert "current rapid rating ~1420" in result["review_digest"]
     assert state.review_context["rating_enrichment"]["current_rating"] == 1420
     assert state.review.conversation_elo == 1150
+
+
+def test_tool_loaded_fresh_own_game_includes_self_assessment_opener(stub_config):
+    tools, state = make_tools(stub_config, _scripted_engines())
+
+    result = tools._review_and_load(REVIEW_PGN, source_game_id="fresh1")
+
+    assert state.teaching_ledger["self_assessment"]["status"] == "pending"
+    assert "Backend self-assessment opener - P0-8" in result["review_digest"]
+    assert "Before I show you my agenda" in result["self_assessment_opener"]
 
 
 def test_explain_pawn_structure_evolution_requires_loaded_review(stub_config):

@@ -10,7 +10,7 @@ import chess
 from google.genai import types
 from rich.markdown import Markdown
 
-from app.notation import san_mentions
+from app.notation import ambiguous_piece_references, san_mentions
 from app.trace import fmt_args, trace
 from app.ui import console
 
@@ -462,6 +462,42 @@ def _run_claim_gate(output_text: str, state, config) -> str:
     return new_text
 
 
+def _record_ambiguous_piece_event(state, *, board_fen: str, finding) -> None:
+    if not hasattr(state, "ambiguous_piece_events"):
+        return
+    event = {
+        "type": "ambiguous_piece_reference",
+        "phrase": finding.phrase,
+        "piece": finding.piece,
+        "square": finding.square,
+        "color": finding.color,
+        "candidate_squares": list(finding.candidate_squares),
+        "board_fen": board_fen,
+        "game_id": getattr(state, "current_game_id", None),
+        "move_index": getattr(state, "move_index", None),
+    }
+    state.ambiguous_piece_events.append(event)
+    state.ambiguous_piece_events[:] = state.ambiguous_piece_events[-50:]
+
+
+def _run_ambiguous_piece_lint(output_text: str, state) -> None:
+    """Shadow-only prose-fidelity lint: exact SAN should replace phrases like
+    "rook to d8" when multiple same-color pieces could be meant."""
+    boards = candidate_boards(state)
+    seen = set()
+    for board in boards:
+        for finding in ambiguous_piece_references(output_text, board):
+            key = (finding.phrase, finding.color, finding.piece, finding.square,
+                   tuple(finding.candidate_squares))
+            if key in seen:
+                continue
+            seen.add(key)
+            _record_ambiguous_piece_event(state, board_fen=board.fen(), finding=finding)
+            trace("ambiguous-piece lint: "
+                  f"{finding.phrase} could mean {finding.color} {finding.piece}s on "
+                  f"{', '.join(finding.candidate_squares)}")
+
+
 def _render(full_text: str, state, config=None) -> None:
     if not full_text:
         console.print("\n[bold red]Error: Received no text response from the model.[/bold red]")
@@ -471,6 +507,7 @@ def _render(full_text: str, state, config=None) -> None:
     output_text = re.sub(r"^(?:(?:Output|Done|End|Yes|I will output now)\.\s*)+", "", output_text, flags=re.IGNORECASE).strip()
 
     output_text = _run_claim_gate(output_text, state, config)
+    _run_ambiguous_piece_lint(output_text, state)
     output_text = normalize_move_styling(output_text)
     segments, scrubbed = _split_board_segments(output_text, state.board_visuals)
     if scrubbed:

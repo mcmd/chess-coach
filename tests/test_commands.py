@@ -501,6 +501,35 @@ def test_p0_8_obedience_fixture_flags_withheld_answer_leak():
     assert [f.code for f in findings] == ["withheld_answer_leak"]
 
 
+def test_p0_8_obedience_fixture_flags_ignored_student_question():
+    plan = TeachingPlan(intent="answer_directly", language="English")
+    student = "what rook to d8? and why would they do that?"
+    transcript = (
+        "Wait, before we wrap up this moment, I want to make sure the core idea is clear. "
+        "In your own words, why does 20. Ne4 work so much better?"
+    )
+
+    findings = assess_teaching_plan_obedience(plan, transcript, student_text=student)
+
+    assert [f.code for f in findings] == ["question_ignored"]
+
+
+def test_p0_8_obedience_fixture_accepts_question_answered_before_redirect():
+    plan = TeachingPlan(
+        intent="ask_socratic_question",
+        language="English",
+        withhold_answer=True,
+        socratic_redirect=True,
+    )
+    student = "what rook to d8? and why would they do that?"
+    transcript = (
+        "The verified move is Rad8: Black's a8 rook comes to the d-file to pressure the d5 pawn. "
+        "Now that the line is clear, why is Ne4 better than Nxb5?"
+    )
+
+    assert assess_teaching_plan_obedience(plan, transcript, student_text=student) == []
+
+
 def test_p0_8_wrap_up_records_verified_theme_takeaway(stub_config):
     from app.memory import load_dossier
     from app.review import GameReview, MoveRecord, ReviewTheme
@@ -869,6 +898,23 @@ def test_pending_diagnosis_nudge_injected_until_logged(stub_config):
     state.diagnostics.append({"fen": record.fen_before, "error_category": "bad_trade"})
     result = proc.process("ok, let's go")
     assert "has NOT been logged yet" not in result.prompt
+
+
+def test_pending_diagnosis_answers_student_question_before_logging(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    record = state.review.agenda[0]
+    state.lesson_metadata = {"last_game_id": state.current_game_id,
+                             "last_agenda_index": 0,
+                             "lesson_status": "awaiting_diagnosis"}
+
+    result = proc.process("what rook to d8, and why would they do that?")
+
+    assert "asks a clarification question" in result.prompt
+    assert "Answer that question first" in result.prompt
+    assert "Do NOT call submit_diagnosis" in result.prompt
+    assert record.move_label in result.prompt
 
 
 def test_no_diagnosis_nudge_outside_awaiting_state(stub_config):

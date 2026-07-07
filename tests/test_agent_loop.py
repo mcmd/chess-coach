@@ -6,7 +6,8 @@ import chess
 
 from app.agent_loop import (run_agent_turn, find_illegal_moves, apply_claim_gate,
                             candidate_boards, _record_tool_candidate_fens,
-                            _run_claim_gate)
+                            _run_claim_gate, _run_ambiguous_piece_lint)
+from app.notation import ambiguous_piece_references
 from app.state import SessionState, TimelineManager
 from app.tools import CoachTools
 from tests.conftest import FakeEngines
@@ -96,6 +97,36 @@ def test_claim_gate_records_shadow_observability_without_redacting():
     assert state.claim_gate_events[0]["redacted"] is False
     assert state.claim_gate_events[0]["before_excerpt"] == "Try Qh5 here."
     assert state.claim_gate_events[0]["after_excerpt"] == "Try Qh5 here."
+
+
+def test_ambiguous_piece_reference_lint_flags_rook_to_d8():
+    board = chess.Board("r3r1k1/8/8/8/8/8/8/6K1 b - - 0 1")
+
+    findings = ambiguous_piece_references("Black wants their rook to d8.", board)
+
+    assert len(findings) == 1
+    assert findings[0].piece == "rook"
+    assert findings[0].square == "d8"
+    assert findings[0].candidate_squares == ["a8", "e8"]
+    assert ambiguous_piece_references("Black wants Rad8.", board) == []
+
+
+def test_ambiguous_piece_reference_lint_records_shadow_event():
+    from app.review import GameReview, MoveRecord
+    fen = "r3r1k1/8/8/8/8/8/8/6K1 b - - 0 1"
+    state = SessionState()
+    state.review = GameReview(headers={}, records=[
+        MoveRecord(ply=0, number=1, color="black", san="Rad8", uci="a8d8",
+                   fen_before=fen, fen_after=fen, eval_before_cp=0,
+                   eval_after_cp=0, drop_pct=0, quality="best")
+    ], student_color="black", agenda_plies=[0])
+
+    _run_ambiguous_piece_lint("Black wants their rook to d8.", state)
+
+    assert state.ambiguous_piece_events
+    event = state.ambiguous_piece_events[0]
+    assert event["phrase"] == "their rook to d8"
+    assert event["candidate_squares"] == ["a8", "e8"]
 
 
 def test_claim_gate_observability_is_capped():

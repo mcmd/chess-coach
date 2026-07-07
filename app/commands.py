@@ -22,6 +22,7 @@ from app.notation import legal_san_mentions, san_mentions
 from app.planner import TeachingPlan, _normalize_text, plan_free_text_turn
 from app.rating import current_rating_enrichment, rating_offer_note
 from app.review import adopt_review_pov, review_game, attach_board_tokens
+from app.self_assessment import start_self_assessment, self_assessment_open_note
 from app.sparring import sparring_pgn_from_board
 from app.trace import trace
 from app.ui import console
@@ -159,7 +160,7 @@ class CommandProcessor:
             planned += self._takeaway_note()
         return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
                              + self._opponent_threat_routing_note(text)
-                             + self._give_up_note(text) + self._pending_diagnosis_note())
+                             + self._give_up_note(text) + self._pending_diagnosis_note(text))
 
     # ------------------------------------------------------------------
     # GAME LOADING & REVIEW
@@ -818,7 +819,7 @@ class CommandProcessor:
                 f"recorded ({spent} of 2 before reveal). Give the NEXT ladder hint only and ask them to "
                 "try once more. NEVER invent a guess on the student's behalf to call the grading tools.]")
 
-    def _pending_diagnosis_note(self) -> str:
+    def _pending_diagnosis_note(self, text: str = "") -> str:
         """Observed live (3x in one session): the model ends its turn ANNOUNCING
         it will log the diagnosis and move on, forcing the student to say 'ok'
         to advance. The lesson state machine knows a diagnosis is pending, so
@@ -833,6 +834,11 @@ class CommandProcessor:
         record = agenda[idx]
         if any(d.get("fen") == record.fen_before for d in self.state.diagnostics):
             return ""
+        if "?" in (text or ""):
+            return (f"\n[Backend: the diagnosis for the current moment ({record.move_label}) is still "
+                    "pending, but the student's latest message asks a clarification question. Answer "
+                    "that question first from verified facts. Do NOT call submit_diagnosis, ask a new "
+                    "probe, or move to the next moment until the question has been answered.]")
         return (f"\n[Backend: the diagnosis for the current moment ({record.move_label}) has NOT been "
                 "logged yet. In THIS turn: finish the explanation if needed, call submit_diagnosis, and "
                 "move straight on to the next moment (or the game synthesis if this was the last one). "
@@ -870,38 +876,10 @@ class CommandProcessor:
                 "the student's personal dossier, and do not tell the student to /memorize this session.]")
 
     def _start_self_assessment(self, review) -> None:
-        if not getattr(self.config, "review_self_assessment", True):
-            return
-        agenda = list(getattr(review, "agenda", []) or [])
-        if not agenda:
-            return
-        self.state.teaching_ledger["self_assessment"] = {
-            "status": "pending",
-            "agenda": [
-                {
-                    "ply": r.ply,
-                    "move_label": r.move_label,
-                    "san": r.san,
-                    "diagnosis": r.recommended_diagnosis,
-                    "drop_pct": r.drop_pct,
-                }
-                for r in agenda
-            ],
-        }
+        start_self_assessment(self.state, self.config, review)
 
     def _self_assessment_open_note(self, review) -> str:
-        sa = self.state.teaching_ledger.get("self_assessment") or {}
-        if sa.get("status") != "pending":
-            return ""
-        agenda = list(getattr(review, "agenda", []) or [])
-        if not agenda:
-            return ""
-        labels = ", ".join(r.move_label for r in agenda[:5])
-        return (
-            "\n\n[Backend self-assessment opener - P0-8: before revealing the agenda, ask exactly one "
-            "question: \"Before I show you my agenda, which move do you think was your biggest mistake, "
-            "and why?\" Do not grade it yet and do not let the answer change the agenda. Verified agenda "
-            f"labels for later deterministic comparison: {labels}.]")
+        return self_assessment_open_note(self.state, review)
 
     @staticmethod
     def _normalize_label_token(text: str) -> str:
