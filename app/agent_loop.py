@@ -10,7 +10,8 @@ import chess
 from google.genai import types
 from rich.markdown import Markdown
 
-from app.notation import ambiguous_piece_references, san_mentions
+from app.memory import load_dossier
+from app.notation import ambiguous_piece_references, san_mention_spans
 from app.trace import fmt_args, trace
 from app.ui import console
 
@@ -143,18 +144,6 @@ def _record_tool_candidate_fens(state, tool_name: str, args: dict, result) -> No
     if not hasattr(state, "claim_gate_extra_fens"):
         return
     fens = []
-    if tool_name == "explain_pawn_structure_evolution":
-        review = getattr(state, "review", None)
-        for record in getattr(review, "records", []) or []:
-            for fen in (getattr(record, "fen_before", None), getattr(record, "fen_after", None)):
-                if fen:
-                    fens.append(fen)
-        seen = set(state.claim_gate_extra_fens)
-        for fen in fens:
-            if fen and fen not in seen:
-                state.claim_gate_extra_fens.append(fen)
-                seen.add(fen)
-        return
     start = args.get("fen") if isinstance(args, dict) else None
     if not start:
         return
@@ -318,19 +307,25 @@ def _parses(board: chess.Board, san: str) -> bool:
         return False
 
 
-def candidate_boards(state) -> list:
+def candidate_boards(state, extra_fens=()) -> list:
     """The positions the coach may legitimately reference this turn: the live
-    board plus every agenda moment's before/after FEN and verified line positions.
+    board, every position of the loaded game, agenda verified lines, same-turn
+    tool positions, and any caller-supplied positions (e.g. the dossier's).
     A move legal in any of these is allowed; one legal in none is 'impossible'
     (likely hallucinated)."""
     fens, boards = set(), []
     board = getattr(state, "board", None)
     if board is not None:
         fens.add(board.fen())
-    for f in getattr(state, "claim_gate_extra_fens", []) or []:
+    for f in list(getattr(state, "claim_gate_extra_fens", []) or []) + list(extra_fens):
         if f:
             fens.add(f)
     review = getattr(state, "review", None)
+    # Moves actually played in the loaded game are verified truth wherever they occur.
+    for r in (getattr(review, "records", None) or []):
+        for f in (getattr(r, "fen_before", None), getattr(r, "fen_after", None)):
+            if f:
+                fens.add(f)
     for r in (getattr(review, "agenda", None) or []):
         for f in (getattr(r, "fen_before", None), getattr(r, "fen_after", None)):
             if f:
@@ -393,17 +388,50 @@ def _line_position_fens(start_fen: str, san_line: list) -> list:
     return fens
 
 
-def find_illegal_moves(text: str, boards: list) -> list:
-    """SAN-looking moves that are illegal in EVERY candidate board (impossible
-    given the positions in play). Zero false positives by construction: a move
-    legal in any known position is allowed. Board tokens are stripped first so
-    their hex ids can't masquerade as moves."""
+_BARE_SQUARE_RE = re.compile(r"[a-h][1-8]")
+_MOVE_NUMBER_BEFORE_RE = re.compile(r"\d{1,3}\.(?:\.\.)?\s*$")
+
+
+def _is_move_claim(text: str, start: int, end: int, san: str) -> bool:
+    """A bare square ("e1", "c7") is a square reference unless it is written in move
+    notation: after a move number ("24. e5", "24... e5") or as a standalone code span
+    (`e5`). Pawn captures, piece moves, and castling are claims wherever they appear."""
+    if not _BARE_SQUARE_RE.fullmatch(san.rstrip("+#")):
+        return True
+    if _MOVE_NUMBER_BEFORE_RE.search(text[max(0, start - 8):start]):
+        return True
+    return start > 0 and text[start - 1] == "`" and text[end:end + 1] == "`"
+
+
+def _illegal_move_spans(text: str, boards: list) -> list:
+    """(start, end, san) for each move claim illegal in EVERY candidate board.
+    Masking preserves string length, so spans index the original text."""
     if not boards:
         return []  # no known positions to check against — never flag blind
-    clean = _BOARD_TOKEN_RE.sub(" ", text)
+    clean = _BOARD_TOKEN_RE.sub(lambda m: " " * len(m.group(0)), text)
     clean = _mask_non_claim_move_mentions(clean)
-    return [san for san in san_mentions(clean)
-            if not any(_parses(b, san) for b in boards)]
+    legal = {}
+    spans = []
+    for start, end, san in san_mention_spans(clean):
+        if not _is_move_claim(clean, start, end, san):
+            continue
+        if san not in legal:
+            legal[san] = any(_parses(b, san) for b in boards)
+        if not legal[san]:
+            spans.append((start, end, san))
+    return spans
+
+
+def find_illegal_moves(text: str, boards: list) -> list:
+    """SAN-looking move claims that are illegal in EVERY candidate board (impossible
+    given the positions in play), first-seen order. A move legal in any known position
+    is allowed. Board tokens and square references are masked first."""
+    seen, result = set(), []
+    for _, _, san in _illegal_move_spans(text, boards):
+        if san not in seen:
+            seen.add(san)
+            result.append(san)
+    return result
 
 
 def _mask_non_claim_move_mentions(text: str) -> str:
@@ -446,10 +474,19 @@ def apply_claim_gate(text: str, boards: list, level: int) -> tuple:
     L0: detect only (text unchanged) — shadow/log mode.
     L1+: redact moves illegal in every known position (degrade to less detail,
          never a non-sequitur — the redaction is visible, not a silent hole)."""
-    findings = [{"type": "illegal_move", "token": san} for san in find_illegal_moves(text, boards)]
-    if level >= 1 and findings:
-        for f in findings:
-            text = re.sub(rf"`?\b{re.escape(f['token'])}\b`?", "(an unverified move)", text)
+    spans = _illegal_move_spans(text, boards)
+    findings, seen = [], set()
+    for _, _, san in spans:
+        if san not in seen:
+            seen.add(san)
+            findings.append({"type": "illegal_move", "token": san})
+    if level >= 1 and spans:
+        # Replace only the flagged occurrences (right to left keeps offsets valid);
+        # the same string elsewhere may be a legitimate square reference.
+        for start, end, _ in reversed(spans):
+            if start > 0 and text[start - 1] == "`" and text[end:end + 1] == "`":
+                start, end = start - 1, end + 1
+            text = text[:start] + "(an unverified move)" + text[end:]
     return text, findings
 
 
@@ -481,7 +518,7 @@ def _record_claim_gate_event(state, *, level: int, boards: list, before: str, af
 
 def _run_claim_gate(output_text: str, state, config) -> str:
     level = int(getattr(config, "claim_gate_level", 0)) if config else 0
-    boards = candidate_boards(state)
+    boards = candidate_boards(state, _dossier_fens(config))
     new_text, findings = apply_claim_gate(output_text, boards, level)
     if findings:
         _record_claim_gate_event(state, level=level, boards=boards,
@@ -490,6 +527,19 @@ def _run_claim_gate(output_text: str, state, config) -> str:
         trace(f"claim-gate (L{level}): {len(findings)} illegal-move finding(s): {tokens} "
               + ("[shadow: not modified]" if level < 1 else "[redacted]"))
     return new_text
+
+
+def _dossier_fens(config) -> list:
+    """Diagnosed positions from the student's dossier: after /memorize no game is
+    loaded, but recalling those moments must not be redacted as unverifiable."""
+    path = getattr(config, "dossier_file", None) if config else None
+    if not path:
+        return []
+    try:
+        dossier = load_dossier(path)
+    except Exception:
+        return []
+    return [p.get("fen") for p in dossier.get("recent_positions") or [] if p.get("fen")]
 
 
 def _record_ambiguous_piece_event(state, *, board_fen: str, finding) -> None:

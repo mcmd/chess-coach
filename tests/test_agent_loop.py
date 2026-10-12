@@ -305,7 +305,9 @@ def test_candidate_boards_include_tool_returned_threat_null_move_positions():
     assert find_illegal_moves("Black was threatening Qh4+.", boards) == []
 
 
-def test_candidate_boards_include_pawn_story_game_history_positions():
+def test_candidate_boards_include_every_position_of_the_loaded_game():
+    # Recorded 2026-10-12: "8. cxd3!" and "23. hxg4" (both played in the game, outside any
+    # agenda moment) were redacted. Real game moves must always be verifiable.
     from app.review import GameReview, MoveRecord
     board = chess.Board()
     for san in ("e4", "d5", "Nf3"):
@@ -319,10 +321,50 @@ def test_candidate_boards_include_pawn_story_game_history_positions():
     state = SessionState()
     state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[])
 
-    _record_tool_candidate_fens(state, "explain_pawn_structure_evolution", {}, {"events": []})
-
     boards = candidate_boards(state)
     assert find_illegal_moves("Black played 2... dxe4, and the f2 and g4 pawns mattered.", boards) == []
+
+
+_MOVE24_FEN = "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24"
+_MOVE4_FEN = "rn1qkbnr/ppp2ppp/4p3/3p1b2/3P1B2/2N5/PPP1PPPP/R2QKBNR w KQkq - 0 4"
+
+
+def test_bare_squares_in_prose_are_not_move_claims():
+    # Recorded 2026-10-12 replies, verbatim fragments; every square here was redacted.
+    move24 = [chess.Board(_MOVE24_FEN)]
+    assert find_illegal_moves("After `24. Rfe1`, what tactical idea around e1 changes?", move24) == []
+    texts = [
+        "jumping the knight to b5 to attack the c7 pawn. You are threatening to take on c7, "
+        "but Black can easily defend it. Once Black defends c7, your knight on b5 isn't doing much.",
+        "their king on g8 still had its original f7, g7, and h7 pawns sitting in front of it.",
+        "Black's h7 pawn was still there, sitting safely on g7 and h7, blocking the files.",
+    ]
+    for text in texts:
+        assert find_illegal_moves(text, [chess.Board(_MOVE4_FEN)]) == []
+
+
+def test_numbered_or_code_span_pawn_moves_are_still_checked():
+    start = [chess.Board()]
+    assert find_illegal_moves("Now 1. e5 grabs space.", start) == ["e5"]
+    assert find_illegal_moves("The engine wants `e5` here.", start) == ["e5"]
+
+
+def test_redaction_replaces_only_flagged_occurrences():
+    out, findings = apply_claim_gate("Play 1. c5 to put pressure on the c5 square.", [chess.Board()], level=1)
+    assert [f["token"] for f in findings] == ["c5"]
+    assert out == "Play 1. (an unverified move) to put pressure on the c5 square."
+
+
+def test_claim_gate_verifies_moves_from_dossier_positions_without_a_loaded_game(tmp_path):
+    # Recorded 2026-10-12 after /memorize: "24. Kxg2, 26. Qxa7, and 31. Kh1" were all
+    # redacted because no game was loaded; they are the dossier's own diagnosed positions.
+    import json
+    dossier = tmp_path / "player_dossier.json"
+    dossier.write_text(json.dumps({"recent_positions": [
+        {"fen": _MOVE24_FEN, "error_category": "ignored_threat"}]}))
+    state = SessionState()
+    config = SimpleNamespace(claim_gate_level=1, dossier_file=str(dossier))
+    assert _run_claim_gate("We looked at 24. Kxg2 last time.", state, config) == "We looked at 24. Kxg2 last time."
 
 
 class FakeChat:

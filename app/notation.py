@@ -24,6 +24,17 @@ def san_mentions(text: str) -> list:
     return result
 
 
+def san_mention_spans(text: str) -> list:
+    """Every SAN-looking token with its (start, end) span, annotations excluded."""
+    if not text:
+        return []
+    spans = []
+    for match in _SAN_RE.finditer(text):
+        san = match.group(0).rstrip("!?")
+        spans.append((match.start(), match.start() + len(san), san))
+    return spans
+
+
 def legal_san_mentions(board: chess.Board, text: str) -> list:
     """Legal SAN moves mentioned in free text, preserving first-seen order.
     Only moves that are actually legal on `board` count — the regex proposes,
