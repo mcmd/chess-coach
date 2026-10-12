@@ -1,5 +1,5 @@
-"""Cached, failure-tolerant access to Lichess online databases
-(opening explorer + Syzygy tablebase).
+"""Cached, failure-tolerant access to Lichess and Chess.com public data
+(opening explorer, Syzygy tablebase, game and profile exports).
 
 Design rule: the app is network-ENHANCED, never network-dependent. Every
 function returns None on any failure; callers must degrade gracefully to
@@ -16,13 +16,28 @@ EXPLORER_LICHESS = "https://explorer.lichess.ovh/lichess"
 TABLEBASE = "https://tablebase.lichess.ovh/standard"
 LICHESS_USER = "https://lichess.org/api/user/{username}"
 LICHESS_USER_GAMES = "https://lichess.org/api/games/user/{username}"
+LICHESS_EXPORT_IDS = "https://lichess.org/api/games/export/_ids"
 CHESSCOM_STATS = "https://api.chess.com/pub/player/{username}/stats"
 CHESSCOM_ARCHIVES = "https://api.chess.com/pub/player/{username}/games/archives"
+# Lichess rejects anonymous API requests without an identifying User-Agent
+# (lichess-org/api#667); Chess.com's public API asks for the same.
+USER_AGENT = "chess-coach (+https://github.com/mcmd/chess-coach)"
+PGN_EXPORT_PARAMS = {"evals": "true", "clocks": "true", "opening": "true", "tags": "true"}
+
+
+def _headers(extra: dict = None) -> dict:
+    return {"User-Agent": USER_AGENT, **(extra or {})}
+
+
+def _is_pgn_response(r) -> bool:
+    """A redirect to a login or error page arrives as 200 HTML; never parse it as a game."""
+    content_type = (r.headers.get("Content-Type") or "").lower()
+    return "html" not in content_type and not r.text.lstrip().startswith("<")
 
 
 def _fetch_json(url: str, params: dict):
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, headers=_headers(), timeout=10)
         r.raise_for_status()
         return r.json()
     except Exception:
@@ -31,9 +46,21 @@ def _fetch_json(url: str, params: dict):
 
 def _fetch_text(url: str, params: dict = None, headers: dict = None):
     try:
-        r = requests.get(url, params=params or {}, headers=headers or {}, timeout=20)
+        r = requests.get(url, params=params or {}, headers=_headers(headers), timeout=20)
         r.raise_for_status()
-        return r.text
+        return r.text if _is_pgn_response(r) else None
+    except Exception:
+        return None
+
+
+def lichess_game_pgn(game_id: str) -> str | None:
+    """One Lichess game as PGN with server evals and clocks. Returns "" when Lichess
+    has no such game, and None on any network failure or non-PGN response."""
+    try:
+        r = requests.post(LICHESS_EXPORT_IDS, params=PGN_EXPORT_PARAMS, data=game_id,
+                          headers=_headers({"Accept": "application/x-chess-pgn"}), timeout=15)
+        r.raise_for_status()
+        return r.text if _is_pgn_response(r) else None
     except Exception:
         return None
 

@@ -686,9 +686,8 @@ def test_withheld_answer_includes_verified_hint_facts(stub_config):
 
 # --- lesson resume/restart boundary ---
 
-class _FakeResponse:
-    status_code = 200
-    text = REVIEW_PGN
+def _serve_review_pgn(monkeypatch, pgn=REVIEW_PGN):
+    monkeypatch.setattr("app.tools.external.lichess_game_pgn", lambda game_id: pgn)
 
 
 def test_known_lichess_game_requires_resume_choice(stub_config):
@@ -710,7 +709,7 @@ def test_restart_known_lichess_game_loads_from_start(stub_config, monkeypatch):
         "last_agenda_index": 0,
         "lesson_status": "awaiting_answer",
     })
-    monkeypatch.setattr("app.tools.requests.get", lambda *args, **kwargs: _FakeResponse())
+    _serve_review_pgn(monkeypatch)
     tools, state = make_tools(stub_config, _scripted_engines())
     result = tools.fetch_lichess_game_by_id("2dtDqQgRy2OD", mode="restart")
     assert "GAME REVIEW" in result["review_digest"]
@@ -729,7 +728,7 @@ def test_continue_known_lichess_game_jumps_to_saved_agenda(stub_config, monkeypa
         "last_agenda_index": 0,
         "lesson_status": "diagnosis_logged",
     })
-    monkeypatch.setattr("app.tools.requests.get", lambda *args, **kwargs: _FakeResponse())
+    _serve_review_pgn(monkeypatch)
     tools, state = make_tools(stub_config, _scripted_engines())
     result = tools.fetch_lichess_game_by_id("2dtDqQgRy2OD", mode="continue")
     assert result["resume"]["moment_number"] == 1
@@ -737,6 +736,16 @@ def test_continue_known_lichess_game_jumps_to_saved_agenda(stub_config, monkeypa
     assert state.move_index == state.review.agenda_plies[0]
     meta = load_lesson_metadata(stub_config.lesson_file)
     assert meta["lesson_status"] == "awaiting_answer"
+
+
+def test_lichess_download_failure_is_reported_without_parsing(stub_config, monkeypatch):
+    tools, state = make_tools(stub_config, _scripted_engines())
+    _serve_review_pgn(monkeypatch, None)
+    failed = tools.fetch_lichess_game_by_id("2dtDqQgRy2OD")
+    assert "did not return the game" in failed["error"] and state.review is None
+    _serve_review_pgn(monkeypatch, "")
+    missing = tools.fetch_lichess_game_by_id("zzzzzzzz")
+    assert "not found" in missing["error"] and state.review is None
 
 
 def test_downloaded_unmatched_game_requires_pov_before_digest(stub_config):

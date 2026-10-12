@@ -8,6 +8,7 @@ import chess.pgn
 import requests
 from rich.panel import Panel
 
+from app import external
 from app.concepts import extract_board_features, see_exchange_gain
 from app.drills import record_drill_outcome
 from app.memory import load_lesson_metadata, save_lesson_metadata
@@ -381,7 +382,6 @@ class CoachTools:
         # that keeps the proven result is correct; one that downgrades it is wrong.
         tablebase_verdict = None
         if len(board.piece_map()) <= 7 and getattr(self.config, "use_online_databases", True):
-            from app import external
             tb = external.tablebase_probe(fen)
             if tb:
                 pos_cat = external.normalize_category(tb.get("category"))
@@ -1231,7 +1231,6 @@ class CoachTools:
             chess.Board(fen)
         except ValueError as e:
             return {"error": f"Invalid FEN: {e}"}
-        from app import external
         try:
             master_res = external.masters_moves(fen)
             if master_res is None:
@@ -1290,7 +1289,6 @@ class CoachTools:
         if piece_count > 7:
             return {"error": f"Tablebase requires <= 7 pieces; this position has {piece_count}. "
                              "Use analyze_position instead."}
-        from app import external
         res = external.tablebase_probe(fen)
         if res is None:
             return {"error": "Tablebase unavailable (network failure). Fall back to analyze_position."}
@@ -1352,18 +1350,16 @@ class CoachTools:
                             "If they choose continue, call fetch_lichess_game_by_id with mode='continue'. "
                             "If they choose restart, call it with mode='restart'."),
             }
+        # Lichess redirects anonymous GET /game/export/{id} to /signup; the bulk
+        # export endpoint still serves single games with server evals and clocks.
+        pgn_text = external.lichess_game_pgn(game_id)
+        if pgn_text is None:
+            return {"error": ("Lichess did not return the game (network failure or a non-PGN response). "
+                              "Tell the student the download failed; do not suggest the game is private.")}
+        if not pgn_text.strip():
+            return {"error": f"Game with ID '{game_id}' not found."}
         try:
-            url = f"https://lichess.org/game/export/{game_id}"
-            # evals=true: pull Lichess's deep server [%eval] so the review uses the
-            # trusted eval source (GT-12) when the game was analysed, instead of
-            # falling back to short local Stockfish searches. (No-op if unanalysed.)
-            params = {"evals": "true", "clocks": "true", "opening": "true", "tags": "true"}
-            r = requests.get(url, params=params, headers={"Accept": "application/x-chess-pgn"}, timeout=15)
-            if r.status_code == 404:
-                return {"error": f"Game with ID '{game_id}' not found."}
-            if r.status_code != 200:
-                return {"error": f"Lichess API returned status {r.status_code}."}
-            return self._review_and_load(r.text, source_game_id=game_id, resume=(mode == "continue"))
+            return self._review_and_load(pgn_text, source_game_id=game_id, resume=(mode == "continue"))
         except Exception as e:
             return {"error": str(e)}
 

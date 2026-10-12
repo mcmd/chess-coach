@@ -212,6 +212,57 @@ def test_lichess_user_games_pgn_requests_analysed_evals(monkeypatch):
     assert headers["Accept"] == "application/x-chess-pgn"
 
 
+class _HttpResponse:
+    def __init__(self, text, status_code=200, content_type="application/x-chess-pgn"):
+        self.text = text
+        self.status_code = status_code
+        self.headers = {"Content-Type": content_type}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return {}
+
+
+def test_lichess_game_pgn_uses_bulk_export_with_identifying_user_agent(monkeypatch):
+    calls = []
+
+    def post(url, params=None, data=None, headers=None, timeout=None):
+        calls.append({"url": url, "params": params, "data": data, "headers": headers})
+        return _HttpResponse('[Event "casual rapid game"]\n\n1. d4 { [%eval 0.15] } 1-0\n')
+
+    monkeypatch.setattr(external.requests, "post", post)
+    assert external.lichess_game_pgn("2dtDqQgR").startswith('[Event "casual rapid game"]')
+    call = calls[0]
+    assert call["url"] == "https://lichess.org/api/games/export/_ids"
+    assert call["data"] == "2dtDqQgR"
+    assert call["params"]["evals"] == "true" and call["params"]["clocks"] == "true"
+    assert "github.com/mcmd/chess-coach" in call["headers"]["User-Agent"]
+
+
+def test_lichess_game_pgn_distinguishes_missing_game_from_non_pgn_page(monkeypatch):
+    monkeypatch.setattr(external.requests, "post", lambda *a, **k: _HttpResponse(""))
+    assert external.lichess_game_pgn("zzzzzzzz") == ""
+    signup_page = _HttpResponse("<!DOCTYPE html><html>Sign up</html>", content_type="text/html; charset=utf-8")
+    monkeypatch.setattr(external.requests, "post", lambda *a, **k: signup_page)
+    assert external.lichess_game_pgn("2dtDqQgR") is None
+
+
+def test_lichess_text_requests_send_identifying_user_agent(monkeypatch):
+    seen = []
+
+    def get(url, params=None, headers=None, timeout=None):
+        seen.append(headers or {})
+        return _HttpResponse('[Event "x"]\n\n1. e4 *\n')
+
+    monkeypatch.setattr(external.requests, "get", get)
+    external.lichess_user_games_pgn("mcmd", max_games=1)
+    external._fetch_json("https://lichess.org/api/user/mcmd", {})
+    assert all("github.com/mcmd/chess-coach" in h.get("User-Agent", "") for h in seen) and len(seen) == 2
+
+
 def test_chesscom_user_games_pgn_reads_recent_archives(monkeypatch):
     data = {
         "archives": {"archives": ["https://api.chess.com/a/2026/05", "https://api.chess.com/a/2026/06"]},
