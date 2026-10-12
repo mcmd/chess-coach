@@ -183,6 +183,24 @@ def test_verified_hypothetical_line_is_legal_and_unverified_one_is_not(tmp_path)
     assert by_turn == {1: "PASS", 2: "FAIL"}
 
 
+def test_single_numbered_move_in_prose_is_checked(tmp_path):
+    # Run par4cj6m: "after Black recaptures with 20... Qxb5" was illegal (the queen on d6
+    # cannot reach b5) but the checker only read numbered lines of two or more moves.
+    recording = Recording(tmp_path)
+    game, positions, source = source_game(recording)
+    state = game_state(game, positions, 2)
+    recording.turn(1, state, reply="After you played 1. Nf3, Black answered with 1... Nf6.")
+    recording.turn(2, state, reply="After you played 1. Nf3, Black recaptured with 1... Qxb5.")
+    # A ranked engine list is not a move number (run par4cj6m: "1. Qd7 (+4.79), 2. Qg6 (+5.34)").
+    recording.turn(3, state, reply="Top engine lines: 1. Qd7 (+4.79), 2. Qg6 (+5.34).")
+    result = recording.save()
+    by_turn = {next(e["turn"] for e in recording.events if e["id"] == c["evidence"][0]): c["verdict"]
+               for c in findings(result, "visible_line_legality")}
+    assert by_turn[2] == "FAIL" and "Qxb5" in next(
+        c["explanation"] for c in findings(result, "visible_line_legality") if c["verdict"] == "FAIL")
+    assert by_turn[1] == "PASS" and 3 not in by_turn
+
+
 def test_free_prose_moves_without_line_context_are_not_naively_graded(tmp_path):
     recording = Recording(tmp_path)
     recording.turn(1, snapshot(), reply="Earlier Ne4 attacked the queen. Qh5 might matter in another position.")

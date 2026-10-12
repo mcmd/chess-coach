@@ -23,7 +23,7 @@ CATEGORIES = (
 )
 TOKEN = re.compile(r"\[\[BOARD_[^\]\s]+\]\]")
 SAN = r"(?:O-O(?:-O)?|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?)[+#]?[!?]*"
-NUMBERED_LINE = re.compile(rf"(?<!\w)(\d+)\.(\.\.)?\s*({SAN}(?:\s+(?:\d+\.(?:\.\.)?\s*)?{SAN})+)")
+NUMBERED_LINE = re.compile(rf"(?<!\w)(\d+)\.(\.\.)?\s*({SAN}(?:\s+(?:\d+\.(?:\.\.)?\s*)?{SAN})*)")
 
 
 def _board(value):
@@ -487,6 +487,9 @@ def check_recording(run_dir: str | Path) -> dict:
                 line_positions += _line_positions(record.get("fen_after"), record.get("punishment_line"))
         for match in NUMBERED_LINE.finditer(text):
             number, black = int(match[1]), bool(match[2])
+            # "1. Qd7 (+4.79), 2. Qg6 (+5.34)" ranks engine moves; it is not a move number.
+            if " " not in match[3].strip() and re.match(r"\s*\([+-]?#?\d", text[match.end():]):
+                continue
             pool = list(source[2]) if source else []
             pool += [_board(v) for v in [state.get("board_fen")] + [d["data"].get("fen") for d in visible]
                      + [r.get("fen_before") for r in _agenda(state) if isinstance(r, dict)]]
