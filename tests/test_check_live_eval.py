@@ -381,6 +381,23 @@ def test_explicit_truncation_and_unknown_payload_are_recording_gaps(tmp_path):
     assert verdicts(result, "recording_completeness") == {"FAIL"}
 
 
+def test_backend_handled_turn_needs_no_model_evidence(tmp_path):
+    # Live eval t3hufhwt S22: "Annotate every move" is declined by the command layer with
+    # no model call (recorded prompt=None), which was flagged as a recording gap.
+    recording = Recording(tmp_path)
+    recording.add("student", 1, text="Annotate every move of the game.")
+    recording.add("turn_start", 1, prompt=None, state=snapshot())
+    recording.add("coach_reply", 1, text="I won't annotate every move.", state=snapshot())
+    recording.add("turn_end", 1, state=snapshot())
+    recording.add("student", 2, text="Explain this position")
+    recording.add("turn_start", 2, prompt="Explain this position", state=snapshot())
+    recording.add("model_request", 2, payload={"messages": []})
+    recording.add("coach_reply", 2, text="A recorded reply", state=snapshot())
+    recording.add("turn_end", 2, state=snapshot())
+    result = recording.save()
+    assert result["recording_gaps"] == ["Completed turn 2 has no model_response evidence"]
+
+
 @pytest.mark.parametrize("status", ["SCRIPT_COMPLETE", "STOPPED_UNEXPECTED", "TIMED_OUT", "INFRASTRUCTURE_BLOCKED"])
 def test_execution_status_never_overwrites_observed_quality_failure(tmp_path, status):
     recording = Recording(tmp_path, status)

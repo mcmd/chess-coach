@@ -245,7 +245,11 @@ def check_recording(run_dir: str | Path) -> dict:
         if turn not in ends:
             gaps.append(f"Turn {turn} (event {student['id']}) is interrupted: no turn_end/turn_error")
         elif ends[turn]["kind"] == "turn_end":
-            for kind in ("model_request", "model_response", "coach_reply"):
+            # A recorded prompt of None means the command layer answered without the model
+            # (e.g. a declined full-game annotation); only the reply is required then.
+            start = starts.get(turn)
+            backend_only = start is not None and "prompt" in start["data"] and start["data"]["prompt"] is None
+            for kind in (("coach_reply",) if backend_only else ("model_request", "model_response", "coach_reply")):
                 if not any(e["turn"] == turn and e["kind"] == kind for e in events):
                     gaps.append(f"Completed turn {turn} has no {kind} evidence")
     for e in events:
@@ -255,6 +259,8 @@ def check_recording(run_dir: str | Path) -> dict:
                     "tool_result": ("call_id", "name", "result", "state"),
                     "board_diagram": ("token", "fen", "pov", "text")}.get(e["kind"], ())
         for key in required:
+            if e["kind"] == "turn_start" and key == "prompt" and key in e["data"]:
+                continue
             if key not in e["data"] or e["data"][key] is None:
                 gaps.append(f"Event {e['id']} ({e['kind']}) has missing/unknown {key}")
     for call in call_events:
