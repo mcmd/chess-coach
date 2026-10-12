@@ -146,6 +146,7 @@ class CommandProcessor:
             "withhold_answer": plan.withhold_answer,
             "socratic_redirect": plan.socratic_redirect,
             "no_tail_redirect": plan.no_tail_redirect,
+            "stay_on_topic": plan.stay_on_topic,
             "decline": plan.decline,
             "reasons": list(plan.reasons),
         }

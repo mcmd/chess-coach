@@ -315,6 +315,28 @@ def test_p0_8_phase_summary_suppresses_tail_redirect(stub_config):
     assert state.teaching_ledger["last_plan"]["no_tail_redirect"] is True
 
 
+def test_detour_question_stays_on_topic_instead_of_re_presenting_next_moment(stub_config):
+    # Recorded 2026-10-12: each question about move 20 was answered and then move 24 was
+    # re-presented in the same reply, so the student had to push back three times.
+    proc, state, _ = make_processor(stub_config)
+    for text in ("Wait, go back to the previous position. But what is that pressure on b5 good for? "
+                 "It's defended by their knight on c7.",
+                 "I still have quesions about the previous position. Why is Ne4 best, what happens next, "
+                 "and what would humans do?",
+                 "still on move 20. When you say Black has to move the queen, do you mean literally forced"):
+        result = proc.process(text)
+        assert "stay_on_topic: true" in result.prompt
+        assert "do not move to or re-present another agenda moment" in result.prompt
+        assert state.teaching_ledger["last_plan"]["stay_on_topic"] is True
+
+
+def test_plain_answers_and_ready_signals_keep_lesson_flow(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    for text in ("I would play Kxg2", "ok thank you, let's continue"):
+        result = proc.process(text)
+        assert "stay_on_topic: false" in result.prompt
+
+
 def test_p0_8_quiz_me_keeps_socratic_withholding(stub_config):
     proc, state, _ = make_processor(stub_config)
     result = proc.process("Quiz me on this position.")

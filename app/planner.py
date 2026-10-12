@@ -113,6 +113,14 @@ _CLOSE_RE = re.compile(
     r"por hoy basta|ya esta|que debo recordar|conclusion|idea principal)\b",
     re.I,
 )
+# A follow-up about the current or an earlier position: the student is not ready to
+# move on, so the coach must not jump to (or re-show) the next agenda moment.
+_DETOUR_RE = re.compile(
+    r"\b(?:go back|back to (?:the )?(?:previous|earlier|last) (?:position|move|moment)|"
+    r"previous position|earlier position|still on move|more questions?|one more question|"
+    r"follow[- ]up|volvamos|posicion anterior|mas preguntas|otra pregunta)\b",
+    re.I,
+)
 
 
 @dataclass
@@ -123,6 +131,7 @@ class TeachingPlan:
     withhold_answer: bool = False
     socratic_redirect: bool = False
     no_tail_redirect: bool = False
+    stay_on_topic: bool = False
     decline: bool = False
     decline_message: str = None
     reasons: list[str] = field(default_factory=list)
@@ -138,6 +147,7 @@ class TeachingPlan:
             f"withhold_answer: {str(self.withhold_answer).lower()}",
             f"socratic_redirect: {str(self.socratic_redirect).lower()}",
             f"no_tail_redirect: {str(self.no_tail_redirect).lower()}",
+            f"stay_on_topic: {str(self.stay_on_topic).lower()}",
         ]
         if self.reasons:
             lines.append("routing_reasons: " + ", ".join(self.reasons))
@@ -146,6 +156,10 @@ class TeachingPlan:
             "only for this turn when language differs from config.",
             "If no_tail_redirect=true, answer the requested thing and stop; do not append an "
             "unrequested quiz, agenda jump, or 'now let's look at...' redirect.",
+            "If stay_on_topic=true, the student is asking about a position and is not ready to move "
+            "on: answer the question, then do not move to or re-present another agenda moment (no new "
+            "board, no repeated question from it); end with one short line asking whether they have "
+            "more questions here or want to continue. Follow-ups on the position they asked about are fine.",
             "If socratic_redirect=false or withhold_answer=false, answer directly instead of turning "
             "the request into a quiz.",
             "[/Backend Teaching Plan]",
@@ -370,5 +384,6 @@ def plan_free_text_turn(text: str, *, default_language: str = "English") -> Teac
         intent="answer_directly",
         language=language,
         density=density,
+        stay_on_topic="?" in normalized_text or bool(_DETOUR_RE.search(normalized_text)),
         reasons=reasons + ["intent:default_free_text"],
     )
