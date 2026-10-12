@@ -299,7 +299,8 @@ class CoachTools:
             board = chess.Board(fen)
         except ValueError as e:
             return {"error": f"Invalid FEN: {e}"}
-        provenance_error = self._verify_latest_student_input("evaluate_student_answer", "student_move_san", student_move_san)
+        provenance_error = self._verify_latest_student_input(
+            "evaluate_student_answer", "student_move_san", student_move_san, [board])
         if provenance_error:
             return provenance_error
 
@@ -491,13 +492,53 @@ class CoachTools:
     def _compact_student_text(text: str) -> str:
         return re.sub(r"[^a-z0-9]+", "", _normalize_text(text or ""))
 
-    def _verify_latest_student_input(self, tool_name: str, field_name: str, submitted: str) -> dict | None:
+    @staticmethod
+    def _student_words(text: str) -> list:
+        return re.findall(r"[a-z0-9]+", _normalize_text(text or ""))
+
+    @staticmethod
+    def _typo_variant(a: str, b: str) -> bool:
+        """One substitution, insertion, deletion, or adjacent swap apart ("teh"/"the")."""
+        if a == b:
+            return True
+        if min(len(a), len(b)) < 3 or abs(len(a) - len(b)) > 1:
+            return False
+        if len(a) == len(b):
+            diffs = [i for i in range(len(a)) if a[i] != b[i]]
+            return len(diffs) == 1 or (len(diffs) == 2 and diffs[1] == diffs[0] + 1
+                                       and a[diffs[0]] == b[diffs[1]] and a[diffs[1]] == b[diffs[0]])
+        short, long_ = (a, b) if len(a) < len(b) else (b, a)
+        return any(long_[:i] + long_[i + 1:] == short for i in range(len(long_)))
+
+    def _near_verbatim(self, submitted: str, latest: str) -> bool:
+        """The submitted explanation is the latest message with at most typo-level edits:
+        at least 85% of its (3+) words appear in the latest message, allowing one-letter
+        slips. A replay of an older turn ("not sure") does not qualify."""
+        submitted_words = self._student_words(submitted)
+        latest_words = self._student_words(latest)
+        if len(submitted_words) < 3:
+            return False
+        matched = sum(1 for w in submitted_words if any(self._typo_variant(w, l) for l in latest_words))
+        return matched / len(submitted_words) >= 0.85
+
+    def _verify_latest_student_input(self, tool_name: str, field_name: str, submitted: str,
+                                     boards=()) -> dict | None:
         latest = getattr(self.state, "latest_user_text", None)
         if not latest or not submitted:
             return None
         submitted_compact = self._compact_student_text(submitted)
         latest_compact = self._compact_student_text(latest)
         if submitted_compact and submitted_compact in latest_compact:
+            return None
+        # A move the student described in words ("knight to e4", "castle kingside").
+        for board in boards:
+            try:
+                san = board.san(board.parse_san(submitted.strip()))
+            except ValueError:
+                continue
+            if san in _legal_san_mentions(board, latest):
+                return None
+        if field_name == "student_explanation" and self._near_verbatim(submitted, latest):
             return None
         event = {
             "type": "stale_or_fabricated_student_input",
@@ -581,15 +622,16 @@ class CoachTools:
             board = chess.Board(fen)
         except ValueError as e:
             return {"error": f"Invalid FEN: {e}"}
-        provenance_error = self._verify_latest_student_input("evaluate_threat_answer", "threat_move_san", threat_move_san)
-        if provenance_error:
-            return provenance_error
         if board.is_check():
             return {"note": "The side to move is in check — the question here is how to MEET the check, "
                             "not what is threatened next."}
-
         probe = board.copy(stack=False)
         probe.push(chess.Move.null())
+        provenance_error = self._verify_latest_student_input(
+            "evaluate_threat_answer", "threat_move_san", threat_move_san, [probe])
+        if provenance_error:
+            return provenance_error
+
         attempts = self.state.socratic_attempts
         key = f"threat:{fen}"
 

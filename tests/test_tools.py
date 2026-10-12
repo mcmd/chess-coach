@@ -558,6 +558,57 @@ def test_evaluate_threat_answer_provenance_rejects_fabricated_answer(stub_config
     assert state.grading_integrity_events[0]["tool"] == "evaluate_threat_answer"
 
 
+def test_threat_described_in_words_is_graded_not_rejected(stub_config):
+    # Recorded 2026-10-12 ("black is threatening queen to g6"): the model's Qg6 was rejected
+    # as stale input, and the routing note misread the phrase as the pawn move g6.
+    tools, state = make_tools(stub_config, _threat_engines())
+    state.latest_user_text = "Black is threatening the queen to h4"
+
+    result = tools.evaluate_threat_answer(THREAT_FEN, "Qh4")
+
+    assert result["verdict"] == "correct_threat"
+    assert state.grading_integrity_events == []
+
+
+def test_student_move_described_in_words_is_graded_not_rejected(stub_config):
+    tools, state = make_tools(stub_config, _answer_engines())
+    state.latest_user_text = "I'd move my knight to f3"
+
+    result = tools.evaluate_student_answer(START, "Nf3")
+
+    assert result["verdict"] != "stale_or_fabricated_student_input"
+    assert state.grading_integrity_events == []
+
+
+def test_castling_described_in_words_matches_the_submitted_move(stub_config):
+    tools, state = make_tools(stub_config)
+    board = chess.Board()
+    for san in ("e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"):
+        board.push_san(san)
+    state.latest_user_text = "I would castle kingside"
+    assert tools._verify_latest_student_input("evaluate_student_answer", "student_move_san", "O-O", [board]) is None
+    assert tools._verify_latest_student_input("evaluate_student_answer", "student_move_san", "Ke2", [board])
+
+
+def test_explanation_with_typos_fixed_is_accepted_but_stale_replay_is_not(stub_config):
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    state.latest_user_text = "because it blocks teh advance of their e pawn and atacks the queen"
+    fixed = tools.evaluate_explanation(START, "because it blocks the advance of their e pawn and attacks the queen")
+    assert fixed.get("verdict") != "stale_or_fabricated_student_input"
+    state.latest_user_text = "black is threatening Qxg4. I need to move Rd4"
+    assert tools.evaluate_explanation(START, "not sure")["verdict"] == "stale_or_fabricated_student_input"
+
+
+def test_described_moves_resolve_to_the_named_piece_not_a_pawn():
+    from app.notation import legal_san_mentions
+    session_b = chess.Board("3r2k1/p2r1pp1/2p1q2p/Q1P1p3/1P2P3/P3BP2/7P/R3R1K1 w - - 1 23")
+    session_b.push(chess.Move.null())  # the opponent's view, as threat grading uses
+    assert legal_san_mentions(session_b, "black is threatening queen to g6") == ["Qg6+"]
+    move4 = chess.Board("rn1qkbnr/ppp2ppp/4p3/3p1b2/3P1B2/2N5/PPP1PPPP/R2QKBNR w KQkq - 0 4")
+    assert legal_san_mentions(move4, "Once Black defends c7, your knight on b5 isn't doing much") == []
+
+
 def test_evaluate_explanation_accepts_live_pawn_defense_paraphrase(stub_config):
     # #25: the reason must come from the real review pipeline for move 26, not a
     # hand-written reason (the earlier fixture passed while live grading failed).

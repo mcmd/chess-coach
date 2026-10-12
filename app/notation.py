@@ -35,14 +35,52 @@ def san_mention_spans(text: str) -> list:
     return spans
 
 
+_PIECE_WORDS_TO_TYPE = {"king": chess.KING, "queen": chess.QUEEN, "rook": chess.ROOK,
+                        "bishop": chess.BISHOP, "knight": chess.KNIGHT, "pawn": chess.PAWN}
+# "queen to g6", "knight takes e4", "rook captures on d8". "knight on b5" is a location,
+# not a move, so "on" alone is deliberately absent.
+_DESCRIBED_MOVE_RE = re.compile(
+    r"\b(king|queen|rook|bishop|knight|pawn)\s+"
+    r"(?:to|takes(?:\s+on)?|captures(?:\s+on)?|goes\s+to|moves\s+to|jumps\s+to|x)\s+([a-h][1-8])\b",
+    re.IGNORECASE)
+_CASTLE_RE = re.compile(
+    r"\bcastl(?:e|es|ing)\s+(?:on\s+the\s+)?(king\s*side|short|queen\s*side|long)\b", re.IGNORECASE)
+
+
+def _described_moves(board: chess.Board, text: str) -> tuple:
+    """Legal moves described in words, plus the text with those phrases blanked so their
+    destination squares are not misread as pawn moves ("queen to g6" is not "g6")."""
+    found = []
+    masked = text
+    for match in _DESCRIBED_MOVE_RE.finditer(text):
+        piece_type = _PIECE_WORDS_TO_TYPE[match.group(1).lower()]
+        target = chess.parse_square(match.group(2).lower())
+        found.append((match.start(), [board.san(m) for m in board.legal_moves
+                                      if m.to_square == target
+                                      and board.piece_type_at(m.from_square) == piece_type]))
+        masked = masked[:match.start()] + " " * (match.end() - match.start()) + masked[match.end():]
+    for match in _CASTLE_RE.finditer(text):
+        san = "O-O" if match.group(1).lower().startswith(("king", "short")) else "O-O-O"
+        try:
+            found.append((match.start(), [board.san(board.parse_san(san))]))
+        except ValueError:
+            found.append((match.start(), []))
+    return [san for _, sans in sorted(found, key=lambda item: item[0]) for san in sans], masked
+
+
 def legal_san_mentions(board: chess.Board, text: str) -> list:
-    """Legal SAN moves mentioned in free text, preserving first-seen order.
-    Only moves that are actually legal on `board` count — the regex proposes,
-    parse_san disposes."""
+    """Legal moves mentioned in free text, in SAN or in words ("knight to e4",
+    "castle kingside"), preserving first-seen order. Only moves that are actually
+    legal on `board` count — the regex proposes, parse_san disposes."""
     if not text:
         return []
+    described, masked = _described_moves(board, text)
     seen, result = set(), []
-    for token in _SAN_RE.findall(text):
+    for san in described:
+        if san not in seen:
+            seen.add(san)
+            result.append(san)
+    for token in _SAN_RE.findall(masked):
         san = token.rstrip("!?")
         try:
             move = board.parse_san(san)
