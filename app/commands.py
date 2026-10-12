@@ -27,6 +27,10 @@ from app.sparring import sparring_pgn_from_board
 from app.trace import trace
 from app.ui import console
 
+# A whole message that is just one move, e.g. "e4", "qg6", "Nxf7+", "0-0".
+_BARE_MOVE_RE = re.compile(
+    r"^\s*(O-O-O|O-O|0-0-0|0-0|[KQRBNkqrbn]?[a-h]?[1-8]?x?[a-h][1-8](?:=?[QRBNqrbn])?[+#]?)[!?]*\s*$")
+
 HELP_TEXT = """[bold]Commands[/bold]
   /load_pgn <path>   Load + review a PGN file (full engine review, lesson agenda)
   /batch <path>      Scan a multi-game PGN (10-50 games) for recurring mistake patterns
@@ -127,6 +131,11 @@ class CommandProcessor:
         if self.state.pending_unmatched_review:
             return self._resolve_unmatched_review(text)
 
+        if self.state.sparring_mode:
+            sparring_move = self._sparring_bare_move(text)
+            if sparring_move:
+                return sparring_move
+
         if looks_like_pgn(text):
             return self._load_pasted_pgn(text)
 
@@ -155,6 +164,10 @@ class CommandProcessor:
             return CommandResult(message=plan.decline_message)
 
         planned = f"{plan.prompt_block()}\n\nStudent request: {text}"
+        if self.state.sparring_mode:
+            # Review-lesson notes (self-assessment, threat routing, give-up, pending
+            # diagnosis) belong to a game review, not to a sparring game in progress.
+            return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text))
         planned += self._self_assessment_response_note(text, plan)
         planned += self._redundancy_note(plan)
         if plan.intent == "close_with_takeaway":
@@ -162,6 +175,24 @@ class CommandProcessor:
         return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
                              + self._opponent_threat_routing_note(text)
                              + self._give_up_note(text) + self._pending_diagnosis_note(text))
+
+    def _sparring_bare_move(self, text: str):
+        """While sparring, a message that is only a move is played like /move; an
+        illegal one gets a backend reply and sparring continues."""
+        match = _BARE_MOVE_RE.match(text)
+        if not match:
+            return None
+        token = match.group(1).replace("0", "O")
+        board = self.state.board
+        for candidate in (token, token[:1].upper() + token[1:]):
+            try:
+                return self._move("/move " + board.san(board.parse_san(candidate)))
+            except ValueError:
+                continue
+        legal = ", ".join(board.san(m) for m in board.legal_moves)
+        return CommandResult(message=(
+            f"[red]'{text.strip()}' is not a legal move here.[/red] Legal moves: {legal}\n"
+            "[dim]Still sparring — /nospar to stop.[/dim]"))
 
     # ------------------------------------------------------------------
     # GAME LOADING & REVIEW

@@ -139,6 +139,34 @@ def test_move_in_sparring_requests_backend_reply(stub_config):
     assert "play_sparring_reply" in result.prompt
 
 
+def test_bare_move_text_in_sparring_is_played_like_slash_move(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    proc.process("/spar")
+    result = proc.process("e4")
+    assert result.prompt and "play_sparring_reply" in result.prompt
+    assert state.board.move_stack and state.board.peek().uci() == "e2e4"
+
+
+def test_illegal_bare_move_in_sparring_stays_in_sparring(stub_config):
+    # Recorded 2026-10-12: after /spar and 1. e4, typing "qg6" went to the model with pending
+    # review notes attached, and the coach abandoned sparring for the game review.
+    proc, state, _ = make_processor(stub_config)
+    proc.process("/spar")
+    state.board.push_san("e4")  # the coach's opening move; the student is Black
+    result = proc.process("qg6")
+    assert result.prompt is None
+    assert "not a legal move" in result.message and "e5" in result.message
+    assert state.sparring_mode is True
+
+
+def test_review_notes_are_not_injected_while_sparring(stub_config):
+    proc, state, _ = make_processor(stub_config)
+    state.teaching_ledger["self_assessment"] = {"status": "pending", "agenda": []}
+    proc.process("/spar")
+    result = proc.process("why did you play that?")
+    assert "self-assessment" not in result.prompt.lower()
+
+
 def test_review_sparring_game_uses_standard_review_pipeline(stub_config):
     engines = FakeEngines()
     proc, state, timeline = make_processor(stub_config, engines)
