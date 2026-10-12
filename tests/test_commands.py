@@ -7,6 +7,7 @@ import chess
 from app.commands import CommandProcessor, looks_like_pgn
 from app.planner import TeachingPlan, assess_teaching_plan_obedience, plan_free_text_turn
 from app.state import SessionState, TimelineManager
+from app.tools import CoachTools
 from tests.conftest import FakeEngines
 
 PGN = """[Event "Test"]
@@ -985,6 +986,42 @@ def test_pending_diagnosis_answers_student_question_before_logging(stub_config):
     assert "Answer that question first" in result.prompt
     assert "Do NOT call submit_diagnosis" in result.prompt
     assert record.move_label in result.prompt
+
+
+def test_moving_on_during_open_why_step_counts_as_passing_it(stub_config):
+    # Recorded live eval (#40): after one WHY probe and a clarification, "ready for the next
+    # moment" left submit_diagnosis blocked; the coach fabricated an explanation and stalled.
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    record = state.review.agenda[0]
+    record.explanation_primitives = {"reasons": [
+        {"text": "the forcing move on h2", "key": True, "squares": ["h2"], "keywords": ["mate"]}]}
+    state.socratic_attempts[f"explain:{record.fen_before}"] = 1
+    state.lesson_metadata = {"last_game_id": state.current_game_id,
+                             "last_agenda_index": 0,
+                             "lesson_status": "awaiting_explanation"}
+
+    result = proc.process("Thanks, I'm ready for the next moment.")
+
+    assert "chose to move on" in result.prompt and "has NOT been logged yet" in result.prompt
+    assert state.socratic_attempts[f"explain-complete:{record.fen_before}"] is True
+    tools = CoachTools(state, proc.timeline, proc.engines, stub_config)
+    logged = tools.submit_diagnosis(record.fen_before, record.recommended_diagnosis or "ignored_threat",
+                                    "Missed the forcing move on h2.", "Check forcing moves first.")
+    assert logged.get("success") is True
+
+
+def test_question_during_open_why_step_does_not_close_it(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    record = state.review.agenda[0]
+    state.lesson_metadata = {"last_game_id": state.current_game_id,
+                             "last_agenda_index": 0,
+                             "lesson_status": "awaiting_explanation"}
+    proc.process("Before we move on, what do you mean by that?")
+    assert f"explain-complete:{record.fen_before}" not in state.socratic_attempts
 
 
 def test_no_diagnosis_nudge_outside_awaiting_state(stub_config):

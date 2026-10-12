@@ -174,7 +174,8 @@ class CommandProcessor:
             planned += self._takeaway_note()
         return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
                              + self._opponent_threat_routing_note(text)
-                             + self._give_up_note(text) + self._pending_diagnosis_note(text))
+                             + self._give_up_note(text) + self._move_on_note(text)
+                             + self._pending_diagnosis_note(text))
 
     def _sparring_bare_move(self, text: str):
         """While sparring, a message that is only a move is played like /move; an
@@ -850,6 +851,36 @@ class CommandProcessor:
         return ("\n[Backend: the student GAVE UP on the current question; a surrendered attempt was "
                 f"recorded ({spent} of 2 before reveal). Give the NEXT ladder hint only and ask them to "
                 "try once more. NEVER invent a guess on the student's behalf to call the grading tools.]")
+
+    _MOVE_ON_RE = re.compile(
+        r"\b(?:i'?m ready|ready for the next|ready to move on|next moment|next one|next position|"
+        r"move on|moving on|let'?s continue|let'?s go on|siguiente|sigamos)\b", re.IGNORECASE)
+
+    def _move_on_note(self, text: str) -> str:
+        """A WHY step left open after a probe (#40) blocked submit_diagnosis when the
+        student chose to move on, and the model fabricated an explanation to unlock it.
+        Moving on is an explicit pass: close the step in the backend, like a give-up."""
+        if "?" in (text or "") or not self._MOVE_ON_RE.search(text or ""):
+            return ""
+        meta = self.state.lesson_metadata or {}
+        if not self.state.review or meta.get("lesson_status") != "awaiting_explanation":
+            return ""
+        agenda = self.state.review.agenda
+        idx = int(meta.get("last_agenda_index") or 0)
+        if not 0 <= idx < len(agenda):
+            return ""
+        record = agenda[idx]
+        if any(d.get("fen") == record.fen_before for d in self.state.diagnostics):
+            return ""
+        self.state.socratic_attempts[f"explain:{record.fen_before}"] = 2
+        self.state.socratic_attempts[f"explain-complete:{record.fen_before}"] = True
+        self.state.lesson_metadata = {**meta, "lesson_status": "awaiting_diagnosis"}
+        lesson_file = getattr(self.config, "lesson_file", None)
+        if lesson_file:
+            save_lesson_metadata(lesson_file, self.state.lesson_metadata)
+        return (f"\n[Backend: the student chose to move on; the explanation step for {record.move_label} "
+                "is closed as passed. If you have not already taught the key reason, state it in one "
+                "sentence. NEVER invent a student explanation for the grading tools.]")
 
     def _pending_diagnosis_note(self, text: str = "") -> str:
         """Observed live (3x in one session): the model ends its turn ANNOUNCING
