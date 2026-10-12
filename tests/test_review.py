@@ -671,15 +671,15 @@ def test_parse_increment():
 
 
 def test_reason_set_marks_forcing_tactic_as_key():
-    # P0-2: a forcing tactic is the load-bearing reason — keyed, anchored on the
-    # target square, with the motif as a sayable keyword.
+    # P0-2: a forcing tactic the better move prevents is the load-bearing reason —
+    # keyed, anchored on the target square, with the motif as a sayable keyword.
     import chess
     from app.review import _reason_set, MoveRecord
     r = MoveRecord(ply=0, number=1, color="white", san="Re1", uci="f1e1",
                    fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
                    eval_before_cp=0, eval_after_cp=-300, drop_pct=20.0, quality="mistake")
     r.motifs = [{"motif": "smothered_mate", "detail": "Qxh2# is smothered mate"}]
-    data = {"target_square": "h2", "forcing_move": "Qxh2#",
+    data = {"target_square": "h2", "forcing_move": "Qxh2#", "forcing_move_prevented": True,
             "why_wrong_move_fails": "Re1 does not address Qxh2#; the opponent gets a forcing move on h2"}
     reasons = _reason_set(r, chess.Board(chess.STARTING_FEN), data)
     key = [x for x in reasons if x["key"]]
@@ -993,6 +993,64 @@ def test_material_grab_recaptured_is_not_taught_as_standing_square_threat():
     assert "tempo" in key["keywords"]
     assert "forcing threat on b5" not in key["text"]
     assert "attacks the queen on d6" in key["text"]
+
+
+# Real agenda records for game 2dtDqQgR as produced by the current review pipeline
+# (recorded in the 2026-10-12 manual session). Engine lines are recorded evidence.
+_GAME_2DTD_RECORDS = {
+    24: dict(ply=46, number=24, color="white", san="Kxg2", uci="g1g2",
+             fen_before="r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+             fen_after="r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5PK1/3R1R2 b - - 0 24",
+             quality="inaccuracy", drop_pct=16.3, is_capture=True, best_move_san="Rfe1",
+             best_line=["Rfe1", "Rec8", "Re4", "Rab8", "Qd3", "h6", "Rde1", "Rf8"],
+             punishment_line=["Qf4", "Rfe1", "Qxg4+", "Kf1", "Qh3+", "Kg1", "Qg4+"]),
+    26: dict(ply=50, number=26, color="white", san="Qxa7", uci="c5a7",
+             fen_before="1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+             fen_after="1r2r1k1/Q4ppp/6q1/3P4/1P4P1/P7/5PK1/3R1R2 b - - 0 26",
+             quality="blunder", drop_pct=41.9, is_capture=True, best_move_san="Rd4",
+             best_line=["Rd4", "Re4", "f3", "Re5", "Qc6", "Qg5", "Kg3", "h5"],
+             punishment_line=["Qxg4+", "Kh2", "Qh5+", "Kg3", "Qg6+", "Kh2", "Rb6", "Qxb6"],
+             best_line_motifs=[{"motif": "skewer", "move": "Re4"}, {"motif": "pin", "move": "Re5"}]),
+    31: dict(ply=60, number=31, color="white", san="Kh1", uci="g1h1",
+             fen_before="1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31",
+             fen_after="1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1R1K b - - 9 31",
+             quality="blunder", drop_pct=33.7, is_capture=False, best_move_san="Kh2",
+             best_line=["Kh2", "Qh5+", "Kg2", "Qg5+", "Kh1", "Qh6+", "Kg2", "Qg6+"],
+             punishment_line=["Qh5+", "Kg2", "Qg6+", "Kf3", "Rb6", "Qxb6", "Qxb6", "Rg1"]),
+}
+
+
+def _real_primitives(move_number):
+    from app.review import MoveRecord, _explanation_primitives
+    r = MoveRecord(eval_before_cp=0, eval_after_cp=0, **_GAME_2DTD_RECORDS[move_number])
+    return _explanation_primitives(r, chess.Board(r.fen_before), chess.Board(r.fen_after))
+
+
+def _key_reasons(primitives):
+    return [reason for reason in primitives["reasons"] if reason.get("key")]
+
+
+def test_key_reason_names_what_the_best_move_does_to_the_threatened_square():
+    # Move 26: 26. Rd4 defends g4 along the fourth rank, so Qxg4+ loses the queen
+    # (Stockfish: Rxg4 +10). The key reason must be that defence, not only why Qxa7 failed.
+    key = _key_reasons(_real_primitives(26))
+    assert len(key) == 1
+    assert "g4" in key[0]["squares"]
+    assert "Rd4" in key[0]["text"] and "controls g4" in key[0]["text"]
+
+
+def test_no_key_reason_when_the_best_move_does_not_stop_the_forcing_move():
+    # Move 31: the verified best line itself is 31. Kh2 Qh5+, so "Kh2 stops Qh5+" is false.
+    primitives = _real_primitives(31)
+    assert _key_reasons(primitives) == []
+    assert "does not address" not in primitives["why_wrong_move_fails"]
+    assert "Kh2" in primitives["why_wrong_move_fails"] and "Qh5+" in primitives["why_wrong_move_fails"]
+
+
+def test_generic_engine_improvement_is_not_a_key_reason():
+    # Move 24: "Rfe1 was the engine-verified improvement" with only its destination square
+    # produced the contentless probe "what changes around e1?".
+    assert _key_reasons(_real_primitives(24)) == []
 
 
 def test_pawn_push_to_avoid_tension_is_not_missed_fork():

@@ -1570,6 +1570,19 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
             works = _best_move_answer_to_target(board_before, r.best_move_san, move.to_square)
             if works:
                 data["why_best_move_works"] = works
+            if _best_move_controls(board_before, r.best_move_san, move.to_square):
+                data["best_move_controls_target"] = True
+            elif _forcing_move_still_legal(board_before, r.best_move_san, san):
+                # The better move does not stop the forcing move either (e.g. 31. Kh2 Qh5+):
+                # never claim it does; contrast the verified lines instead.
+                data["forcing_move_not_prevented"] = True
+                data["why_wrong_move_fails"] = (
+                    f"After {r.san}, the opponent plays {san}. {r.best_move_san} also allows {san}; "
+                    f"the difference is in the verified lines: after {r.best_move_san}: "
+                    f"{' '.join(r.best_line[:6]) or r.best_move_san}; after {r.san}: "
+                    f"{' '.join(r.punishment_line[:6])}.")
+            else:
+                data["forcing_move_prevented"] = True
     elif not simple_capture_trade and r.best_move_san:
         data["why_best_move_works"] = (
             f"{r.best_move_san} was the engine-verified improvement; use the line "
@@ -1627,23 +1640,39 @@ def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
         keywords = _motif_keywords(r.motifs) + _motif_keywords(r.best_line_motifs)
         if (data.get("forcing_move") or "").endswith("#"):
             keywords.append("mate")
-        reasons.append({
+        wrong_move = {
             "text": (data.get("why_wrong_move_fails") or data.get("forcing_move_consequences")
                      or f"the opponent's forcing move on {target}"),
-            "key": True,
             "squares": [target],
             "keywords": sorted(set(keywords)),
-        })
+        }
+        if data.get("best_move_controls_target") and data.get("why_best_move_works"):
+            # The load-bearing reason is what the better move does to the threatened
+            # square (e.g. 26. Rd4 controls g4), so "it defends my g pawn" can pass and
+            # the probe asks what covers the square instead of inventing a target.
+            dest = _san_dest_square(board_before, r.best_move_san)
+            reasons.append({
+                "text": data["why_best_move_works"],
+                "key": True,
+                "squares": [target] + ([dest] if dest and dest != target else []),
+                "keywords": [],
+            })
+            reasons.append({**wrong_move, "key": False})
+        else:
+            # Only a forcing move the better move makes impossible is a gradable point;
+            # if the better move also allows it, a "what is being stopped?" probe is false.
+            reasons.append({**wrong_move, "key": bool(data.get("forcing_move_prevented"))})
     elif data.get("why_best_move_works") and r.best_move_san:
         dest = _san_dest_square(board_before, r.best_move_san)
         squares = list(data.get("best_move_reason_squares") or ([dest] if dest else []))
         keywords = sorted(set(_motif_keywords(r.best_line_motifs)
                               + list(data.get("best_move_keywords") or [])))
-        # Positional point: weak to tokenise, so it is "key" only when we have a
-        # concrete square to anchor on; otherwise leave it ungraded (no false probe).
+        # Key only when verified best-move facts name the point (e.g. the attacked
+        # queen after 20. Ne4). A generic "engine-verified improvement" sentence with
+        # just the destination square or a motif deep in the PV is not gradable.
         reasons.append({
             "text": data["why_best_move_works"],
-            "key": bool(squares or keywords),
+            "key": bool(data.get("best_move_reason_squares") or data.get("best_move_keywords")),
             "squares": squares,
             "keywords": keywords,
         })
@@ -1776,6 +1805,28 @@ def _best_move_answer_to_target(board_before: chess.Board, best_san: str, target
         names = ", ".join(chess.square_name(sq) for sq in defenders[:3])
         return f"After {best_san}, {chess.square_name(target_sq)} is defended by {names}."
     return None
+
+
+def _best_move_controls(board_before: chess.Board, best_san: str, target_sq: chess.Square) -> bool:
+    """True when the better move's own piece lands where it controls the target square."""
+    try:
+        best = board_before.parse_san(best_san)
+    except ValueError:
+        return False
+    after_best = board_before.copy(stack=False)
+    after_best.push(best)
+    return target_sq in after_best.attacks(best.to_square)
+
+
+def _forcing_move_still_legal(board_before: chess.Board, best_san: str, forcing_san: str) -> bool:
+    """True when the opponent can still play the forcing move after the better move."""
+    try:
+        after_best = board_before.copy(stack=False)
+        after_best.push(board_before.parse_san(best_san))
+        after_best.parse_san(forcing_san)
+        return True
+    except ValueError:
+        return False
 
 
 def _anticipate_wrong_answer(r: MoveRecord, engines, board_before: chess.Board) -> None:

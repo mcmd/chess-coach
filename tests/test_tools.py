@@ -559,19 +559,18 @@ def test_evaluate_threat_answer_provenance_rejects_fabricated_answer(stub_config
 
 
 def test_evaluate_explanation_accepts_live_pawn_defense_paraphrase(stub_config):
+    # #25: the reason must come from the real review pipeline for move 26, not a
+    # hand-written reason (the earlier fixture passed while live grading failed).
+    from app.review import GameReview, MoveRecord, _explanation_primitives
+    from tests.test_review import _GAME_2DTD_RECORDS
     tools, state = make_tools(stub_config)
-    from app.review import GameReview, MoveRecord
-    fen = "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26"
-    rec = MoveRecord(ply=50, number=26, color="white", san="Qxa7", uci="c5a7",
-                     fen_before=fen, fen_after=fen, eval_before_cp=0, eval_after_cp=-500,
-                     drop_pct=41.9, quality="blunder", best_move_san="Rd4")
-    rec.explanation_primitives = {"reasons": [
-        {"text": "Rd4 defends the g4 pawn by controlling g4 along the fourth rank",
-         "key": True, "squares": ["g4"], "keywords": ["defends", "pawn", "rank"]},
-    ]}
+    rec = MoveRecord(eval_before_cp=0, eval_after_cp=0, **_GAME_2DTD_RECORDS[26])
+    rec.explanation_primitives = _explanation_primitives(
+        rec, chess.Board(rec.fen_before), chess.Board(rec.fen_after))
     state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+    state.latest_user_text = "because that one actually defends my g pawn"
 
-    result = tools.evaluate_explanation(fen, "because that one actually defends my g pawn")
+    result = tools.evaluate_explanation(rec.fen_before, "because that one actually defends my g pawn")
 
     assert result["key_reason_named"] is True
     assert result["reveal_allowed"] is True
