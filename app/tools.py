@@ -42,6 +42,13 @@ ERROR_TAXONOMY = [
     "calculation_error",
 ]
 
+# Move notation inside an explanation: piece moves, pawn captures, castling (case-sensitive,
+# so prose like "b4" or "bishop" is untouched; bare squares are not moves here).
+_MOVE_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:\d+\.+\s*)?(?:O-O(?:-O)?|0-0(?:-0)?|[KQRBN][a-h]?[1-8]?x?[a-h][1-8]|"
+    r"[a-h]x[a-h][1-8](?:=[QRBN])?)[+#]?[!?]*"
+)
+
 _EXPLANATION_GIVE_UP_RE = re.compile(
     r"\b(?:i\s*(?:don'?t|do\s*not)\s*know|no\s+idea|i\s*give\s*up|idk|"
     r"just\s+tell\s+me|tell\s+me|show\s+me|no\s+se|ni\s+idea|dimelo|"
@@ -747,7 +754,14 @@ class CoachTools:
                                  "where verified data supports it), teach the verified line in plain "
                                  "words, then proceed to submit_diagnosis. Do not probe.")}
 
-        text = _normalize_text(student_explanation or "")
+        # Squares inside move notation ("Rd4") name the move, not the reason: mask piece
+        # moves, pawn captures and castling before matching (bare squares like "g4" stay).
+        explanation = _MOVE_TOKEN_RE.sub(" ", student_explanation or "")
+        text = _normalize_text(explanation)
+        if not re.search(r"[a-z]", text):
+            return {"gradable": False,
+                    "guidance": ("The student only named a move, not a reason. Ask why it works "
+                                 "without revealing the reason; this does not count as an attempt.")}
         squares_in = set(re.findall(r"[a-h][1-8]", text))
         words_in = set(re.findall(r"[a-z]+", text))
 

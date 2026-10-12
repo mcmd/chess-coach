@@ -604,6 +604,28 @@ def test_generic_engine_reason_is_taught_not_probed(stub_config):
     assert logged.get("success") is True
 
 
+def test_naming_only_the_move_is_not_an_explanation(stub_config):
+    # Live eval 2026-10-12 move 26: the student answered just "Rd4" and the coach passed
+    # it to evaluate_explanation; the square d4 inside the move matched the reason
+    # ("the rook on d4 controls g4"), so the WHY step closed without any reason given.
+    from app.review import GameReview, MoveRecord, _explanation_primitives
+    from tests.test_review import _GAME_2DTD_RECORDS
+    tools, state = make_tools(stub_config)
+    rec = MoveRecord(eval_before_cp=0, eval_after_cp=0, **_GAME_2DTD_RECORDS[26])
+    rec.explanation_primitives = _explanation_primitives(
+        rec, chess.Board(rec.fen_before), chess.Board(rec.fen_after))
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+
+    state.latest_user_text = "Rd4"
+    result = tools.evaluate_explanation(rec.fen_before, "Rd4")
+    assert result.get("key_reason_named") is not True
+    assert f"explain-complete:{rec.fen_before}" not in state.socratic_attempts
+    assert "Ask why" in result["guidance"]
+
+    state.latest_user_text = "Rd4 so the rook on d4 covers g4"
+    assert tools.evaluate_explanation(rec.fen_before, state.latest_user_text)["key_reason_named"] is True
+
+
 def test_castling_described_in_words_matches_the_submitted_move(stub_config):
     tools, state = make_tools(stub_config)
     board = chess.Board()
