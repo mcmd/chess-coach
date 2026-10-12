@@ -56,15 +56,64 @@ def _send_with_spinner(chat, payload):
         return chat.send_message(payload)
 
 
+# Gemini sometimes returns its reasoning as an ordinary text part ("s Thinking Process:
+# 1. **Analyze ...**"). Kept in the chat history it is imitated by every later reply
+# (live eval 2026-10-12: 22/40 replies; replays leaked 14/14 with it, 0/4 without),
+# and the drafts reveal withheld answers. Such parts never reach the student or history.
+_LEAKED_REASONING_RE = re.compile(r"\A\W*(?:\w+'?s?\s+)?\**\s*thinking process\b", re.IGNORECASE)
+_LEAK_NOTICE = "_(My reply came out garbled, so I discarded it. Please send your last message again.)_"
+
+
+def _leaked_parts(response) -> list:
+    content = response.candidates[0].content if getattr(response, "candidates", None) else None
+    return [p for p in (getattr(content, "parts", None) or [])
+            if not getattr(p, "thought", None) and _LEAKED_REASONING_RE.match(getattr(p, "text", None) or "")]
+
+
+def _drop_last_exchange(chat) -> None:
+    """Remove the last input/output pair from both chat histories (public get_history
+    returns the live lists); curated history only holds it when the reply was valid."""
+    history = chat.get_history()
+    last = history[-1]
+    del history[-2:]
+    curated = chat.get_history(curated=True)
+    if curated and curated[-1] is last:
+        del curated[-2:]
+
+
+def _send_without_leaks(chat, payload, state):
+    """Send, keeping leaked reasoning out of what the student sees and the history.
+    Beside a tool call the leaked text is dropped; a leaked reply is regenerated once,
+    then replaced by a retry notice that keeps the history's turn order valid."""
+    response = _send_with_spinner(chat, payload)
+    for attempt in range(2):
+        leaked = _leaked_parts(response)
+        if not leaked:
+            return response
+        _event_append(state, "deliberation_events", {"type": "leaked_reasoning", "attempt": attempt + 1,
+                                                      "game_id": getattr(state, "current_game_id", None)})
+        trace(f"leaked reasoning in model reply (attempt {attempt + 1})")
+        content = response.candidates[0].content
+        if _extract_function_calls(response):
+            content.parts = [p for p in content.parts if not any(p is q for q in leaked)]
+            return response
+        if attempt == 0:
+            _drop_last_exchange(chat)
+            response = _send_with_spinner(chat, payload)
+    content.parts = [types.Part(text=_LEAK_NOTICE)]
+    return response
+
+
 def run_agent_turn(chat, coach_tools, message) -> None:
     """Send `message`, execute any tool calls until the model stops asking,
     then render the final response."""
     coach_tools.state.latest_user_text = message
+    state = coach_tools.state
     if hasattr(coach_tools.state, "claim_gate_extra_fens"):
         coach_tools.state.claim_gate_extra_fens.clear()
     turn_grading_results = []
     turn_tool_names = []
-    response = _send_with_spinner(chat, message)
+    response = _send_without_leaks(chat, message, state)
     full_text = ""
     rounds = 0
 
@@ -119,7 +168,7 @@ def run_agent_turn(chat, coach_tools, message) -> None:
 
             tool_parts.append(types.Part.from_function_response(name=fn_call.name, response={"result": result}))
 
-        response = _send_with_spinner(chat, tool_parts)
+        response = _send_without_leaks(chat, tool_parts, state)
 
     coach_tools.state._turn_grading_results = turn_grading_results
     coach_tools.state._turn_tool_names = turn_tool_names

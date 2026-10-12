@@ -425,6 +425,102 @@ def test_agent_loop_progress_callback_reaches_review(stub_config):
     assert ticks and ticks[-1] == (6, 6)      # one tick per ply, completed
 
 
+# --- Leaked model reasoning (live eval 2026-10-12, run par4cj6m) -------------
+# Gemini began returning its reasoning as an ordinary text part ("s Thinking Process:
+# 1. ..."). One leaked reply in the chat history made every later reply leak (replays:
+# 14/14 leaked with it, 0/4 from clean history), and the drafts revealed withheld answers.
+
+_LEAK = "s Thinking Process:\n\n1.  **Analyze the Tool Response:**\n    *   Best move: Rd4\n"
+
+
+class _ScriptedModels:
+    """Stands in for the network call under a real google.genai Chat."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.requests = []
+
+    def generate_content(self, *, model, contents, config):
+        self.requests.append(list(contents))
+        return self.responses.pop(0)
+
+
+def _gemini_response(*parts):
+    from google.genai import types
+    return types.GenerateContentResponse(candidates=[types.Candidate(
+        content=types.Content(role="model", parts=list(parts)))])
+
+
+def _text(text):
+    from google.genai import types
+    return types.Part(text=text)
+
+
+def _call(name):
+    from google.genai import types
+    return types.Part(function_call=types.FunctionCall(name=name, args={}))
+
+
+def _real_chat(responses):
+    from google.genai import chats, types
+    models = _ScriptedModels(responses)
+    config = types.GenerateContentConfig(
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
+    return chats.Chat(modules=models, model="gemini-test", config=config, history=[]), models
+
+
+def _history_text(chat):
+    return " ".join(p.text or "" for c in chat.get_history() for p in (c.parts or []))
+
+
+def test_leaked_reasoning_reply_is_regenerated_and_never_kept(stub_config, capsys):
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), FakeEngines(), stub_config)
+    chat, models = _real_chat([_gemini_response(_text(_LEAK + "Draft: Rd4 wins.")),
+                               _gemini_response(_text("Which move defends g4?"))])
+
+    run_agent_turn(chat, tools, "hello coach")
+
+    out = capsys.readouterr().out
+    assert "Which move defends g4?" in out
+    assert "Thinking Process" not in out and "Rd4" not in out
+    assert "Thinking Process" not in _history_text(chat)
+    assert "Thinking Process" not in " ".join(p.text or "" for c in models.requests[1] for p in c.parts or [])
+    assert [c.role for c in chat.get_history()] == ["user", "model"]
+    assert [c.role for c in chat.get_history(curated=True)] == ["user", "model"]
+
+
+def test_reasoning_leaked_twice_shows_a_retry_notice_and_keeps_history_valid(stub_config, capsys):
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), FakeEngines(), stub_config)
+    chat, _ = _real_chat([_gemini_response(_call("get_game_review_summary")),
+                          _gemini_response(_text(_LEAK + "Draft one.")),
+                          _gemini_response(_text(_LEAK + "Draft two."))])
+
+    run_agent_turn(chat, tools, "hello coach")
+
+    out = capsys.readouterr().out
+    assert "Thinking Process" not in out and "Draft" not in out
+    assert "send your last message again" in " ".join(out.split())
+    assert "Thinking Process" not in _history_text(chat)
+    # Each function call is still followed by its function response, then a model turn.
+    assert [c.role for c in chat.get_history()] == ["user", "model", "user", "model"]
+
+
+def test_reasoning_beside_a_tool_call_is_dropped_from_history_without_a_resend(stub_config, capsys):
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), FakeEngines(), stub_config)
+    chat, models = _real_chat([_gemini_response(_text(_LEAK), _call("get_game_review_summary")),
+                               _gemini_response(_text("Here is the summary."))])
+
+    run_agent_turn(chat, tools, "hello coach")
+
+    assert len(models.requests) == 2
+    assert "Thinking Process" not in _history_text(chat)
+    assert any(p.function_call for p in chat.get_history()[1].parts)
+    assert "Here is the summary." in capsys.readouterr().out
+
+
 # --- MOVE-STYLING NORMALIZATION (bold/bare moves -> consistent code spans) ---
 
 def test_bold_move_with_number_and_glyph_becomes_code():
