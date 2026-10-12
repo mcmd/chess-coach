@@ -1667,11 +1667,14 @@ def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
         squares = list(data.get("best_move_reason_squares") or ([dest] if dest else []))
         keywords = sorted(set(_motif_keywords(r.best_line_motifs)
                               + list(data.get("best_move_keywords") or [])))
-        # Positional point: key when there is a concrete square or motif to anchor on;
-        # the probe for a destination square asks what the moved piece does there.
+        # Positional point: key when there is a concrete square or motif to anchor on.
+        # Without verified best-move facts it is only the generic "engine-verified
+        # improvement" sentence: keep it as the key reason (the human-labelled corpus
+        # endorses its tokens) but mark it generic so the grader teaches instead of probing.
         reasons.append({
             "text": data["why_best_move_works"],
             "key": bool(squares or keywords),
+            "generic": not data.get("best_move_reason_squares"),
             "squares": squares,
             "keywords": keywords,
         })

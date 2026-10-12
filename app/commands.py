@@ -752,8 +752,9 @@ class CommandProcessor:
                 + ", ".join(best[:6]) +
                 ". If you asked them to find a move: grade ONLY a move they clearly committed to "
                 "(e.g. 'X is better'); if they did not commit to one, do NOT grade — ask which ONE "
-                "they choose. NEVER pick the best candidate for them. If you did not ask a "
-                "find-the-move question, ignore this note.]")
+                "they choose (if your question also asked for the opponent's threat and they have not "
+                "answered it, you may ask for the threat first). NEVER pick the best candidate for "
+                "them. If you did not ask a find-the-move question, ignore this note.]")
 
     def _opponent_threat_routing_note(self, text: str) -> str:
         """Route terse opponent-only SAN answers in two-part agenda prompts.

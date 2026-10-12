@@ -193,6 +193,12 @@ candidate moves and/or Black's threat.
 I'm considering f3 or Rd4, but I haven't chosen yet.
 ```
 
+**Allowed branch S14a:** if the coach asks what Black is threatening before you choose,
+send this once, then wait for S15's gate:
+```text
+Black is threatening Qxg4 with check.
+```
+
 ### S15 — Move 26: commit
 
 **Ready when:** the coach asks you to choose one move.
@@ -361,7 +367,7 @@ recording to the reviewer.
 Report only execution facts, not PASS/FAIL or coaching-quality scores:
 
 - Scenario ID and last sent step.
-- Sent step IDs in order; include branches (S4a, S10a, S16a) if used.
+- Sent step IDs in order; include branches (S4a, S10a, S14a, S16a) if used.
 - Any unexpected gate and the exact coach message that did not fit.
 - `SCRIPT_COMPLETE` or `STOPPED_UNEXPECTED` (the runner can instead record
   `TIMED_OUT` or `INFRASTRUCTURE_BLOCKED`).

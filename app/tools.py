@@ -736,6 +736,16 @@ class CoachTools:
             return {"gradable": False,
                     "guidance": "No single load-bearing reason is pinned for this moment; if the "
                                 "explanation is sound, affirm it and proceed to submit_diagnosis."}
+        if key_reasons[0].get("generic"):
+            # The only verified point is "the engine prefers this move" plus its line: there
+            # is no concrete target to probe, so a probe would invent one (#31).
+            self.state.socratic_attempts[f"explain-complete:{fen}"] = True
+            self._persist_lesson_progress(fen, "awaiting_diagnosis")
+            return {"gradable": False,
+                    "guidance": ("No concrete load-bearing reason is verified for this move beyond the "
+                                 "engine line. Credit what the student's explanation gets right (only "
+                                 "where verified data supports it), teach the verified line in plain "
+                                 "words, then proceed to submit_diagnosis. Do not probe.")}
 
         text = _normalize_text(student_explanation or "")
         squares_in = set(re.findall(r"[a-h][1-8]", text))
