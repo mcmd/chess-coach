@@ -5,7 +5,9 @@ Design rule: the app is network-ENHANCED, never network-dependent. Every
 function returns None on any failure; callers must degrade gracefully to
 engine-only behavior. Responses are cached for the session.
 """
+import os
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 import requests
 
@@ -23,10 +25,23 @@ CHESSCOM_ARCHIVES = "https://api.chess.com/pub/player/{username}/games/archives"
 # (lichess-org/api#667); Chess.com's public API asks for the same.
 USER_AGENT = "chess-coach (+https://github.com/mcmd/chess-coach)"
 PGN_EXPORT_PARAMS = {"evals": "true", "clocks": "true", "opening": "true", "tags": "true"}
+# Optional personal API token from .env. The opening explorer rejects anonymous
+# requests; it needs a valid token but no OAuth scope, so create it with none.
+LICHESS_TOKEN_ENV = "LICHESS_TOKEN"
+LICHESS_HOSTS = ("lichess.org", "lichess.ovh")
 
 
-def _headers(extra: dict = None) -> dict:
-    return {"User-Agent": USER_AGENT, **(extra or {})}
+def _is_lichess(url: str) -> bool:
+    host = (urlsplit(url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in LICHESS_HOSTS)
+
+
+def _headers(url: str, extra: dict = None) -> dict:
+    headers = {"User-Agent": USER_AGENT}
+    token = (os.environ.get(LICHESS_TOKEN_ENV) or "").strip()
+    if token and _is_lichess(url):
+        headers["Authorization"] = f"Bearer {token}"
+    return {**headers, **(extra or {})}
 
 
 def _is_pgn_response(r) -> bool:
@@ -37,7 +52,7 @@ def _is_pgn_response(r) -> bool:
 
 def _fetch_json(url: str, params: dict):
     try:
-        r = requests.get(url, params=params, headers=_headers(), timeout=10)
+        r = requests.get(url, params=params, headers=_headers(url), timeout=10)
         r.raise_for_status()
         return r.json()
     except Exception:
@@ -46,7 +61,7 @@ def _fetch_json(url: str, params: dict):
 
 def _fetch_text(url: str, params: dict = None, headers: dict = None):
     try:
-        r = requests.get(url, params=params or {}, headers=_headers(headers), timeout=20)
+        r = requests.get(url, params=params or {}, headers=_headers(url, headers), timeout=20)
         r.raise_for_status()
         return r.text if _is_pgn_response(r) else None
     except Exception:
@@ -58,7 +73,7 @@ def lichess_game_pgn(game_id: str) -> str | None:
     has no such game, and None on any network failure or non-PGN response."""
     try:
         r = requests.post(LICHESS_EXPORT_IDS, params=PGN_EXPORT_PARAMS, data=game_id,
-                          headers=_headers({"Accept": "application/x-chess-pgn"}), timeout=15)
+                          headers=_headers(LICHESS_EXPORT_IDS, {"Accept": "application/x-chess-pgn"}), timeout=15)
         r.raise_for_status()
         return r.text if _is_pgn_response(r) else None
     except Exception:

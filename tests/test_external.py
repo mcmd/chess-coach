@@ -263,6 +263,41 @@ def test_lichess_text_requests_send_identifying_user_agent(monkeypatch):
     assert all("github.com/mcmd/chess-coach" in h.get("User-Agent", "") for h in seen) and len(seen) == 2
 
 
+def test_lichess_token_is_sent_only_to_lichess_hosts(monkeypatch):
+    monkeypatch.setenv("LICHESS_TOKEN", "lip_test_token")
+    seen = {}
+
+    def get(url, params=None, headers=None, timeout=None):
+        seen[url] = headers or {}
+        return _HttpResponse("{}", content_type="application/json")
+
+    def post(url, params=None, data=None, headers=None, timeout=None):
+        seen[url] = headers or {}
+        return _HttpResponse('[Event "x"]\n\n1. e4 *\n')
+
+    monkeypatch.setattr(external.requests, "get", get)
+    monkeypatch.setattr(external.requests, "post", post)
+    external._fetch_json(external.EXPLORER_MASTERS, {"fen": "x"})
+    external._fetch_json(external.TABLEBASE, {"fen": "x"})
+    external._fetch_json(external.CHESSCOM_STATS.format(username="mcmd"), {})
+    external.lichess_game_pgn("2dtDqQgR")
+    bearer = "Bearer lip_test_token"
+    assert seen[external.EXPLORER_MASTERS]["Authorization"] == bearer
+    assert seen[external.TABLEBASE]["Authorization"] == bearer
+    assert seen[external.LICHESS_EXPORT_IDS]["Authorization"] == bearer
+    assert "Authorization" not in seen[external.CHESSCOM_STATS.format(username="mcmd")]
+
+
+def test_requests_without_lichess_token_send_no_authorization(monkeypatch):
+    monkeypatch.delenv("LICHESS_TOKEN", raising=False)
+    seen = []
+    monkeypatch.setattr(external.requests, "get",
+                        lambda url, params=None, headers=None, timeout=None:
+                        seen.append(headers or {}) or _HttpResponse("{}", content_type="application/json"))
+    external._fetch_json(external.EXPLORER_MASTERS, {"fen": "x"})
+    assert "Authorization" not in seen[0]
+
+
 def test_chesscom_user_games_pgn_reads_recent_archives(monkeypatch):
     data = {
         "archives": {"archives": ["https://api.chess.com/a/2026/05", "https://api.chess.com/a/2026/06"]},

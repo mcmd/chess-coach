@@ -455,3 +455,9 @@ def test_serializer_keeps_reason_key_flags_but_drops_string_credentials():
                           "key": "AIza-credential", "api_key": "other-credential"})
     assert value["reasons"] == [{"text": "Rd4 defends g4", "key": True}]
     assert "key" not in value and "api_key" not in value
+
+
+def test_serializer_redacts_lichess_token_from_environment(monkeypatch):
+    monkeypatch.setenv("LICHESS_TOKEN", "lip_secret_value")
+    value = Serializer()({"note": "explorer called with lip_secret_value"})
+    assert "lip_secret_value" not in json.dumps(value)

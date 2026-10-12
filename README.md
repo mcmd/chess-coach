@@ -158,7 +158,13 @@ Tip: run with `--trace` to watch exactly which tools the coach calls for each an
 1. Create `.env` in the project root:
    ```env
    GEMINI_API_KEY=your_api_key_here
+   LICHESS_TOKEN=lip_your_token_here
    ```
+   `LICHESS_TOKEN` is optional. Lichess's opening explorer (masters and rating-band databases used for
+   theory grounding) rejects anonymous requests; without a token those lookups are skipped and
+   everything else still works. Create one at <https://lichess.org/account/oauth/token/create> with
+   **no scopes ticked**: the explorer only needs a valid token, and a scope-less token can read only
+   public data. The coach sends it to Lichess hosts only.
 2. Copy `config.example.json` to `config.json` and edit it:
    ```json
    {

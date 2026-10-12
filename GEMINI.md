@@ -88,5 +88,6 @@ app/config.py        config.json + profiles + CLI args
   deliberately: `python -m tests.test_concepts_snapshot --save`.
 - Manual model-loading smoke scripts belong in `scripts/`, never named `test_*.py`
   (pytest would load the model at collection time).
-- Secrets: `GEMINI_API_KEY` comes from `.env` (gitignored). Never commit
+- Secrets: `GEMINI_API_KEY` and the optional `LICHESS_TOKEN` (scope-less; sent only to Lichess hosts,
+  required by the opening explorer) come from `.env` (gitignored). Never commit
   `config.json` (machine-local paths) — `config.example.json` is the template.

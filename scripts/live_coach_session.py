@@ -49,7 +49,9 @@ class Serializer:
     def __init__(self):
         self.secrets = set()
         for key, value in os.environ.items():
-            if _sensitive(key) and value:
+            # *_TOKEN env vars (e.g. LICHESS_TOKEN) are credentials, but a bare
+            # "token" field name is not: board tokens must stay in the evidence.
+            if value and (_sensitive(key) or key.upper().endswith("_TOKEN")):
                 self.secrets.add(value)
 
     def text(self, value):
