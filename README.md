@@ -218,7 +218,7 @@ separate from the mocked pytest suite and backend-only `scripts/eval_coaching.py
 | `tests/2dtDqQgR_script.md` | Pass-1 player: messages, semantic gates, allowed branches, stop rule |
 | `tests/live_coach_run.md` | Runner/operator: isolation, capture, waiting, shutdown, evidence handoff |
 | `tests/2dtDqQgR_review.md` | Pass-2 reviewer: correctness, grounding, lesson state, coaching quality |
-| `tests/live_coach_agents.json` | Harness model selectors: player `@smol`, reviewer `@default` |
+| `tests/live_coach_agents.json` | Role → project agent: `live-coach-player`, `live-coach-reviewer` (`.omp/agents/*.md` set the models) |
 
 The scenario (`lichess-2dtDqQgR-full-v1`) is a complete game review: loading,
 self-assessment, all four agenda moments (threat grading, a legal but inferior
@@ -258,13 +258,14 @@ responses, diagrams, and lesson-state snapshots. Credentials and unavailable
 private model internals are excluded. Newline input replaces terminal editing;
 this exercises the actual coach but does not evaluate prompt-toolkit interaction.
 
-Model assignments live in `tests/live_coach_agents.json` and are passed when the
-harness supports model selection. UI aliases are convenient; explicit
-`provider/model[:level]` selectors pin the choice. `@default` inherits the calling
-agent's model, so pin the reviewer when calling from a cheaper runner. When the
-harness cannot select models, both roles run on its default and the manifest
-records `model_pinned: false`. Agent IDs, requested selectors, pinning, and
-reported model IDs are saved. No coach retry.
+Each role runs as a project agent whose definition sets its model:
+`.omp/agents/live-coach-player.md` (`openai-codex/gpt-6-luna:high`) and
+`.omp/agents/live-coach-reviewer.md` (`anthropic/claude-opus-5-5:high`).
+`tests/live_coach_agents.json` maps each role to its agent. Use explicit
+`provider/model[:level]` selectors: in a subagent, `@default` follows the calling
+session's live model rather than `modelRoles.default`. Each run snapshots both
+definitions and records the requested selector, agent IDs, the model each agent
+actually ran on (from its omp session file), and the model ID it reported. No coach retry.
 
 Script completion is not an overall coaching pass. Exact wording/percentages are
 not snapshots; missing evidence is not a pass. Real API calls can take several

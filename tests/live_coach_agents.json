@@ -1,8 +1,8 @@
 {
   "player": {
-    "model": "@smol"
+    "agent": "live-coach-player"
   },
   "reviewer": {
-    "model": "@default"
+    "agent": "live-coach-reviewer"
   }
 }

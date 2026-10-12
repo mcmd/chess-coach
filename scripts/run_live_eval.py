@@ -241,22 +241,37 @@ class _PlayerRelay:
         _save_json(self.run_dir / "execution.json", {**self.result(), "sent_steps": self.sent_steps})
 
 
-def _accepts_model(spawn) -> bool:
-    try:
-        parameters = inspect.signature(spawn).parameters.values()
-    except (TypeError, ValueError):
-        return False
-    return any(p.name == "model" or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters)
+def _agent_model(root: Path, agent_name: str) -> str:
+    """The `model:` selector in the role's project agent definition (`.omp/agents`)."""
+    path = root / ".omp/agents" / f"{agent_name}.md"
+    match = re.search(r'^model:\s*"?([^"\n]+?)"?\s*$', path.read_text(encoding="utf-8"), re.MULTILINE)
+    if not match:
+        raise ValueError(f"{path} has no model selector")
+    return match.group(1)
 
 
-def _spawn_role(spawn, prompt: str, selector: str, **kwargs):
-    """Pin the configured model when the harness supports it; otherwise run on the
-    harness default and say so in the evidence instead of claiming the selector."""
-    pinned = _accepts_model(spawn)
-    handle = spawn(prompt, model=selector, **kwargs) if pinned else spawn(prompt, **kwargs)
-    return handle, {"id": str(handle.id), "handle": str(handle.handle), "requested_model": selector,
-                    "model_pinned": pinned,
-                    "resolved_model": selector if pinned else "harness default (model selection unsupported)"}
+def _spawn_role(spawn, prompt: str, root: Path, agent_name: str, **kwargs):
+    """Spawn the role's project agent; omp resolves its model from the definition."""
+    requested = _agent_model(root, agent_name)
+    handle = spawn(prompt, agent=agent_name, **kwargs)
+    return handle, {"id": str(handle.id), "handle": str(handle.handle), "agent": agent_name,
+                    "requested_model": requested}
+
+
+def _resolved_model(agent_id: str, sessions=None) -> str | None:
+    """The model the subagent actually ran on, from its omp session file (None if absent)."""
+    sessions = sessions or Path.home() / ".omp/agent/sessions"
+    for path in sorted(Path(sessions).glob(f"*/*/{agent_id}.jsonl")):
+        model = level = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            event = json.loads(line)
+            if event.get("type") == "model_change":
+                model = event.get("model")
+            elif event.get("type") == "thinking_level_change":
+                level = event.get("thinkingLevel")
+        if model:
+            return f"{model}:{level}" if level else model
+    return None
 
 
 async def _await_agent(handle, timeout: float) -> dict:
@@ -319,10 +334,10 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
 
     `%load` injects the harness's `agent` and `tool` globals. When imported as a
     module, supply `agent_fn=agent, tool_fn=tool` explicitly. No retries are
-    performed. Configured model selectors are passed only when the harness accepts
-    them; otherwise both agents run on the harness default and the manifest records
-    `model_pinned: false`. Subprocess errors still produce frozen evidence and an
-    independent review when the reviewer agent is available.
+    performed. Each role runs as the project agent named in `tests/live_coach_agents.json`
+    (`.omp/agents/<name>.md` sets its model); the manifest records the requested
+    selector and the model the subagent actually ran on. Subprocess errors still
+    produce frozen evidence and an independent review when the reviewer agent is available.
     """
     spawn = agent_fn or globals().get("agent")
     register = tool_fn or globals().get("tool")
@@ -345,8 +360,9 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
         raise ValueError("This scenario requires review_self_assessment enabled")
     roles = json.loads((root / "tests/live_coach_agents.json").read_text(encoding="utf-8"))
     for role in ("player", "reviewer"):
-        if not isinstance(roles[role].get("model"), str) or not roles[role]["model"]:
-            raise ValueError(f"Missing harness model selector for {role}")
+        if not isinstance(roles[role].get("agent"), str) or not roles[role]["agent"]:
+            raise ValueError(f"Missing harness agent name for {role}")
+        _agent_model(root, roles[role]["agent"])
     script_text = (root / "tests/2dtDqQgR_script.md").read_text(encoding="utf-8")
     script = _Script(script_text)
     run_dir = Path(tempfile.mkdtemp(prefix="live-eval-2dtDqQgR-", dir=profiles))
@@ -354,6 +370,9 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
     _save_json(run_dir / "config.json", Serializer()(config))
     for name in ("live_coach_agents.json", "live_coach_run.md", "2dtDqQgR_script.md", "2dtDqQgR_review.md"):
         (run_dir / name).write_bytes((root / "tests" / name).read_bytes())
+    for role in ("player", "reviewer"):
+        agent_file = f"{roles[role]['agent']}.md"
+        (run_dir / agent_file).write_bytes((root / ".omp/agents" / agent_file).read_bytes())
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True)
     manifest = {"run_id": run_dir.name, "started_at": _utc(), "source_profile": source_profile,
                 "source_head": revision.stdout.strip() if revision.returncode == 0 else None,
@@ -395,7 +414,7 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
             "status/reason and your actual model ID if exposed, otherwise 'unavailable'. Do not run tests, "
             "builds, formatters, or change files.\n\nPLAYER SCRIPT:\n" + script_text +
             "\n\nINITIAL STUDENT-VISIBLE INPUT: You:",
-            roles["player"]["model"],
+            root, roles["player"]["agent"],
             label=f"LiveCoachPlayer-{run_dir.name}", tools=[tool_name], schema=player_schema,
         )
         _save_json(run_dir / "manifest.json", manifest)
@@ -465,7 +484,7 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
             "for an incomplete run, no imagined future turns, no unsupported improvement claim. Return findings "
             "with verdicts PASS/FAIL/BLOCKED/NOT OBSERVED, quality observations, limitations, and your actual "
             "model ID if exposed (otherwise 'unavailable').",
-            roles["reviewer"]["model"],
+            root, roles["reviewer"]["agent"],
             label=f"LiveCoachReviewer-{run_dir.name}", schema=reviewer_schema,
         )
         _save_json(run_dir / "manifest.json", manifest)
@@ -481,6 +500,9 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
         if reviewer_handle is not None:
             reviewer_handle.cancel()
         _save_json(run_dir / "review-error.json", {"type": type(error).__name__, "message": str(error)})
+    for identity in manifest["agents"].values():
+        if isinstance(identity, dict) and identity.get("id"):
+            identity["resolved_model"] = _resolved_model(identity["id"]) or "unavailable"
     manifest["review_status"] = review_status
     _save_json(run_dir / "manifest.json", manifest)
     _report(run_dir, execution, review_status, review)

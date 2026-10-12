@@ -1,6 +1,8 @@
 import json
 
-from scripts.run_live_eval import _PlayerRelay, _Script, _spawn_role
+import pytest
+
+from scripts.run_live_eval import _PlayerRelay, _Script, _agent_model, _resolved_model
 
 
 SCRIPT = """### S0 — Load
@@ -75,32 +77,25 @@ def test_timeout_preserves_pending_turn_and_does_not_retry(tmp_path):
     assert execution["error"] == "model deadline"
 
 
-class _Handle:
-    id = "agent-1"
-    handle = "agent://agent-1"
+def test_role_model_comes_from_the_agent_definition_and_missing_model_fails(tmp_path):
+    agents = tmp_path / ".omp/agents"
+    agents.mkdir(parents=True)
+    (agents / "player.md").write_text('---\nname: player\nmodel: "openai-codex/gpt-6-luna:high"\n---\nBody\n')
+    (agents / "bare.md").write_text("---\nname: bare\n---\nBody\n")
+
+    assert _agent_model(tmp_path, "player") == "openai-codex/gpt-6-luna:high"
+    with pytest.raises(ValueError):
+        _agent_model(tmp_path, "bare")
 
 
-def test_unpinned_spawn_records_default_model_instead_of_selector():
-    calls = []
+def test_resolved_model_reports_the_last_model_the_subagent_ran_on(tmp_path):
+    session = tmp_path / "cwd-slug" / "parent-session"
+    session.mkdir(parents=True)
+    events = [{"type": "session_init"},
+              {"type": "model_change", "model": "openai-codex/gpt-6-luna"},
+              {"type": "thinking_level_change", "thinkingLevel": "high"},
+              {"type": "model_change", "model": "anthropic/claude-opus-5-5"}]
+    (session / "Player-1.jsonl").write_text("\n".join(json.dumps(e) for e in events))
 
-    def spawn(prompt, *, label=None, schema=None):
-        calls.append({"label": label})
-        return _Handle()
-
-    _, identity = _spawn_role(spawn, "prompt", "@smol", label="Player")
-    assert calls == [{"label": "Player"}]
-    assert identity["model_pinned"] is False
-    assert identity["requested_model"] == "@smol"
-    assert identity["resolved_model"] != "@smol"
-
-
-def test_pinned_spawn_passes_selector():
-    calls = []
-
-    def spawn(prompt, *, model=None, label=None):
-        calls.append({"model": model, "label": label})
-        return _Handle()
-
-    _, identity = _spawn_role(spawn, "prompt", "@default", label="Reviewer")
-    assert calls == [{"model": "@default", "label": "Reviewer"}]
-    assert identity["model_pinned"] is True and identity["resolved_model"] == "@default"
+    assert _resolved_model("Player-1", tmp_path) == "anthropic/claude-opus-5-5:high"
+    assert _resolved_model("Missing", tmp_path) is None

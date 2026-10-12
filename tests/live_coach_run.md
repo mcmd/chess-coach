@@ -28,9 +28,9 @@ These are keyword arguments (`source_profile`, `startup_timeout`, `load_timeout`
 Any omp development agent with Eval access can invoke the same callable.
 To delegate the whole eval, spawn a runner subagent instructed to call it and
 return the artifact paths/statuses, without retries or substituting either role.
-The runner will spawn its own separate player and reviewer. `@default` inherits
-that runner's model: pin an explicit stronger `reviewer.model` in the repo JSON
-when the runner itself is cheap. There is no background watcher; `AGENTS.md`
+The runner will spawn its own separate player and reviewer, each on the model its
+project agent definition pins, independent of the runner's own model. There is no
+background watcher; `AGENTS.md`
 requires the development assistant to invoke the flow after changes.
 
 
@@ -51,24 +51,22 @@ select messages on the player's behalf; it must preserve the same role boundary.
 ## Harness orchestration and models
 
 The parent coding assistant is the runner/operator. `run_eval` reads
-`tests/live_coach_agents.json` and passes each role's `model` selector to the
-harness `agent(...)` call when the harness accepts a model argument.
+`tests/live_coach_agents.json`, which maps each role to a project agent, and
+spawns that agent by name (`agent(prompt, agent="live-coach-player")`). omp
+resolves the model from the agent definition's `model:` frontmatter.
 
-- `player.model` defaults to `@smol`; `reviewer.model` defaults to `@default`.
-  These are harness aliases, not Chess Coach/Gemini model settings. Alias
-  assignments can be selected in the harness UI; `@default` uses the parent
-  session's live model. Select an appropriate stronger parent model for review.
-- Replace an alias in this repo file with a `provider/model[:level]` selector
-  when pinning a particular eval configuration. Do not change global harness
-  settings or the coach's configured model to route these two roles.
-- Snapshot this configuration per run. Record requested selectors, agent IDs,
-  and resolved model IDs when available. An alias is convenient but not a
-  reproducible model version; if resolution is unavailable, report that gap.
-- If the harness cannot select models, `run_eval` still runs both roles as
-  separate agents on the harness default and records `model_pinned: false` with
-  `resolved_model` set to the harness default. Report that in the summary: the
-  player and reviewer may then be the same model. Never present an unpinned run
-  as using the configured selectors, and never collapse both roles into the parent.
+- `.omp/agents/live-coach-player.md` pins `openai-codex/gpt-6-luna:high`;
+  `.omp/agents/live-coach-reviewer.md` pins `anthropic/claude-opus-5-5:high`.
+  These are harness models, not Chess Coach/Gemini model settings.
+- Use explicit `provider/model[:level]` selectors. In a subagent, `@default`
+  follows the calling session's live model, not `modelRoles.default`, so it does
+  not pin anything. Do not change global harness settings or the coach's
+  configured model to route these two roles.
+- Each run snapshots both agent definitions and records, per role, the agent ID,
+  `requested_model` (from the definition), `resolved_model` (the `model_change`
+  and thinking level in the subagent's omp session file, or `unavailable`), and
+  the agent's self-reported model ID. Report `resolved_model`; never collapse both
+  roles into the parent.
 
 For a live run, use this true dependency order:
 

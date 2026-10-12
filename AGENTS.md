@@ -35,9 +35,9 @@ gates/stop rule and the run protocol's recording requirements/timeouts.
 
 Report player execution status separately from reviewer verdicts, with failures,
 blockers, unobserved checks, evidence paths, requested/resolved models, and agent
-IDs. Do not do both roles in the parent. If the harness cannot pin models, run
-unpinned and report `model_pinned: false` rather than claiming the configured
-selectors. If a
+IDs. Do not do both roles in the parent. Each role's model is set in its project
+agent definition (`.omp/agents/live-coach-player.md`, `.omp/agents/live-coach-reviewer.md`);
+report the `resolved_model` the manifest records, not the requested selector. If a
 known API quota prevents a new live trial, report it without retrying; independent
 archived-run checks are allowed but must not be described as a new live run.
 Do not claim a pass from plausible prose or pytest alone. This is a harness-agent
