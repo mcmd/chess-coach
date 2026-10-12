@@ -116,6 +116,22 @@ def _diagram_matches_fen(data):
     return len(ranks) == 8
 
 
+def _line_positions(start_fen, san_line) -> list:
+    """Every position along a recorded SAN line, stopping at the first illegal move."""
+    board = _board(start_fen)
+    moves = _moves(san_line)
+    if board is None or not moves:
+        return []
+    positions = [board.copy(stack=False)]
+    for san in moves:
+        try:
+            board.push(board.parse_san(str(san).rstrip("!?")))
+        except ValueError:
+            break
+        positions.append(board.copy(stack=False))
+    return positions
+
+
 _STEP_HEADING = re.compile(r"^### (S\d+)\s+—.*$", re.MULTILINE)
 _CHECKS_LINE = re.compile(r"^\*\*Checks:\*\*\s*(.+)$", re.MULTILINE)
 _SEND_BLOCK = re.compile(r"\*\*(?:Send|Allowed branch S\d+[a-z]):\*\*.*?```text\n(.*?)\n```", re.DOTALL)
@@ -451,24 +467,34 @@ def check_recording(run_dir: str | Path) -> dict:
                 [diagram["id"], reply["id"]], "Visible diagram compared with recorded backend token text and square-by-square actual FEN/perspective.")
         if re.search(r"[♔-♟]", text) and not visible:
             add("diagram_provenance", "FAIL", [reply["id"]], "Visible chess diagram has no matching recorded backend rendering.")
-        # Check only explicit numbered continuations, with position selected by
-        # their move number/side. Earlier-position references remain valid.
+        # Check explicit numbered continuations from every position with that move
+        # number and side: the actual game, the agenda's verified best/punishment lines,
+        # the state board, and shown diagrams. Narrating a verified hypothetical line
+        # (e.g. the punishment after the played mistake) is legal even though the
+        # actual game went differently.
         state = _state(reply)
         source = source_for(state)
+        line_positions = []
+        for record in _agenda(state):
+            if isinstance(record, dict):
+                line_positions += _line_positions(record.get("fen_before"), record.get("best_line"))
+                line_positions += _line_positions(record.get("fen_after"), record.get("punishment_line"))
         for match in NUMBERED_LINE.finditer(text):
             number, black = int(match[1]), bool(match[2])
-            candidates = []
-            if source:
-                candidates = [b for b in source[2] if b.fullmove_number == number and b.turn == (not black)]
-            if not candidates:
-                for value in [state.get("board_fen")] + [d["data"].get("fen") for d in visible] + [r.get("fen_before") for r in _agenda(state) if isinstance(r, dict)]:
-                    b = _board(value)
-                    if b and b.fullmove_number == number and b.turn == (not black):
-                        candidates.append(b)
-            unique = {b.fen(): b for b in candidates}
-            board = next(iter(unique.values())) if len(unique) == 1 else None
+            pool = list(source[2]) if source else []
+            pool += [_board(v) for v in [state.get("board_fen")] + [d["data"].get("fen") for d in visible]
+                     + [r.get("fen_before") for r in _agenda(state) if isinstance(r, dict)]]
+            pool += line_positions
+            unique = {b.fen(): b for b in pool
+                      if b is not None and b.fullmove_number == number and b.turn == (not black)}
             evidence = [reply["id"]] + ([source[0]["id"]] if source else [])
-            legality("visible_line_legality", board, match[3], evidence, f"Consumer-visible line {match[0]!r}")
+            label = f"Consumer-visible line {match[0]!r}"
+            legal = next((b for b in unique.values() if _line(b, match[3])[0] == ""), None)
+            if legal is not None or not unique:
+                legality("visible_line_legality", legal, match[3], evidence, label)
+            else:
+                legality("visible_line_legality", next(iter(unique.values())), match[3], evidence,
+                         f"{label} (illegal from all {len(unique)} known position(s) with this move number)")
         for match in re.finditer(rf"(?im)^(?:Line|Continuation|Follow-up|Verified line):\s*({SAN}(?:\s+{SAN})+)\s*$", text):
             contexts = {_board(d["data"].get("fen")).fen(): _board(d["data"].get("fen"))
                         for d in visible if _board(d["data"].get("fen"))}

@@ -166,6 +166,23 @@ def test_earlier_position_line_uses_source_not_current_board(tmp_path):
     assert source["id"] in findings(result, "visible_line_legality")[0]["evidence"]
 
 
+def test_verified_hypothetical_line_is_legal_and_unverified_one_is_not(tmp_path):
+    # Recorded live eval (#41): "After 25. Rfe1 Qxg4+ ..." narrated the verified punishment
+    # line, but the checker judged it from the moves actually played at move 25.
+    recording = Recording(tmp_path)
+    game, positions, source = source_game(recording)
+    state = game_state(game, positions, 2)
+    state["review_agenda"] = [{"fen_before": positions[0].fen(), "fen_after": positions[1].fen(),
+                               "ply": 0, "san": "Nf3", "move_label": "1. Nf3",
+                               "punishment_line": ["d5", "d4", "Bf5"], "best_line": []}]
+    recording.turn(1, state, reply="Black answers 1... d5, and after 2. d4 Bf5 Black is comfortable.")
+    recording.turn(2, state, reply="Black answers 1... d5, and after 2. d4 Bb4 Black is comfortable.")
+    result = recording.save()
+    by_turn = {next(e["turn"] for e in recording.events if e["id"] == c["evidence"][0]): c["verdict"]
+               for c in findings(result, "visible_line_legality")}
+    assert by_turn == {1: "PASS", 2: "FAIL"}
+
+
 def test_free_prose_moves_without_line_context_are_not_naively_graded(tmp_path):
     recording = Recording(tmp_path)
     recording.turn(1, snapshot(), reply="Earlier Ne4 attacked the queen. Qh5 might matter in another position.")
