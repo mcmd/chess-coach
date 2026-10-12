@@ -1003,7 +1003,8 @@ _GAME_2DTD_RECORDS = {
              fen_after="r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5PK1/3R1R2 b - - 0 24",
              quality="inaccuracy", drop_pct=16.3, is_capture=True, best_move_san="Rfe1",
              best_line=["Rfe1", "Rec8", "Re4", "Rab8", "Qd3", "h6", "Rde1", "Rf8"],
-             punishment_line=["Qf4", "Rfe1", "Qxg4+", "Kf1", "Qh3+", "Kg1", "Qg4+"]),
+             punishment_line=["Qf4", "Rfe1", "Qxg4+", "Kf1", "Qh3+", "Kg1", "Qg4+"],
+             best_line_motifs=[{"motif": "skewer", "move": "Rab8"}]),
     26: dict(ply=50, number=26, color="white", san="Qxa7", uci="c5a7",
              fen_before="1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
              fen_after="1r2r1k1/Q4ppp/6q1/3P4/1P4P1/P7/5PK1/3R1R2 b - - 0 26",
@@ -1045,12 +1046,6 @@ def test_no_key_reason_when_the_best_move_does_not_stop_the_forcing_move():
     assert _key_reasons(primitives) == []
     assert "does not address" not in primitives["why_wrong_move_fails"]
     assert "Kh2" in primitives["why_wrong_move_fails"] and "Qh5+" in primitives["why_wrong_move_fails"]
-
-
-def test_generic_engine_improvement_is_not_a_key_reason():
-    # Move 24: "Rfe1 was the engine-verified improvement" with only its destination square
-    # produced the contentless probe "what changes around e1?".
-    assert _key_reasons(_real_primitives(24)) == []
 
 
 def test_pawn_push_to_avoid_tension_is_not_missed_fork():

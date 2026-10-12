@@ -580,6 +580,29 @@ def test_student_move_described_in_words_is_graded_not_rejected(stub_config):
     assert state.grading_integrity_events == []
 
 
+def test_destination_square_probe_asks_what_the_moved_piece_does_there(stub_config):
+    # #31, recorded 2026-10-12 move 24: the key reason is anchored on Rfe1's destination
+    # (human-labelled corpus moments endorse destination squares), but the probe "After
+    # 24. Rfe1, what tactical idea around e1 changes?" gave the coach nothing true to say.
+    from app.review import GameReview, MoveRecord, _explanation_primitives
+    from tests.test_review import _GAME_2DTD_RECORDS
+    tools, state = make_tools(stub_config)
+    rec = MoveRecord(eval_before_cp=0, eval_after_cp=0, **_GAME_2DTD_RECORDS[24])
+    rec.best_line_motifs = [{"motif": "skewer", "move": "Rab8",
+                             "detail": "after Rab8, queen on b5 is skewered, exposing pawn on b4"}]
+    rec.explanation_primitives = _explanation_primitives(
+        rec, chess.Board(rec.fen_before), chess.Board(rec.fen_after))
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+    answer = "it moves my rook to safety, and offers a rook trade"
+    state.latest_user_text = answer
+
+    result = tools.evaluate_explanation(rec.fen_before, answer)
+
+    assert result["key_reason_named"] is False
+    assert result["probe_question"] == "After 24. Rfe1, what does your rook do from e1?"
+    assert result["probe_facts"]["line_motifs"] == ["after Rab8, queen on b5 is skewered, exposing pawn on b4"]
+
+
 def test_castling_described_in_words_matches_the_submitted_move(stub_config):
     tools, state = make_tools(stub_config)
     board = chess.Board()

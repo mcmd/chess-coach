@@ -832,10 +832,16 @@ class CoachTools:
         best = getattr(record, "best_move_label", None) or getattr(record, "best_move_san", None) or "the best move"
         square_text = squares[0] if squares else "the critical square"
         reason_text = " ".join([str(key_reason.get("text") or "").lower()] + [k.lower() for k in keywords])
+        moved_piece = self._best_move_piece_on(record, square_text)
         if any(word in reason_text for word in ("defend", "guard", "protect", "cover", "control")):
             question = (f"After {best}, look at {square_text}. What piece covers it, "
                         "and along which line?")
             focus = "defense_relation"
+        elif moved_piece:
+            # The square is where the better move's own piece lands: "around e1" asks
+            # about nothing in particular; ask what that piece does from there.
+            question = f"After {best}, what does your {moved_piece} do from {square_text}?"
+            focus = "moved_piece_role"
         elif any(word in reason_text for word in ("mate", "check", "forcing")):
             question = f"After {best}, what forcing threat on {square_text} is being stopped?"
             focus = "forcing_threat"
@@ -845,17 +851,32 @@ class CoachTools:
         else:
             question = f"After {best}, what changes around {square_text}?"
             focus = "key_square"
-        return {
-            "probe_question": question,
-            "probe_facts": {
-                "best_move": best,
-                "target_squares": squares,
-                "keywords": keywords,
-                "focus": focus,
-                "usage": ("Use these facts only to ask the probe_question. Do not invent a "
-                          "new missing detail or conceptual distinction."),
-            },
+        facts = {
+            "best_move": best,
+            "target_squares": squares,
+            "keywords": keywords,
+            "focus": focus,
+            "usage": ("Use these facts only to ask the probe_question. Do not invent a "
+                      "new missing detail or conceptual distinction."),
         }
+        line_motifs = [m.get("detail") for m in getattr(record, "best_line_motifs", None) or []
+                       if m.get("detail") and any(k in str(m.get("motif")) for k in keywords)]
+        if line_motifs:
+            facts["line_motifs"] = line_motifs
+        return {"probe_question": question, "probe_facts": facts}
+
+    @staticmethod
+    def _best_move_piece_on(record, square: str) -> str | None:
+        """Name of the better move's piece if it lands on `square`, else None."""
+        try:
+            board = chess.Board(record.fen_before)
+            move = board.parse_san(record.best_move_san)
+        except (ValueError, TypeError, AttributeError):
+            return None
+        if chess.square_name(move.to_square) != square:
+            return None
+        piece = board.piece_at(move.from_square)
+        return chess.piece_name(piece.piece_type) if piece else None
 
     def explain_move(self, fen: str, move_san: str) -> dict:
         """
