@@ -259,8 +259,9 @@ private model internals are excluded. Newline input replaces terminal editing;
 this exercises the actual coach but does not evaluate prompt-toolkit interaction.
 
 Each role runs as a project agent whose definition sets its model:
-`.omp/agents/live-coach-player.md` (`openai-codex/gpt-6-luna:high`) and
-`.omp/agents/live-coach-reviewer.md` (`anthropic/claude-opus-5-5:high`).
+`.omp/agents/live-coach-player.md` and `.omp/agents/live-coach-reviewer.md`, both
+`openai-codex/gpt-6-luna:high` (the reviewer reads `review-events.jsonl`: raw model
+requests withheld, model responses reduced to answer text and function calls).
 `tests/live_coach_agents.json` maps each role to its agent. Use explicit
 `provider/model[:level]` selectors: in a subagent, `@default` follows the calling
 session's live model rather than `modelRoles.default`. Each run snapshots both

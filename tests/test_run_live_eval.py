@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from scripts.run_live_eval import _PlayerRelay, _Script, _agent_model, _resolved_model
+from scripts.run_live_eval import _PlayerRelay, _Script, _agent_model, _resolved_model, _reviewer_event
 
 
 SCRIPT = """### S0 — Load
@@ -99,3 +99,25 @@ def test_resolved_model_reports_the_last_model_the_subagent_ran_on(tmp_path):
 
     assert _resolved_model("Player-1", tmp_path) == "anthropic/claude-opus-5-5:high"
     assert _resolved_model("Missing", tmp_path) is None
+
+
+def test_reviewer_events_keep_answers_and_calls_but_not_raw_model_internals():
+    request = {"id": 1, "kind": "model_request", "turn": 1,
+               "data": {"payload": {"contents": ["history"], "systemInstruction": "prompt"}}}
+    response = {"id": 2, "kind": "model_response", "turn": 1, "data": {"response": {
+        "candidates": [{"content": {"parts": [
+            {"text": "private thought", "thought": True},
+            {"text": "s Thinking Process:\n\n1. **Analyze** best is Rd4"},
+            {"text": "Which move defends g4?"},
+            {"function_call": {"name": "evaluate_explanation", "args": {"fen": "x"}},
+             "thought_signature": "c2lnbmF0dXJl"}]}}],
+        "usage_metadata": {"thoughts_token_count": 300}}}}
+    tool = {"id": 3, "kind": "tool_result", "turn": 1, "data": {"name": "t", "result": {"ok": True}}}
+
+    assert "history" not in json.dumps(_reviewer_event(request))
+    reduced = _reviewer_event(response)
+    assert reduced["id"] == 2 and reduced["data"]["response"] == {
+        "text": "Which move defends g4?",
+        "function_calls": [{"name": "evaluate_explanation", "args": {"fen": "x"}}],
+        "leaked_reasoning_parts_withheld": 1}
+    assert _reviewer_event(tool) == tool

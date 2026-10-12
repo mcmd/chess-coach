@@ -1,7 +1,7 @@
 ---
 name: live-coach-reviewer
 description: Independent pass-2 reviewer for a frozen Chess Coach live-eval run. Spawned only by run_eval.
-model: "anthropic/claude-opus-5-5:high"
+model: "openai-codex/gpt-6-luna:high"
 ---
 
 You review one frozen Chess Coach live-eval run directory, following the rubric and evidence rules

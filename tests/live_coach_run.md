@@ -55,9 +55,11 @@ The parent coding assistant is the runner/operator. `run_eval` reads
 spawns that agent by name (`agent(prompt, agent="live-coach-player")`). omp
 resolves the model from the agent definition's `model:` frontmatter.
 
-- `.omp/agents/live-coach-player.md` pins `openai-codex/gpt-6-luna:high`;
-  `.omp/agents/live-coach-reviewer.md` pins `anthropic/claude-opus-5-5:high`.
-  These are harness models, not Chess Coach/Gemini model settings.
+- `.omp/agents/live-coach-player.md` and `.omp/agents/live-coach-reviewer.md`
+  both pin `openai-codex/gpt-6-luna:high`. These are harness models, not Chess
+  Coach/Gemini model settings. The reviewer is not on an Anthropic model: two of
+  its Opus reviews were refused (`reasoning_extraction`), and a same-model review is
+  less independent, so report that limitation with the verdict.
 - Use explicit `provider/model[:level]` selectors. In a subagent, `@default`
   follows the calling session's live model, not `modelRoles.default`, so it does
   not pin anything. Do not change global harness settings or the coach's
@@ -137,6 +139,7 @@ Keep each recording in its unique disposable profile directory:
 | Artifact | Contents |
 |---|---|
 | `events.jsonl` | Original flushed events with IDs, UTC timestamps, and turn IDs |
+| `review-events.jsonl` | Reviewer copy of the events: same IDs; raw model requests withheld; model responses reduced to answer text and function calls |
 | `terminal.log` | Actual coach stdout/stderr, including trace, boards, warnings, shutdown |
 | `conversation.md` | Derived complete student-visible inputs, rendered replies, and errors |
 | `event-index.json` | Event IDs/kinds/turns for locating complete payloads |
