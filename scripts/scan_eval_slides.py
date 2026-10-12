@@ -5,7 +5,7 @@ NOT a pytest test (lives in scripts/). Uses ZERO Maia and ZERO Stockfish: it rea
 the `[%eval]` annotations Lichess already ships in analysed games, so it runs in
 seconds over thousands of games and costs no model time and no tokens.
 
-Purpose (see design/drills_and_idle_prep_plan_20260614.md §3.4 and the maia3 FR-3):
+Purpose (see design/archive/designs/drills_and_idle_prep_plan_20260614.md §3.4 and the maia3 FR-3):
 the rejected Phase 4 trajectory feature degenerated to "a run of eval-losing moves",
 computable from eval alone. Before investing anything further, answer two questions
 a 4-game hand sample cannot:

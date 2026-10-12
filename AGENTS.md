@@ -9,6 +9,13 @@ append this trailer to the commit message:
 
 Keep the configured human Git identity as the commit author.
 
+## Design Documents
+
+Plans, the implementation worklog, and measurement evidence live in the nested `design/`
+repository (gitignored here, so include ignored files when searching). Start at
+`design/README.md`; the canonical plan is `design/PLAN.md`, the running log is
+`design/WORKLOG.md`, and eval results belong in `design/testing/`.
+
 ## Live Coaching Evaluation
 
 After making changes in this repository, follow `tests/live_coach_run.md` for the

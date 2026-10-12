@@ -1840,7 +1840,7 @@ def _aspirational_instinct(r: MoveRecord, engines, review: GameReview) -> None:
 
 # Within-game SLIDE detection: EVAL-ONLY (no Maia). This replaces the rejected
 # Phase 4 maia "skill band" trajectory (calibrated & rejected 2026-06-14 — see
-# design/maia3_integration_design_20260613.md §8.4 / §15 FR-3). That method tried
+# design/archive/designs/maia3_integration_design_20260613.md §8.4 / §15 FR-3). That method tried
 # to spot "moves that look like a weaker player's", and was structurally confounded
 # (bad moves are rare at all bands -> read 'level' -> missed). The eval stream is the
 # signal that actually survived: a "slide" is a stretch of several mediocre moves
