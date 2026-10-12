@@ -10,6 +10,28 @@ from app.render import render_board_markup
 from scripts.check_live_eval import check_recording, main
 
 
+# The checks a run performs are declared in its player-script snapshot.
+SCRIPT = """### S4 — Ask about an earlier position
+
+**Checks:** detour
+
+**Send:**
+```text
+Wait, go back to the previous position for a second.
+```
+
+### S5 — Return to the pending position
+
+**Checks:** detour, return 24
+
+**Send:**
+```text
+Thanks. Let's return to move 24, just after 23...fxg2.
+```
+
+### S6 — Stop
+"""
+
 class Recording:
     def __init__(self, root, status="SCRIPT_COMPLETE"):
         self.root = root
@@ -59,6 +81,7 @@ class Recording:
             "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in self.events) + suffix,
             encoding="utf-8")
         (self.root / "execution.json").write_text(json.dumps(self.execution), encoding="utf-8")
+        (self.root / "2dtDqQgR_script.md").write_text(SCRIPT, encoding="utf-8")
         return check_recording(self.root)
 
 

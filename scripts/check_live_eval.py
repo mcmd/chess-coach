@@ -116,6 +116,36 @@ def _diagram_matches_fen(data):
     return len(ranks) == 8
 
 
+_STEP_HEADING = re.compile(r"^### (S\d+)\s+—.*$", re.MULTILINE)
+_CHECKS_LINE = re.compile(r"^\*\*Checks:\*\*\s*(.+)$", re.MULTILINE)
+_SEND_BLOCK = re.compile(r"\*\*(?:Send|Allowed branch S\d+[a-z]):\*\*.*?```text\n(.*?)\n```", re.DOTALL)
+
+
+def _script_steps(root: Path) -> dict:
+    """Per-step declared checks and send texts from the run's player-script snapshot.
+
+    `**Checks:** detour` — lesson state must not change during that turn.
+    `**Checks:** return 24` — the reply must show the agenda moment at move 24, and the
+    physical board must equal its value at the start of the most recent detour step.
+    """
+    script = next(iter(sorted(root.glob("*_script.md"))), None)
+    if script is None:
+        return {}
+    text = script.read_text(encoding="utf-8", errors="replace")
+    headings = list(_STEP_HEADING.finditer(text))
+    steps = {}
+    for index, heading in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        section = text[heading.end():end]
+        checks = _CHECKS_LINE.search(section)
+        tokens = checks.group(1).replace(",", " ").split() if checks else []
+        return_move = next((int(tokens[i + 1]) for i, t in enumerate(tokens[:-1])
+                            if t == "return" and tokens[i + 1].isdigit()), None)
+        steps[heading.group(1)] = {"detour": "detour" in tokens, "return": return_move,
+                                   "sends": [m.group(1) for m in _SEND_BLOCK.finditer(section)]}
+    return steps
+
+
 def check_recording(run_dir: str | Path) -> dict:
     """Check independent recorded facts, preserving useful findings on partial runs."""
     root = Path(run_dir)
@@ -458,59 +488,71 @@ def check_recording(run_dir: str | Path) -> dict:
             add("duplicate_diagnoses", "FAIL" if duplicates else "PASS", [event["id"]],
                 f"Diagnosis entries in this actual snapshot checked by FEN; duplicate positions: {duplicates}.")
 
+    script_steps = _script_steps(root)
     steps = execution.get("sent_steps", [])
     step_turns = {str(s.get("step")): s.get("turn") for s in steps if isinstance(s, dict)} if isinstance(steps, list) else {}
-    # The actual raw scripted messages can establish S4/S5 if parent status is
+    # The actual scripted messages can establish step turns if parent status is
     # absent; do not infer steps from coach prose or numbering of turns.
     for turn, event in students.items():
         text = event["data"].get("text", "")
-        if text.startswith("Wait, go back to the previous position for a second."):
-            step_turns.setdefault("S4", turn)
-        if text.startswith("Thanks. Let's return to move 24, just after 23...fxg2."):
-            step_turns.setdefault("S5", turn)
-    detour_turn, return_turn = step_turns.get("S4"), step_turns.get("S5")
-    baseline_event = starts.get(detour_turn)
-    baseline = _state(baseline_event) if baseline_event else {}
-    for step, turn in (("S4", detour_turn), ("S5", return_turn)):
-        if baseline_event is None or turn is None:
+        for step, info in script_steps.items():
+            if text in info["sends"]:
+                step_turns.setdefault(step, turn)
+    ordered = sorted(((turn, step) for step, turn in step_turns.items() if turn is not None and step in script_steps))
+    snapshot_keys = ("lesson_metadata", "diagnostics", "socratic_attempts", "current_game_id")
+    types = {"lesson_metadata": dict, "diagnostics": list, "socratic_attempts": dict}
+    last_detour_start = None
+    for turn, step in ordered:
+        info = script_steps[step]
+        start_event = starts.get(turn)
+        return_baseline = last_detour_start or start_event
+        if info["detour"]:
+            last_detour_start = start_event
+            baseline = _state(start_event) if start_event else {}
+            for event in [e for e in events if start_event and e["turn"] == turn
+                          and e["id"] >= start_event["id"] and _state(e)]:
+                state = _state(event)
+                missing = [key for key in snapshot_keys if key not in baseline or key not in state or
+                           (key in types and (not isinstance(baseline[key], types[key]) or
+                                              not isinstance(state[key], types[key])))]
+                if missing:
+                    add("detour_lesson_state", "NOT OBSERVED", [start_event["id"], event["id"]],
+                        f"{step}: snapshot fields unavailable: {missing}.")
+                    continue
+                changes = [key for key in snapshot_keys if baseline[key] != state[key]]
+                add("detour_lesson_state", "FAIL" if changes else "PASS", [start_event["id"], event["id"]],
+                    f"{step} question/detour must not advance agenda, regrade, or add diagnoses; changed fields: {changes}.")
+        if info["return"] is None:
             continue
-        after_events = [e for e in events if e["turn"] == turn and e["id"] >= baseline_event["id"] and _state(e)]
-        for event in after_events:
-            state = _state(event)
-            types = {"lesson_metadata": dict, "diagnostics": list, "socratic_attempts": dict}
-            missing = [key for key in ("lesson_metadata", "diagnostics", "socratic_attempts", "current_game_id")
-                       if key not in baseline or key not in state or
-                       (key in types and (not isinstance(baseline[key], types[key]) or
-                                          not isinstance(state[key], types[key])))]
-            if missing:
-                add("detour_lesson_state", "NOT OBSERVED", [baseline_event["id"], event["id"]], f"{step}: snapshot fields unavailable: {missing}.")
-                continue
-            changes = [key for key in ("lesson_metadata", "diagnostics", "socratic_attempts", "current_game_id") if baseline[key] != state[key]]
-            add("detour_lesson_state", "FAIL" if changes else "PASS", [baseline_event["id"], event["id"]],
-                f"{step} navigation/elaboration must not advance agenda, regrade, or add diagnoses; changed fields: {changes}.")
-    final_replies = [e for e in replies if e["turn"] == return_turn] if return_turn is not None else []
-    if final_replies:
-        reply = final_replies[-1]
+        step_replies = [e for e in replies if e["turn"] == turn]
+        if not step_replies:
+            continue
+        reply = step_replies[-1]
+        baseline_event = return_baseline
+        baseline = _state(baseline_event) if baseline_event else {}
+        agenda_fen = next((r.get("fen_before") for r in _agenda(_state(reply)) + _agenda(baseline)
+                           if isinstance(r, dict) and r.get("number") == info["return"]), None)
         source = source_for(_state(reply)) or source_for(baseline)
-        target = next((b for b in source[2] if b.fullmove_number == 24 and b.turn == chess.WHITE), None) if source else None
+        target = _board(agenda_fen) or (next((b for b in source[2] if b.fullmove_number == info["return"]
+                                              and b.turn == chess.WHITE), None) if source else None)
         actual = _board(_state(reply).get("board_fen"))
         pending = _board(baseline.get("board_fen"))
-        expected = pending or target
         evidence = [reply["id"]] + ([source[0]["id"]] if source else []) + ([baseline_event["id"]] if baseline_event else [])
-        if actual and expected:
-            add("return_position", "PASS" if actual.fen() == expected.fen() else "FAIL", evidence,
-                "S5 physical timeline board preserved from the pre-detour snapshot; displayed lesson position is checked separately."
-                if pending else "S5 physical board compared with source PGN before White move 24.")
+        if actual and pending:
+            add("return_position", "PASS" if actual.fen() == pending.fen() else "FAIL", evidence,
+                f"{step}: physical timeline board preserved from the pre-detour snapshot; the displayed "
+                "lesson position is checked separately.")
         else:
-            add("return_position", "NOT OBSERVED", evidence, "Actual return board or source/pending position unavailable.")
+            add("return_position", "NOT OBSERVED", evidence, "Actual return board or pre-detour board unavailable.")
         visible = visible_diagrams(reply)
         if target:
             for diagram in visible:
                 board = _board(diagram["data"].get("fen"))
                 add("diagram_source_consistency", "PASS" if board and board.fen() == target.fen() else "FAIL",
-                    [source[0]["id"], diagram["id"], reply["id"]], "Diagram shown after S5 compared with recorded source PGN before White move 24.")
+                    [diagram["id"], reply["id"]] + ([source[0]["id"]] if source else []),
+                    f"{step}: shown diagram compared with the agenda moment at move {info['return']}.")
         if not visible:
-            gaps.append(f"S5 reply event {reply['id']} has no evidenced visible board diagram")
+            gaps.append(f"{step} reply event {reply['id']} has no evidenced visible board diagram")
 
     for category in CATEGORIES:
         if not any(c["check"] == category for c in checks):

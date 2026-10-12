@@ -220,8 +220,13 @@ separate from the mocked pytest suite and backend-only `scripts/eval_coaching.py
 | `tests/2dtDqQgR_review.md` | Pass-2 reviewer: correctness, grounding, lesson state, coaching quality |
 | `tests/live_coach_agents.json` | Harness model selectors: player `@smol`, reviewer `@default` |
 
-The scenario covers loading, self-assessment, threat grading, an explained move,
-and a detour/return; it does not finish the entire game review. The player does
+The scenario (`lichess-2dtDqQgR-full-v1`) is a complete game review: loading,
+self-assessment, all four agenda moments (threat grading, a legal but inferior
+answer, a hint, an illegal move, candidate commitment, explanations, an in-check
+moment), questions about earlier positions, and post-review questions (pawn
+structure, risk, takeaway). Script steps declare offline checks with
+`**Checks:** detour` (lesson state must not change) and `**Checks:** return N`
+(the agenda moment at move N is restored). The player does
 not check legality or grade responses. After shutdown, the reviewer uses frozen
 evidence and deterministic checks, rather than influencing the live session.
 
