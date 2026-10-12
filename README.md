@@ -202,6 +202,64 @@ The suite (260+ tests) runs in a few seconds with no engines and no network; eng
 
 If you intentionally change the concept extractor, regenerate the snapshot baseline: `python -m tests.test_concepts_snapshot --save`.
 
+### Live conversation evaluation
+
+Live evals use role-specific documents and a project model configuration,
+separate from the mocked pytest suite and backend-only `scripts/eval_coaching.py`:
+
+| Document | Role |
+|---|---|
+| `tests/2dtDqQgR_script.md` | Pass-1 player: messages, semantic gates, allowed branches, stop rule |
+| `tests/live_coach_run.md` | Runner/operator: isolation, capture, waiting, shutdown, evidence handoff |
+| `tests/2dtDqQgR_review.md` | Pass-2 reviewer: correctness, grounding, lesson state, coaching quality |
+| `tests/live_coach_agents.json` | Harness model selectors: player `@smol`, reviewer `@default` |
+
+The scenario covers loading, self-assessment, threat grading, an explained move,
+and a detour/return; it does not finish the entire game review. The player does
+not check legality or grade responses. After shutdown, the reviewer uses frozen
+evidence and deterministic checks, rather than influencing the live session.
+
+The executable entry point is `scripts/run_live_eval.py::run_eval`. In an omp
+Eval cell, from the repository root:
+
+```python
+from scripts.run_live_eval import run_eval
+result = await run_eval(agent_fn=agent, tool_fn=tool)
+display(result)
+```
+
+It needs the harness's `agent`/`tool` interfaces, the project `.venv`, and the
+normal live coach prerequisites. It is not a standalone shell/CI command.
+Another coding agent can call the same entry point in its own Eval session;
+`tests/live_coach_run.md` describes that handoff.
+
+After repository changes, `AGENTS.md` requires this flow in addition to relevant
+deterministic checks. Each run copies only `mcmd`'s configuration into
+`profiles/live-eval-2dtDqQgR-*`, then uses the real Gemini/Stockfish/Maia/Lichess.
+The configured player receives exact scripted messages and rendered replies.
+The independent reviewer starts only after shutdown and deterministic checks.
+
+Each run retains `conversation.md`, `terminal.log`, flushed `events.jsonl`,
+`event-index.json`, `execution.json`, `checks.json`, `manifest.json`, script/config
+snapshots, `review.json`, and `report.md`. Structured events contain API requests
+and responses, complete tool/engine inputs and results, actual PGN/network
+responses, diagrams, and lesson-state snapshots. Credentials and unavailable
+private model internals are excluded. Newline input replaces terminal editing;
+this exercises the actual coach but does not evaluate prompt-toolkit interaction.
+
+Model assignments live in `tests/live_coach_agents.json` and are passed when the
+harness supports model selection. UI aliases are convenient; explicit
+`provider/model[:level]` selectors pin the choice. `@default` inherits the calling
+agent's model, so pin the reviewer when calling from a cheaper runner. When the
+harness cannot select models, both roles run on its default and the manifest
+records `model_pinned: false`. Agent IDs, requested selectors, pinning, and
+reported model IDs are saved. No coach retry.
+
+Script completion is not an overall coaching pass. Exact wording/percentages are
+not snapshots; missing evidence is not a pass. Real API calls can take several
+minutes. Known quota blockers are reported without retrying; archived-run checks
+are not new live trials.
+
 ### Manual scripts (`scripts/`)
 
 These are developer/research tools, **not** part of the pytest suite (they load real models or hit the network). Run them from the repo root with the project venv, e.g. `python scripts/<name>.py`.

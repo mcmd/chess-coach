@@ -1,0 +1,8 @@
+{
+  "player": {
+    "model": "@smol"
+  },
+  "reviewer": {
+    "model": "@default"
+  }
+}
