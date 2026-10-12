@@ -19,7 +19,7 @@ from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata
                         record_self_assessment, record_session_takeaway,
                         update_dossier, update_dossier_with_batch)
 from app.notation import legal_san_mentions, san_mentions
-from app.planner import TeachingPlan, _normalize_text, plan_free_text_turn
+from app.planner import _CLOSE_RE, TeachingPlan, _normalize_text, plan_free_text_turn
 from app.rating import current_rating_enrichment, rating_offer_note
 from app.review import adopt_review_pov, review_game, attach_board_tokens
 from app.self_assessment import start_self_assessment, self_assessment_open_note
@@ -861,7 +861,8 @@ class CommandProcessor:
         """A WHY step left open after a probe (#40) blocked submit_diagnosis when the
         student chose to move on, and the model fabricated an explanation to unlock it.
         Moving on is an explicit pass: close the step in the backend, like a give-up."""
-        if "?" in (text or "") or not self._MOVE_ON_RE.search(text or ""):
+        if "?" in (text or "") or not (self._MOVE_ON_RE.search(text or "")
+                                       or _CLOSE_RE.search(_normalize_text(text or ""))):
             return ""
         meta = self.state.lesson_metadata or {}
         if not self.state.review or meta.get("lesson_status") != "awaiting_explanation":

@@ -197,6 +197,22 @@ def test_grading_integrity_guard_blocks_affirming_fabricated_answer():
     assert state.grading_integrity_events[0]["type"] == "stale_grading_response_blocked"
 
 
+def test_rejected_grading_attempt_superseded_by_an_accepted_one_does_not_block():
+    # Run hmrpy5ys S21: evaluate_explanation("pass") was rejected, the model then graded the
+    # student's real message and logged the diagnosis, but the guard still replaced the reply.
+    state = SessionState()
+    fen = "1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31"
+    state._turn_grading_results = [
+        {"tool": "evaluate_explanation", "args": {"fen": fen, "student_explanation": "pass"},
+         "result": {"verdict": "stale_or_fabricated_student_input"}},
+        {"tool": "evaluate_explanation", "args": {"fen": fen, "student_explanation": "OK, let's finish."},
+         "result": {"gradable": True, "key_reason_named": False}},
+    ]
+
+    assert _run_grading_integrity_guard("Kh2 was the move: it covers h3.", state) == "Kh2 was the move: it covers h3."
+    assert not state.grading_integrity_events
+
+
 def test_verdict_contradiction_lint_flags_praised_blunder():
     from app.review import GameReview, MoveRecord
     fen = "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26"

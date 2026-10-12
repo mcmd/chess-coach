@@ -3,6 +3,7 @@
 import json
 
 import chess
+import pytest
 
 from app.commands import CommandProcessor, looks_like_pgn
 from app.planner import TeachingPlan, assess_teaching_plan_obedience, plan_free_text_turn
@@ -990,9 +991,11 @@ def test_pending_diagnosis_answers_student_question_before_logging(stub_config):
     assert record.move_label in result.prompt
 
 
-def test_moving_on_during_open_why_step_counts_as_passing_it(stub_config):
+@pytest.mark.parametrize("text", ["Thanks, I'm ready for the next moment.", "OK, let's finish the review."])
+def test_moving_on_during_open_why_step_counts_as_passing_it(stub_config, text):
     # Recorded live eval (#40): after one WHY probe and a clarification, "ready for the next
     # moment" left submit_diagnosis blocked; the coach fabricated an explanation and stalled.
+    # Run hmrpy5ys S21: "let's finish the review" during move 31's open step did the same.
     from tests.test_review import PGN as RPGN, _scripted_engines
     proc, state, _ = make_processor(stub_config, _scripted_engines())
     proc.process(RPGN)
@@ -1004,7 +1007,7 @@ def test_moving_on_during_open_why_step_counts_as_passing_it(stub_config):
                              "last_agenda_index": 0,
                              "lesson_status": "awaiting_explanation"}
 
-    result = proc.process("Thanks, I'm ready for the next moment.")
+    result = proc.process(text)
 
     assert "chose to move on" in result.prompt and "has NOT been logged yet" in result.prompt
     assert state.socratic_attempts[f"explain-complete:{record.fen_before}"] is True

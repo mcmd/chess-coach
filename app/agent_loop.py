@@ -675,11 +675,21 @@ def _run_grader_verdict_lint(output_text: str, state) -> None:
 
 
 def _run_grading_integrity_guard(output_text: str, state) -> str:
-    stale = []
-    for item in getattr(state, "_turn_grading_results", []) or []:
-        result = item.get("result") or {}
-        if result.get("verdict") == "stale_or_fabricated_student_input":
-            stale.append(item)
+    # A rejected attempt is superseded when the same tool later accepted a call on the
+    # same position this turn (the model regraded the student's real message): blocking
+    # the reply then would hide a correct answer behind a confusing notice.
+    results = getattr(state, "_turn_grading_results", []) or []
+
+    def superseded(index, item):
+        fen = (item.get("args") or {}).get("fen")
+        return any(later.get("tool") == item.get("tool") and (later.get("args") or {}).get("fen") == fen
+                   and (later.get("result") or {}).get("verdict") != "stale_or_fabricated_student_input"
+                   and not (later.get("result") or {}).get("error")
+                   for later in results[index + 1:])
+
+    stale = [item for index, item in enumerate(results)
+             if (item.get("result") or {}).get("verdict") == "stale_or_fabricated_student_input"
+             and not superseded(index, item)]
     if not stale:
         return output_text
     for item in stale:
