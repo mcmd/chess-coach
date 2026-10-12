@@ -361,7 +361,9 @@ def test_detour_question_stays_on_topic_instead_of_re_presenting_next_moment(stu
 
 def test_plain_answers_and_ready_signals_keep_lesson_flow(stub_config):
     proc, state, _ = make_processor(stub_config)
-    for text in ("I would play Kxg2", "ok thank you, let's continue"):
+    # "Let's go back to move 24" (recorded live eval) returns to the lesson; it is not a detour.
+    for text in ("I would play Kxg2", "ok thank you, let's continue",
+                 "Thanks, that's clear. Let's go back to move 24."):
         result = proc.process(text)
         assert "stay_on_topic: false" in result.prompt
 

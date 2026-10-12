@@ -115,8 +115,9 @@ _CLOSE_RE = re.compile(
 )
 # A follow-up about the current or an earlier position: the student is not ready to
 # move on, so the coach must not jump to (or re-show) the next agenda moment.
+# Bare "go back" is not enough: "let's go back to move 24" returns to the lesson.
 _DETOUR_RE = re.compile(
-    r"\b(?:go back|back to (?:the )?(?:previous|earlier|last) (?:position|move|moment)|"
+    r"\b(?:back to (?:the )?(?:previous|earlier|last) (?:position|move|moment)|go back to move \d+ for|"
     r"previous position|earlier position|still on move|more questions?|one more question|"
     r"follow[- ]up|volvamos|posicion anterior|mas preguntas|otra pregunta)\b",
     re.I,
