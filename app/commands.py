@@ -183,7 +183,38 @@ class CommandProcessor:
         return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
                              + self._opponent_threat_routing_note(text)
                              + self._give_up_note(text) + self._move_on_note(text)
-                             + self._pending_diagnosis_note(text) + route_note)
+                             + self._pending_diagnosis_note(text) + self._persistence_note(text) + route_note)
+
+    _PERSISTENCE_RE = re.compile(r"(?:\bsav(?:e|ed|ing)\b|/memori[sz]e|\bmemori[sz]e|\bdossier\b|\bstored\b|"
+                                 r"\bpersist(?:ed)?\b)", re.IGNORECASE)
+
+    def _persistence_note(self, text: str) -> str:
+        """Live evals (S29, two runs): the coach claimed every diagnosed moment was saved to the
+        long-term dossier. Diagnoses reach the dossier only via /memorize, so when the student
+        asks what is saved, give the coach the facts read from disk now."""
+        if not self._PERSISTENCE_RE.search(text or ""):
+            return ""
+        dossier = load_dossier(getattr(self.config, "dossier_file", None))
+        in_dossier = {p.get("fen") for p in dossier.get("recent_positions", [])}
+        labels = {r.fen_before: r.move_label for r in (self.state.review.records if self.state.review else [])}
+        diagnosed = [d for d in self.state.diagnostics if d.get("fen")]
+        saved = [labels.get(d["fen"], d["fen"]) for d in diagnosed if d["fen"] in in_dossier]
+        pending = [labels.get(d["fen"], d["fen"]) for d in diagnosed if d["fen"] not in in_dossier]
+        game = self.state.current_game_id
+        takeaway = any(t.get("game_id") == game for t in dossier.get("session_takeaways", [])) if game else False
+        assessed = any(a.get("game_id") == game for a in dossier.get("self_assessment_history", [])) if game else False
+        facts = [
+            f"diagnoses logged this session: {len(diagnosed)}",
+            "already in your long-term dossier: " + (", ".join(saved) if saved else "none"),
+            "not yet in your long-term dossier: " + (", ".join(pending) if pending else "none"),
+            f"the session takeaway for this game is {'saved' if takeaway else 'not saved'} in the dossier",
+            f"your self-assessment for this game is {'saved' if assessed else 'not saved'} in the dossier",
+            "lesson progress (where to resume) is saved automatically; the conversation is saved when you exit",
+            "the diagnoses enter the long-term dossier only with /memorize: /memorize writes them, then clears "
+            "this session's conversation and board",
+        ]
+        return ("\n[Backend persistence facts, read from disk now; state only these and do not claim anything "
+                "else was saved: " + "; ".join(facts) + ".]")
 
     # --- opt-in message router ----------------------------------------------
 

@@ -27,6 +27,25 @@ def make_processor(stub_config, engines=None):
     return proc, state, timeline
 
 
+def test_saved_state_question_gets_the_verified_persistence_facts(stub_config):
+    # Live evals 1l_zs5z1 and e054prsf, S29: the coach claimed all four diagnosed moments were
+    # "automatically saved to your long-term dossier"; they reach the dossier only via /memorize.
+    from app.memory import record_session_takeaway
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    record = state.review.agenda[0]
+    state.diagnostics.append({"fen": record.fen_before, "error_category": "ignored_threat"})
+    record_session_takeaway(stub_config.dossier_file, {"game_id": state.current_game_id, "text": "Scan threats."})
+
+    prompt = proc.process("What has actually been saved? Do I need /memorize?").prompt
+
+    assert f"not yet in your long-term dossier: {record.move_label}" in prompt
+    assert "takeaway for this game is saved" in prompt
+    assert "/memorize writes them" in prompt
+    assert "persistence facts" not in proc.process("What should I remember from this session?").prompt
+
+
 # --- PGN DETECTION GUARD (F4 regression) ---
 
 def test_chat_mentioning_move_one_is_not_a_pgn():
