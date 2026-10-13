@@ -26,6 +26,10 @@ your coaching verdict.
   Raw model output and tool evidence establish provenance, but can differ from
   the final rendered text after board-token/claim checks.
 - Prefer recorded board/lesson state and verified tool results over coach prose.
+- The review digest is the `fetch_lichess_game_by_id` tool result in `review-events.jsonl`. It
+  holds the agenda moments, Maia percentages, the human-alignment count, and the win/draw/loss
+  risk profiles; check a numeric claim against it (and later `analyze_position` results) before
+  marking it NOT OBSERVED.
 - Legality belongs to a deterministic python-chess check from the recorded FEN,
   not to either model's chess intuition. Review and explain that result. If no
   checker/evidence is available, mark legality NOT OBSERVED.

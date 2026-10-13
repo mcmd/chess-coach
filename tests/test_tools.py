@@ -397,6 +397,18 @@ def test_analyze_position_no_wdl(stub_config):
     assert "win_probability_for_side_to_move" in summary
 
 
+def test_human_tendency_summary_says_whether_most_players_agree(stub_config):
+    # Router run t0zauzig, S5: the data was Qh6 31.6%, Qa6 12.6%, Qg6 11.6% and the coach said
+    # "most humans at this level try Qh6 or Qg6". The backend now writes the sentence to quote.
+    split = FakeEngines(maia={START: {"e2e4": 0.32, "d2d4": 0.13, "g1f3": 0.12}})
+    summary = make_tools(stub_config, split)[0].analyze_position(START)["human_tendency_at_student_elo"]
+    assert summary["in_words"] == ("No single move is chosen by most players at this level: "
+                                   "e4 32%, d4 13%, Nf3 12%.")
+    clear = FakeEngines(maia={START: {"e2e4": 0.73, "d2d4": 0.07}})
+    summary = make_tools(stub_config, clear)[0].analyze_position(START)["human_tendency_at_student_elo"]
+    assert summary["in_words"] == "Most players at this level choose e4 (73%)."
+
+
 def test_analyze_position_rejects_illegal_hypothetical(stub_config):
     tools, _ = make_tools(stub_config)
     result = tools.analyze_position(START, moves_to_apply=["e4", "Ke7"])

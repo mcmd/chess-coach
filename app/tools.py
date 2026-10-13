@@ -231,6 +231,18 @@ def grading_next_step(tool: str, result: dict) -> str | None:
     return (f"Say first: {said}. Then: " if said else "Then: ") + step
 
 
+def _human_moves_in_words(top_moves: list) -> str | None:
+    """A sentence the coach can quote. Router run t0zauzig: Qh6 31.6%, Qa6 12.6%, Qg6 11.6%
+    became "most humans at this level try Qh6 or Qg6" (no majority; the second move dropped)."""
+    moves = [m for m in top_moves or [] if m.get("move") and m.get("probability") is not None][:3]
+    if not moves:
+        return None
+    if moves[0]["probability"] >= 0.5:
+        return f"Most players at this level choose {moves[0]['move']} ({moves[0]['probability']:.0%})."
+    listed = ", ".join(f"{m['move']} {m['probability']:.0%}" for m in moves)
+    return f"No single move is chosen by most players at this level: {listed}."
+
+
 def _backend_diagnosis_sentence(record) -> str:
     primitives = getattr(record, "explanation_primitives", None) or {}
     sentence = primitives.get("diagnosis_sentence")
@@ -326,6 +338,7 @@ class CoachTools:
         maia = self.engines.maia_predict(board.fen(), history_uci=hist, tier="deep")
         if maia:
             maia_summary = {"top_human_moves": maia["top_moves"],
+                            "in_words": _human_moves_in_words(maia["top_moves"]),
                             "win_probability_for_side_to_move": maia["win_probability_for_side_to_move"]}
             d, l = maia.get("draw_probability"), maia.get("loss_probability")
             if d is not None:
