@@ -28,6 +28,9 @@ class SessionState:
     grader_verdict_events: list[dict] = field(default_factory=list)  # shadow verdict-report observability
     verdict_contradiction_events: list[dict] = field(default_factory=list)  # shadow review-packet contradictions
     deliberation_events: list[dict] = field(default_factory=list)  # shadow raw-thought/fake-verification lint
+    last_coach_reply: str = ""                   # rendered text of the coach's last reply (router context)
+    pregraded: dict = field(default_factory=dict)  # "tool:fen" -> {tool, args, result}: graded by the backend this turn
+    router_events: list[dict] = field(default_factory=list)  # Flash router decisions (observability)
     # Board diagram theme (set from config at startup; defaults = lichess green).
     board_light_color: str = "#eeeed2"
     board_dark_color: str = "#769656"

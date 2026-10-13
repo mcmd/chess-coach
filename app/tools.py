@@ -306,6 +306,9 @@ class CoachTools:
             board = chess.Board(fen)
         except ValueError as e:
             return {"error": f"Invalid FEN: {e}"}
+        cached = self._pregraded_result("evaluate_student_answer", fen)
+        if cached is not None:
+            return cached
         provenance_error = self._verify_latest_student_input(
             "evaluate_student_answer", "student_move_san", student_move_san, [board])
         if provenance_error:
@@ -528,6 +531,14 @@ class CoachTools:
         matched = sum(1 for w in submitted_words if any(self._typo_variant(w, l) for l in latest_words))
         return matched / len(submitted_words) >= 0.85
 
+    def _pregraded_result(self, tool: str, fen: str) -> dict | None:
+        """The backend router already graded the student's message with this tool on this
+        position this turn: return that result instead of spending another attempt."""
+        entry = (getattr(self.state, "pregraded", None) or {}).get(f"{tool}:{fen}")
+        if entry is None:
+            return None
+        return {**entry["result"], "already_graded_this_turn": True}
+
     def _verify_latest_student_input(self, tool_name: str, field_name: str, submitted: str,
                                      boards=()) -> dict | None:
         latest = getattr(self.state, "latest_user_text", None)
@@ -634,6 +645,9 @@ class CoachTools:
                             "not what is threatened next."}
         probe = board.copy(stack=False)
         probe.push(chess.Move.null())
+        cached = self._pregraded_result("evaluate_threat_answer", fen)
+        if cached is not None:
+            return cached
         provenance_error = self._verify_latest_student_input(
             "evaluate_threat_answer", "threat_move_san", threat_move_san, [probe])
         if provenance_error:
@@ -733,6 +747,9 @@ class CoachTools:
         record = self._agenda_record_for_fen(fen)
         if record is None:
             return {"error": "No agenda moment matches that FEN. Use the exact fen_before from the digest."}
+        cached = self._pregraded_result("evaluate_explanation", fen)
+        if cached is not None:
+            return cached
         provenance_error = self._verify_latest_student_input(
             "evaluate_explanation", "student_explanation", student_explanation)
         if provenance_error:

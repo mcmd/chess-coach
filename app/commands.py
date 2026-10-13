@@ -6,9 +6,10 @@ Returns CommandResult objects instead of mutating the chat session directly.
 import contextlib
 import hashlib
 import io
+import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import chess
 import chess.pgn
@@ -20,6 +21,7 @@ from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata
                         update_dossier, update_dossier_with_batch)
 from app.notation import legal_san_mentions, san_mentions
 from app.planner import _CLOSE_RE, TeachingPlan, _normalize_text, plan_free_text_turn
+from app.router import GRADING_LABELS, describe_moment, resolve_explanation, resolve_move, resolve_threat
 from app.rating import current_rating_enrichment, rating_offer_note
 from app.review import adopt_review_pov, review_game, attach_board_tokens
 from app.self_assessment import start_self_assessment, self_assessment_open_note
@@ -77,17 +79,20 @@ def looks_like_pgn(text: str) -> bool:
 
 
 class CommandProcessor:
-    def __init__(self, state, timeline, engines, config, on_progress=None):
+    def __init__(self, state, timeline, engines, config, on_progress=None, router=None, tools=None):
         self.state = state
         self.timeline = timeline
         self.engines = engines
         self.config = config
         self.on_progress = on_progress  # optional callable(done, total) for review progress
+        self.router = router            # optional app.router.Router (opt-in message routing)
+        self.tools = tools              # CoachTools the router grades with
 
     # ------------------------------------------------------------------
 
     def process(self, user_input: str) -> CommandResult:
         text = user_input.strip()
+        self.state.pregraded.clear()
         # Match the EXACT first token, not a prefix: startswith made "/review-old",
         # "/movefoo", "/sparring" trigger commands they only resemble.
         cmd = text.split(maxsplit=1)[0].lower() if text else ""
@@ -163,6 +168,9 @@ class CommandProcessor:
         if plan.decline:
             return CommandResult(message=plan.decline_message)
 
+        route_note = ""
+        if self.router is not None and not self.state.sparring_mode:
+            plan, route_note = self._route(text, plan)
         planned = f"{plan.prompt_block()}\n\nStudent request: {text}"
         if self.state.sparring_mode:
             # Review-lesson notes (self-assessment, threat routing, give-up, pending
@@ -175,7 +183,102 @@ class CommandProcessor:
         return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
                              + self._opponent_threat_routing_note(text)
                              + self._give_up_note(text) + self._move_on_note(text)
-                             + self._pending_diagnosis_note(text))
+                             + self._pending_diagnosis_note(text) + route_note)
+
+    # --- opt-in message router ----------------------------------------------
+
+    _ACTIVE_LESSON = ("fresh_review", "awaiting_answer", "awaiting_explanation",
+                      "awaiting_diagnosis", "diagnosis_logged")
+
+    def _current_moment(self):
+        """The agenda moment the coach is quizzing on, during an active review only."""
+        meta = self.state.lesson_metadata or {}
+        if not self.state.review or meta.get("lesson_status") not in self._ACTIVE_LESSON:
+            return None
+        agenda = self.state.review.agenda
+        idx = int(meta.get("last_agenda_index") or 0)
+        return agenda[idx] if 0 <= idx < len(agenda) else None
+
+    def _route(self, text: str, plan):
+        """Classify the message with the router model, then act on it in the backend:
+        grade moves/threats/explanations, or apply the matching lesson note or plan.
+        Rules that already matched keep priority; a failed router changes nothing."""
+        record = self._current_moment()
+        moment = describe_moment(record.fen_before, record.move_label) if record is not None else None
+        route = self.router.classify(text, self.state.last_coach_reply, moment)
+        if route is None:
+            return plan, ""
+        event = {"label": route.label, "about_current_moment": route.about_current_moment,
+                 "model_version": route.model_version, "seconds": route.seconds, "action": "none"}
+        note = ""
+        if route.label in GRADING_LABELS:
+            note = self._pregrade(route, text, record, event)
+        elif route.label == "give_up" and not self._GIVE_UP_RE.search(text):
+            note = self._give_up_note(text, forced=True)
+            event["action"] = "give_up_note" if note else "none"
+        elif route.label == "move_on" and not (self._MOVE_ON_RE.search(text)
+                                               or _CLOSE_RE.search(_normalize_text(text))):
+            note = self._move_on_note(text, forced=True)
+            event["action"] = "move_on_note" if note else "none"
+        elif route.label == "hint" and plan.intent != "give_hint":
+            plan = replace(plan, intent="give_hint", withhold_answer=True, socratic_redirect=True,
+                           no_tail_redirect=True, reasons=list(plan.reasons) + ["router:hint"])
+            event["action"] = "plan:give_hint"
+        elif route.label == "question" and not plan.stay_on_topic and plan.intent != "close_with_takeaway":
+            plan = replace(plan, stay_on_topic=True, reasons=list(plan.reasons) + ["router:question"])
+            event["action"] = "plan:stay_on_topic"
+        if event["action"].startswith("plan:"):
+            self.state.teaching_ledger["last_plan"].update(
+                intent=plan.intent, stay_on_topic=plan.stay_on_topic, reasons=list(plan.reasons))
+        self.state.router_events.append(event)
+        self.state.router_events[:] = self.state.router_events[-50:]
+        trace(f"router: {route.label} (current moment: {route.about_current_moment}) -> {event['action']} "
+              f"[{route.model_version}, {route.seconds}s]")
+        return plan, note
+
+    def _pregrade(self, route, text: str, record, event: dict) -> str:
+        """Grade the student's own words with the backend tools, before the coach model
+        runs. Only for the current agenda moment, and only when the quoted move is legal
+        there; otherwise the coach model decides, as without the router."""
+        if record is None or not route.about_current_moment or self.tools is None:
+            return ""
+        fen = record.fen_before
+        board = chess.Board(fen)
+        self.state.latest_user_text = text
+        calls = []
+        if route.label == "move":
+            san = resolve_move(board, route.move, text)
+            if san:
+                calls.append(("evaluate_student_answer", {"fen": fen, "student_move_san": san}))
+        elif route.label == "threat":
+            san = resolve_threat(board, route.threat, text)
+            if san:
+                calls.append(("evaluate_threat_answer", {"fen": fen, "threat_move_san": san}))
+        else:
+            reason = resolve_explanation(route.explanation, text) or text
+            calls.append(("evaluate_explanation", {"fen": fen, "student_explanation": reason}))
+        graded = []
+        while calls:
+            tool, args = calls.pop(0)
+            result = getattr(self.tools, tool)(**args)
+            if (not isinstance(result, dict) or result.get("error")
+                    or result.get("verdict") == "stale_or_fabricated_student_input"):
+                break
+            entry = {"tool": tool, "args": args, "result": result}
+            self.state.pregraded[f"{tool}:{fen}"] = entry
+            graded.append(entry)
+            # The best move given together with its reason: grade the reason too.
+            if tool == "evaluate_student_answer" and result.get("verdict") == "best":
+                reason = resolve_explanation(route.explanation, text)
+                if reason:
+                    calls.append(("evaluate_explanation", {"fen": fen, "student_explanation": reason}))
+        if not graded:
+            return ""
+        event["action"] = "pregraded:" + ",".join(e["tool"] for e in graded)
+        return ("\n[Backend: the student's message was already graded by the backend for this turn. "
+                "Results: " + json.dumps(graded, ensure_ascii=False, default=str) + ". Reply from these "
+                "results exactly as you would from your own tool calls; do NOT call these grading tools "
+                "again for this message.]")
 
     def _sparring_bare_move(self, text: str):
         """While sparring, a message that is only a move is played like /move; an
@@ -822,12 +925,12 @@ class CommandProcessor:
         r"\b(?:i\s*(?:don'?t|do\s*not)\s*know|no\s+idea|i\s*give\s*up|idk|not\s+a\s+clue)\b",
         re.IGNORECASE)
 
-    def _give_up_note(self, text: str) -> str:
+    def _give_up_note(self, text: str, forced: bool = False) -> str:
         """'I don't know' had no legitimate path through the attempt counters, so
         the model was observed INVENTING a guess on the student's behalf to call
         the grading tools. Surrender is now a first-class input: the backend
         spends the attempt and tells the model the honest next step."""
-        if not self._GIVE_UP_RE.search(text):
+        if not forced and not self._GIVE_UP_RE.search(text):
             return ""
         meta = self.state.lesson_metadata or {}
         if not self.state.review or meta.get("lesson_status") in ("lesson_complete", "awaiting_diagnosis"):
@@ -857,12 +960,12 @@ class CommandProcessor:
         r"\b(?:i'?m ready|ready for the next|ready to move on|next moment|next one|next position|"
         r"move on|moving on|let'?s continue|let'?s go on|siguiente|sigamos)\b", re.IGNORECASE)
 
-    def _move_on_note(self, text: str) -> str:
+    def _move_on_note(self, text: str, forced: bool = False) -> str:
         """A WHY step left open after a probe (#40) blocked submit_diagnosis when the
         student chose to move on, and the model fabricated an explanation to unlock it.
         Moving on is an explicit pass: close the step in the backend, like a give-up."""
-        if "?" in (text or "") or not (self._MOVE_ON_RE.search(text or "")
-                                       or _CLOSE_RE.search(_normalize_text(text or ""))):
+        if not forced and ("?" in (text or "") or not (self._MOVE_ON_RE.search(text or "")
+                                                        or _CLOSE_RE.search(_normalize_text(text or "")))):
             return ""
         meta = self.state.lesson_metadata or {}
         if not self.state.review or meta.get("lesson_status") != "awaiting_explanation":

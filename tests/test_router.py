@@ -1,0 +1,110 @@
+"""Opt-in message router: the backend grades the student's own words before the coach
+model runs, and a router failure leaves the normal flow unchanged."""
+import chess
+
+from app.router import Route, resolve_move, resolve_threat
+from app.tools import CoachTools
+from tests.test_commands import make_processor
+
+
+class _FakeRouter:
+    def __init__(self, route):
+        self.route = route
+        self.calls = []
+
+    def classify(self, student_text, coach_text, moment):
+        self.calls.append((student_text, coach_text, moment))
+        return self.route
+
+
+def _routed_lesson(stub_config, route, status="awaiting_answer"):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    record = state.review.agenda[0]
+    state.lesson_metadata = {"last_game_id": state.current_game_id, "last_agenda_index": 0,
+                             "lesson_status": status}
+    proc.tools = CoachTools(state, proc.timeline, proc.engines, stub_config)
+    proc.router = _FakeRouter(route)
+    return proc, state, record
+
+
+def _legal_move(record):
+    board = chess.Board(record.fen_before)
+    return record.best_move_san or board.san(next(iter(board.legal_moves)))
+
+
+def test_move_is_graded_once_and_a_repeated_tool_call_does_not_spend_another_attempt(stub_config):
+    proc, state, record = _routed_lesson(stub_config, None)
+    move = _legal_move(record)
+    proc.router.route = Route(label="move", move=move, about_current_moment=True)
+
+    result = proc.process(f"I would play {move}")
+
+    assert "already graded by the backend" in result.prompt
+    spent = dict(state.socratic_attempts)
+    again = proc.tools.evaluate_student_answer(record.fen_before, move)
+    assert again["already_graded_this_turn"] is True
+    assert state.socratic_attempts == spent
+    assert state.router_events[-1]["action"] == "pregraded:evaluate_student_answer"
+
+
+def test_next_message_grades_normally_again(stub_config):
+    proc, state, record = _routed_lesson(stub_config, None)
+    move = _legal_move(record)
+    proc.router.route = Route(label="move", move=move, about_current_moment=True)
+    proc.process(f"I would play {move}")
+
+    proc.router.route = Route(label="question")
+    proc.process("Why is that?")
+
+    assert state.pregraded == {}
+    assert "already_graded_this_turn" not in proc.tools.evaluate_student_answer(record.fen_before, move)
+
+
+def test_move_the_student_did_not_write_is_never_graded(stub_config):
+    proc, state, record = _routed_lesson(stub_config, None)
+    proc.router.route = Route(label="move", move=_legal_move(record), about_current_moment=True)
+
+    result = proc.process("I'm not sure what to play here")
+
+    assert "already graded" not in result.prompt
+    assert state.socratic_attempts == {}
+
+
+def test_answer_about_another_position_is_not_graded_against_the_current_moment(stub_config):
+    proc, state, record = _routed_lesson(stub_config, None)
+    move = _legal_move(record)
+    proc.router.route = Route(label="move", move=move, about_current_moment=False)
+
+    result = proc.process(f"Back at move 4 I would have played {move}")
+
+    assert "already graded" not in result.prompt
+    assert state.socratic_attempts == {}
+
+
+def test_router_failure_leaves_the_prompt_unchanged(stub_config):
+    routed_proc, _, _ = _routed_lesson(stub_config, None)       # classify() fails -> None
+    plain_proc, _, _ = _routed_lesson(stub_config, None)
+    plain_proc.router = None
+    message = "What is Black threatening here?"
+    assert routed_proc.process(message).prompt == plain_proc.process(message).prompt
+
+
+def test_give_up_missed_by_the_rules_is_still_recorded(stub_config):
+    proc, state, record = _routed_lesson(stub_config, Route(label="give_up"))
+
+    result = proc.process("No clue, please just show it")
+
+    assert "GAVE UP" in result.prompt
+    assert state.socratic_attempts[record.fen_before] == 1
+
+
+def test_resolvers_accept_only_quoted_legal_moves():
+    board = chess.Board()
+    assert resolve_move(board, "knight to f3", "I'd go knight to f3") == "Nf3"
+    assert resolve_move(board, "Nf3", "I'd play e4") is None          # not in the message
+    assert resolve_move(board, "Qh5", "I'd play Qh5") is None         # illegal here
+    board.push_san("e4")
+    assert resolve_threat(board, "Qh4", "Black wants Qh4") is None    # not legal for White after a pass
+    assert resolve_threat(board, "Qh5", "White threatens Qh5") == "Qh5"

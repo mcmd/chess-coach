@@ -111,7 +111,8 @@ def run_agent_turn(chat, coach_tools, message) -> None:
     state = coach_tools.state
     if hasattr(coach_tools.state, "claim_gate_extra_fens"):
         coach_tools.state.claim_gate_extra_fens.clear()
-    turn_grading_results = []
+    # Results the backend router graded before this turn count as this turn's gradings.
+    turn_grading_results = [dict(entry) for entry in (getattr(state, "pregraded", None) or {}).values()]
     turn_tool_names = []
     response = _send_without_leaks(chat, message, state)
     full_text = ""
@@ -789,6 +790,8 @@ def _render(full_text: str, state, config=None) -> None:
     _run_deliberation_lint(output_text, state)
     output_text = normalize_move_styling(output_text)
     segments, scrubbed = _split_board_segments(output_text, state.board_visuals)
+    if hasattr(state, "last_coach_reply"):
+        state.last_coach_reply = "\n".join(payload for kind, payload in segments if kind != "board")
     if scrubbed:
         console.print(f"[dim red]({scrubbed} invented board token(s) scrubbed from the response)[/dim red]")
 

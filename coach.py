@@ -15,6 +15,7 @@ from app.engines import EngineManager, EngineStartError
 from app.importer import should_offer_onboarding_import
 from app.memory import load_history, save_history
 from app.prompts import create_chat_session
+from app.router import Router
 from app.state import SessionState, TimelineManager
 from app.tools import CoachTools
 from app.ui import console
@@ -78,7 +79,9 @@ def main():
         review_progress = _ReviewProgress()
         coach_tools = CoachTools(app_state, timeline, engines, config, on_progress=review_progress)
         chat = create_chat_session(client, config, coach_tools, load_history(config.history_file))
-        commands = CommandProcessor(app_state, timeline, engines, config, on_progress=review_progress)
+        router = Router(client, config.router_model, config.router_thinking_level) if config.router_model else None
+        commands = CommandProcessor(app_state, timeline, engines, config, on_progress=review_progress,
+                                    router=router, tools=coach_tools)
 
         profile_text = f" (Profile: {config.profile})" if config.profile else ""
         trace_text = "  [dim cyan](trace ON)[/dim cyan]" if config.trace else ""

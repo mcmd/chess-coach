@@ -186,6 +186,8 @@ Tip: run with `--trace` to watch exactly which tools the coach calls for each an
    }
    ```
    `usernames` is matched case-insensitively against PGN `White`/`Black` headers so the coach knows which side you played; list every handle you use. `player_name` still works as a legacy single-handle alias. `review_eval_time` is Stockfish seconds per position during a game review (higher = more reliable classification, slower scan). `use_online_databases` toggles the Lichess explorer/tablebase enrichment. `maia3_offline` loads the Maia-3 checkpoint from the local Hugging Face cache only (set it `true` after the first run to silence the startup phone-home). Download [Stockfish](https://stockfishchess.org/download/) for your OS; Maia-3 installs via pip and downloads its checkpoint from Hugging Face on first run (cached thereafter).
+
+   Optional, off by default: `"router_model": "gemini-3.8-flash"` (thinking level `"router_thinking_level"`, default `"low"`) makes a fast model classify each of your messages during a review, so the backend grades your move, threat or explanation itself and the coach model only writes the reply. The backend grades only text you actually wrote and moves that are legal in the current moment; anything else, a router failure, or a router reply slower than 10 seconds falls back to the normal flow (run with `--trace` to see each routing decision).
 3. Install and run:
    ```bash
    python -m venv .venv
@@ -281,5 +283,6 @@ These are developer/research tools, **not** part of the pytest suite (they load 
 |---|---|
 | `scan_eval_slides.py` | Eval-only "within-game slide" corpus scanner (no model, no tokens). Downloads a player's analysed Lichess games (`--user <name>`, cached locally) and classifies each game's archetype (gradual slide / single cliff / chaos / clean) purely from the `[%eval]` annotations, reporting the base rate of sustained one-sided slides and dumping candidate games. Used to validate the `/review` slide detector (`app/review.py::_detect_slides`). Example: `python scripts/scan_eval_slides.py --user msnid --max 3000`. |
 | `validate_batch_slides.py` | End-to-end `/batch` validator: runs the real pipeline (Stockfish + Maia-3) on a multi-game PGN exactly as the command does, writing all output to a throwaway temp dir, then prints the cross-game slide signature, per-pattern axis tags, the relevant digest blocks, and the dossier `slide_trend` the run produces, so the batch output can be eyeballed against ground truth without touching a real profile. Example: `python scripts/validate_batch_slides.py games/your.pgn <player>`. |
+| `eval_routing.py` | Offline message-routing eval on recorded student turns (`tests/fixtures/routing/messages.json`, hand-labelled). `rules` scores today's rules; `router <model> <level>` scores the opt-in router (needs `GEMINI_API_KEY`) on its labels and on what the backend would grade. Example: `python scripts/eval_routing.py router gemini-3.8-flash medium --runs 3`. |
 
 See `GEMINI.md` for the module map and architectural invariants.

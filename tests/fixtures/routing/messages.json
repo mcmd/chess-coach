@@ -1,0 +1,873 @@
+[
+ {
+  "id": 0,
+  "source": "live-eval-2dtDqQgR-0rkkpz_l/events.jsonl",
+  "text": "Load the Lichess game 2dtDqQgR",
+  "coach_previous": "",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "other"
+  }
+ },
+ {
+  "id": 1,
+  "source": "live-eval-2dtDqQgR-8mmtyph0/events.jsonl",
+  "text": "I think when I took that pawn with my queen, in the late middlegame",
+  "coach_previous": "\nCoach:\nI have your game loaded! You played White in a Queen's Pawn Game (Accelerated   \nLondon System) that ended in a draw.                                            \n\nBefore we dive in, I noticed your current Lichess rapid rating is around 1142,  \nbut my coaching level is set to 1200. Let me know if you'd like me to adjust my \ncoaching to match your current rating, or if you're happy keeping it pitched at \n1200.                                                                           \n\nNow, before I show you my agenda for the review, which move do you think was    \nyour biggest mistake, and why?                                                  \n",
+  "lesson_status": "fresh_review",
+  "moment_fen": "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20",
+  "moment_label": "20. Nxb5",
+  "gold": {
+   "label": "self_assessment"
+  }
+ },
+ {
+  "id": 2,
+  "source": "live-eval-2dtDqQgR-8mmtyph0/events.jsonl",
+  "text": "black is threatening e4",
+  "coach_previous": "\nCoach:\nAh, taking that pawn with the queen in the late middlegame—yes, that is exactly \none of the critical moments we are going to look at today!                      \n\nI have four critical moments lined up for us. The first one is a tricky trade   \ndecision, and the last three all deal with handling direct threats (including   \nthat queen capture you mentioned).                                              \n\nLet's jump into the first moment. This is move 20, and Black has just played    \n19... Rfe8.                                                                     \n\n                                  \n8  ♜︎               ♜︎       ♚︎      \n                                  \n7  ♟︎       ♞︎           ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♟︎       ♙︎   ♟︎              \n                                  \n4      ♙︎                   ♞︎      \n                                  \n3  ♙︎       ♘︎           ♘︎          \n                                  \n2                  ♕︎   ♙︎   ♙︎   ♙︎  \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black       \nthreatening?                                                                    \n",
+  "lesson_status": "fresh_review",
+  "moment_fen": "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20",
+  "moment_label": "20. Nxb5",
+  "gold": {
+   "label": "threat",
+   "threat": "e4"
+  }
+ },
+ {
+  "id": 3,
+  "source": "live-eval-2dtDqQgR-8mmtyph0/events.jsonl",
+  "text": "I think I should moe Ne4 to block their pawn's advancement, and to gain tempo by attacking their queen",
+  "coach_previous": "\nCoach:\nSpot on. Black is indeed threatening to push e4, which would cause some real    \nproblems for our knight on f3 and open up the position.                         \n\nNow that you've identified the threat, what candidate moves would you consider  \nfor White here?                                                                 \n",
+  "lesson_status": "awaiting_diagnosis",
+  "moment_fen": "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20",
+  "moment_label": "20. Nxb5",
+  "gold": {
+   "label": "move",
+   "move": "Ne4",
+   "explanation": true
+  }
+ },
+ {
+  "id": 4,
+  "source": "live-eval-2dtDqQgR-8mmtyph0/events.jsonl",
+  "text": "Wait, go back to the previous position for a second. Can you elaborate a bit more on why Ne4 is the best? What happens next? What would humans do in that situation, and what would be a reasonable expectation for me as a follow-up sequence?",
+  "coach_previous": "\nCoach:\nExactly! 20. Ne4 is the best move. It perfectly handles the threat by blocking  \nthe pawn's path and attacks the queen on d6 with tempo, keeping your knight     \nincredibly active.                                                              \n\nIn the game, you played 20. Nxb5 to win the pawn on b5. The problem is that     \nafter 20... Nxb5, you traded away your active piece, and Black still gets to    \npush e4 (which happened in the game with 21. Qxb5 e4).                          \n\nLet's move to the next critical moment. This is move 24, and Black has just     \nplayed 23... fxg2.                                                              \n\n                                  \n8  ♜︎               ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♕︎       ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♟︎      \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black       \nthreatening?                                                                    \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 5,
+  "source": "live-eval-2dtDqQgR-8mmtyph0/events.jsonl",
+  "text": "Thanks. Let's return to move 24, just after 23...fxg2. Remind me of the position and the question we were working on, without giving me the answer.",
+  "coach_previous": "      \n6              ♛︎                  \n                                  \n5      ♟︎       ♙︎   ♟︎              \n                                  \n4      ♙︎           ♘︎       ♞︎      \n                                  \n3  ♙︎                   ♘︎          \n                                  \n2                  ♕︎   ♙︎   ♙︎   ♙︎  \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nAfter 20. Ne4, the knight jumps to a fantastic central square and immediately   \nattacks Black's queen on d6. This forces Black to react to the attack on their  \nqueen, which means they don't have time to push e4 right away.                  \n\nIf we look at what players around your level actually do here, about 31% of them\nwould play 20... Qh6 to move the queen to safety. The engine's top choice is    \n20... Qd7.                                                                      \n\nIf Black plays 20... Qd7, a reasonable follow-up sequence for you would be to   \nplay 21. h3 to kick the knight on g4 away. If they retreat with 21... Nf6, you  \ncan then push your passed pawn with 22. d6. This sequence keeps your pieces     \nactive, forces Black to respond to your threats, and improves your position     \nsignificantly.                                                                  \n\nDoes that make sense, or would you like to explore this position a bit more     \nbefore we move on to the next moment?                                           \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 6,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "Can you expand on why e4 is a threat? What's Black's plan?",
+  "coach_previous": "\nCoach:\nSpot on. Black is indeed threatening to push e4, which would attack your knight \non f3 and gain a lot of space.                                                  \n\nNow that you've identified the threat, what candidate move would you choose for \nWhite here to handle the position?                                              \n",
+  "lesson_status": "awaiting_diagnosis",
+  "moment_fen": "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20",
+  "moment_label": "20. Nxb5",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 7,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "Wait, go back to move 20 for a moment. Why is Ne4 better than taking on b5 with the knight? What happens next, and what would humans usually do?",
+  "coach_previous": "\nCoach:\nExactly! 20. Ne4 is the best move. It blocks the pawn's advance and attacks the \nqueen on d6 with tempo, keeping your knight active.                             \n\nIn the game, you played 20. Nxb5 to win a pawn, but after Black recaptured with \n20... Nxb5, you traded away your active knight instead of improving your        \nposition.                                                                       \n\nLet's move on to the next moment. This is move 24. Black has just played 23...  \nfxg2.                                                                           \n\n                                  \n8  ♜︎               ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♕︎       ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♟︎      \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black       \nthreatening?                                                                    \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 8,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "Still on move 20: after Ne4, is moving the queen literally forced, just the engine's choice, or simply what people usually do?",
+  "coach_previous": "\nCoach:\nSure, let's look closer at move 20.                                             \n\nAt your level, grabbing the pawn with 20. Nxb5 is actually the most common human\nchoice—about 28% of players go for it. Finding 20. Ne4 is harder, played by only\nabout 17% of players. It's a very natural temptation to win the pawn!           \n\nHere is why 20. Ne4 is better and what happens next: When you play 20. Ne4, you \nattack Black's queen with tempo. Black has to respond (for example, by          \nretreating with 20... Qd7). After that, you can play 21. h3 to kick their g4    \nknight away. Your knight on e4 remains a powerhouse, blocking their pawn and    \ndominating the center.                                                          \n\nWhen you play 20. Nxb5, you win a pawn, but after Black recaptures with 20...   \nNxb5, you've traded away your active knight. Even worse, after you recapture    \nwith 21. Qxb5, Black still gets to execute their main threat: pushing 21... e4. \nThat pawn push attacks your f3 knight, opens up their rook, and gives them      \ndangerous counterplay.                                                          \n\nIn short, 20. Ne4 prioritizes piece activity and stops Black's threat, while 20.\nNxb5 wins a pawn but gives Black the initiative.                                \n\nDo you have any other questions about this position, or are you ready to jump   \nback to move 24?                                                                \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 9,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "Thanks, that's clear. Let's go back to move 24.",
+  "coach_previous": "\nCoach:\nMoving the queen is practically forced.                                         \n\nAfter 20. Ne4, your knight directly attacks Black's queen on d6. The queen is   \nhanging, so Black must do something about it. They can't capture your knight,   \nand they can't block the attack, so moving the queen is the only way to save it.\n\nThe engine prefers 20... Qd7, but at your level, players most commonly choose   \n20... Qh6 (about 32% of the time). Either way, Black is forced to spend a turn  \nsaving their queen, which gives you the tempo to continue improving your        \nposition (like playing h3 to kick their other knight).                          \n\nDoes that make sense, or do you have any other questions about this position    \nbefore we move on to move 24?                                                   \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 10,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "I would play Kxg2",
+  "coach_previous": "\nCoach:\nGreat, let's jump back to move 24.                                              \n\nBlack has just played 23... fxg2.                                               \n\n                                  \n8  ♜︎               ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♕︎       ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♟︎      \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black       \nthreatening?                                                                    \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "move",
+   "move": "Kxg2"
+  }
+ },
+ {
+  "id": 11,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "Give me one small hint without telling me the move.",
+  "coach_previous": "· trace | grader-verdict lint: verdict wrong from evaluate_student_answer was \nnot acknowledged\n\nCoach:\n24. Kxg2 is exactly what you played in the game, and it's incredibly            \nnatural—about 85% of players at your level grab that pawn!                      \n\nHowever, it's actually an inaccuracy that lets Black back into the game. Before \ntaking the pawn, we need to identify the forcing threat against your king or    \nmaterial.                                                                       \n\nTake another look at your back-rank pieces. What move solves the problem        \ninstead?                                                                        \n",
+  "lesson_status": "awaiting_answer",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "hint"
+  }
+ },
+ {
+  "id": 12,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "Then I would play Qh5",
+  "coach_previous": "\nCoach:\nLook for a rook move that challenges Black's rook on the e-file.                \n",
+  "lesson_status": "awaiting_answer",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "move",
+   "move": "Qh5"
+  }
+ },
+ {
+  "id": 13,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "it moves my rook to safety, and offers a rook trade",
+  "coach_previous": "\nCoach:\nQh5 is actually an illegal move here—your queen is on b5, so it can't jump to   \nh5!                                                                             \n\nSince that was your second attempt, let's look at the engine's solution         \ntogether. The best move here is 24. Rfe1.                                       \n\nIn the game, you played 24. Kxg2 to win the pawn. But this ignores a major      \nthreat. If you take the pawn, Black's punishment is 24... Qf4. This attacks your\ng4 pawn, but more importantly, it pins your f2 pawn against your f1 rook. After \n25. Rfe1 Qxg4+ 26. Kf1 Rxe1+ 27. Rxe1 Qh3+ 28. Kg1, Black's queen forks your    \nking and your a3 pawn, and your king is completely exposed.                     \n\nInstead, 24. Rfe1 was the engine-verified improvement. Why do you think Rfe1    \nworks better than taking the pawn?                                              \n",
+  "lesson_status": "awaiting_answer",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "explanation"
+  }
+ },
+ {
+  "id": 14,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "Before we move on, what do you mean by that?",
+  "coach_previous": "\nCoach:\nThat's part of it—offering the rook trade is important. But there's a more      \nspecific reason why the rook needs to be on e1.                                 \n\nAfter 24. Rfe1, what does your rook do from e1?                                 \n",
+  "lesson_status": "awaiting_explanation",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 15,
+  "source": "live-eval-2dtDqQgR-bdtkr0a5/events.jsonl",
+  "text": "Thanks, I'm ready for the next moment.",
+  "coach_previous": "\ne8\n· trace | ambiguous-piece lint: Black's rook on e8 could mean black rooks on b8,\ne8\n· trace | ambiguous-piece lint: Black's rook on e8 could mean black rooks on b8,\ne5\n· trace | ambiguous-piece lint: Black's rook on e8 could mean black rooks on a8,\nh8\n· trace | ambiguous-piece lint: Black's rook on e8 could mean black rooks on b8,\nf8\n· trace | ambiguous-piece lint: Black's rook on e8 could mean black rooks on a8,\nf8\n· trace | ambiguous-piece lint: Black's rook on e8 could mean black rooks on b8,\ne4\n· trace | ambiguous-piece lint: Black's rook on e8 could mean black rooks on d8,\nf8\n· trace | ambiguous-piece lint: Black's rook on e8 could mean black rooks on a8,\ne1\n· trace | ambiguous-piece lint: Black's rook on e8 could mean black rooks on d8,\ne8\n\nCoach:\nI mean that 24. Rfe1 does more than just offer a trade—it actively defends      \nagainst Black's threats.                                                        \n\nIf you play 24. Kxg2, Black plays 24... Qf4, which pins your f2 pawn and sets up\na devastating attack on your king.                                              \n\nBut if you play 24. Rfe1, your rook moves to the e-file and directly challenges \nBlack's rook on e8. More importantly, it gets your rook off of f1, so Black's   \nQf4 no longer pins your f2 pawn! Your king is much safer, and you maintain      \ncontrol of the position.                                                        \n\nDoes that clarify why Rfe1 is the right defensive move here?                    \n",
+  "lesson_status": "awaiting_explanation",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 16,
+  "source": "live-eval-2dtDqQgR-fl7zx4r2/events.jsonl",
+  "text": "Give me one small hint without telling me the move.",
+  "coach_previous": "· trace | grader-verdict lint: verdict best from evaluate_student_answer was not\nacknowledged\n\nCoach:\nThat is exactly what you played in the game! It is an incredibly natural        \ninstinct—in fact, about 84% of players at your level grab that pawn without a   \nsecond thought.                                                                 \n\nHowever, it turns out to be an inaccuracy that lets Black back into the game. To\nfind the engine-verified improvement, we first need to answer the second part of\nthe question: what is Black actually threatening to do with that pawn on g2?    \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "hint"
+  }
+ },
+ {
+  "id": 17,
+  "source": "live-eval-2dtDqQgR-fl7zx4r2/events.jsonl",
+  "text": "Then I would play Qh5",
+  "coach_previous": "\nCoach:\nFirst identify the forcing threat against your king or material, then choose a  \nmove that answers it. What happens if White just passes their turn here?        \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "move",
+   "move": "Qh5"
+  }
+ },
+ {
+  "id": 18,
+  "source": "live-eval-2dtDqQgR-fl7zx4r2/events.jsonl",
+  "text": "I don't know. Please show me the better move.",
+  "coach_previous": "· trace | ambiguous-piece lint: your rook on f1 could mean white rooks on d1, f1\n· trace | ambiguous-piece lint: your rook on f1 could mean white rooks on a1, f1\n· trace | grader-verdict lint: verdict illegal from evaluate_student_answer was \nnot acknowledged\n\nCoach:\nQh5 isn't a legal move for White in this position.                              \n\nLet's look at the board again:                                                  \n\n                                  \n8  ♜︎               ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♕︎       ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♟︎      \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nIf White does nothing, Black's pawn on g2 is threatening to capture your rook on\nf1 and promote to a queen (or rook/bishop).                                     \n\nKnowing that this is the immediate threat, what move would you choose to handle \nit?                                                                             \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "give_up"
+  }
+ },
+ {
+  "id": 19,
+  "source": "live-eval-2dtDqQgR-fl7zx4r2/events.jsonl",
+  "text": "it moves my rook to safety, and offers a rook trade",
+  "coach_previous": "· trace | ambiguous-piece lint: the rook to e1 could mean white rooks on d1, f1\n· trace | ambiguous-piece lint: the rook to e1 could mean white rooks on a1, f1\n· trace | ambiguous-piece lint: the rook to e1 could mean white rooks on d1, e1\n\nCoach:\nNo problem, let's walk through it together.                                     \n\nThe engine-verified improvement here is 24. Rfe1.                               \n\nIn the game, you played 24. Kxg2 to win the pawn. But taking that pawn allows   \nBlack to play 24... Qf4. Suddenly, your f2 pawn is pinned against your f1 rook, \nand Black is threatening Qxg4+ followed by Qh3+, which forks your king and your \na3 pawn.                                                                        \n\nBy playing 24. Rfe1 instead, you move your rook out of danger from the g2 pawn, \nand you challenge Black's control of the e-file.                                \n\nWhy do you think moving the rook to e1 is better than moving it to, say, d1 or  \nleaving it to be captured?                                                      \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "explanation"
+  }
+ },
+ {
+  "id": 20,
+  "source": "live-eval-2dtDqQgR-fl7zx4r2/events.jsonl",
+  "text": "Before we move on, what do you mean by that?",
+  "coach_previous": ". It gets the rook out of the way of the promoting pawn, and by offering \na trade on the e-file, it helps neutralize Black's pressure. If Black plays     \n24... Rec8 to avoid the trade, you can follow up with 25. Rd4, defending your   \nposition and preparing to deal with the g2 pawn safely.                         \n\nThe key habit here is the same as move 20: before grabbing material (like the g2\npawn), always check if there's a more urgent priority—in this case, the safety  \nof your rook and king.                                                          \n\nLet's move to the next critical moment. This is move 26, and Black has just     \nplayed 25... Qg6.                                                               \n\n                                  \n8      ♜︎           ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6                          ♛︎      \n                                  \n5          ♕︎   ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♔︎      \n                                  \n1              ♖︎       ♖︎          \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black       \nthreatening?                                                                    \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+  "moment_label": "26. Qxa7",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 21,
+  "source": "live-eval-2dtDqQgR-fl7zx4r2/events.jsonl",
+  "text": "Thanks, I'm ready for the next moment.",
+  "coach_previous": "\nCoach:\nAh, I mean that the g2 pawn is a huge distraction. It's sitting right next to   \nyour king, and it's very tempting to just grab it with 24. Kxg2 to win the      \nmaterial and get rid of the annoyance.                                          \n\nBut the \"urgent priority\" is that Black's queen is eyeing your king, and your f1\nrook is trapped behind the g2 pawn. If you take the pawn, you open up your king \nto a devastating attack (24... Qf4 pinning your f2 pawn, followed by Qxg4+).    \n\nBy playing 24. Rfe1 instead, you ignore the temptation to grab the pawn. You    \nprioritize getting your rook to safety and defending your position. Once your   \npieces are safe (like after 24... Rec8 25. Rd4), then you can deal with the g2  \npawn on your own terms, without letting Black's queen tear apart your king's    \ndefenses.                                                                       \n\nDoes that make sense?                                                           \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+  "moment_label": "26. Qxa7",
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 22,
+  "source": "live-eval-2dtDqQgR-fl7zx4r2/events.jsonl",
+  "text": "I'm considering f3 or Rd4, but I haven't chosen yet.",
+  "coach_previous": "\nCoach:\nPerfect. Let's move to move 26. Black has just played 25... Qg6.                \n\n                                  \n8      ♜︎           ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6                          ♛︎      \n                                  \n5          ♕︎   ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♔︎      \n                                  \n1              ♖︎       ♖︎          \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black       \nthreatening?                                                                    \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+  "moment_label": "26. Qxa7",
+  "gold": {
+   "label": "candidates"
+  }
+ },
+ {
+  "id": 23,
+  "source": "live-eval-2dtDqQgR-fl7zx4r2/events.jsonl",
+  "text": "Black is threatening Qxg4 with check.",
+  "coach_previous": "\nCoach:\nThose are two very different candidate moves!                                   \n\nBefore you commit to one, let's answer the second part of the question: what is \nBlack actually threatening to do with their queen on g6?                        \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+  "moment_label": "26. Qxa7",
+  "gold": {
+   "label": "threat",
+   "threat": "Qxg4"
+  }
+ },
+ {
+  "id": 24,
+  "source": "live-eval-2dtDqQgR-fl7zx4r2/events.jsonl",
+  "text": "Rd4",
+  "coach_previous": "\nCoach:\nExactly right. Black is threatening Qxg4+, which wins a pawn and attacks your   \nking.                                                                           \n\nNow that we've identified the threat, which of your two candidate moves (f3 or  \nRd4) do you choose to play?                                                     \n",
+  "lesson_status": "awaiting_diagnosis",
+  "moment_fen": "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+  "moment_label": "26. Qxa7",
+  "gold": {
+   "label": "move",
+   "move": "Rd4"
+  }
+ },
+ {
+  "id": 25,
+  "source": "live-eval-2dtDqQgR-hmrpy5ys/events.jsonl",
+  "text": "because that one actually defends my g pawn",
+  "coach_previous": "\nCoach:\nYes, 26. Rd4 is the best move!                                                  \n\nWhy does moving the rook to d4 work better than your other candidate, f3?       \n",
+  "lesson_status": "awaiting_diagnosis",
+  "moment_fen": "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+  "moment_label": "26. Qxa7",
+  "gold": {
+   "label": "explanation"
+  }
+ },
+ {
+  "id": 26,
+  "source": "live-eval-2dtDqQgR-hmrpy5ys/events.jsonl",
+  "text": "Great, next moment please.",
+  "coach_previous": "e game, you played 26. Qxa7 to win a pawn, but this ignored the threat.    \nBlack played 26... Qxg4+, which not only checked your king but also attacked    \nyour b4 pawn and d1 rook.                                                       \n\nInterestingly, f3 is what about 65% of players at your level would try here. It \nlooks like it defends the pawn, but it actually loses because Black can play h5,\nrenewing the attack on g4. Rd4 is the only move that holds the position         \ntogether.                                                                       \n\nLet's move to the final moment. This is move 31, and Black has just played 30...\nQg4+.                                                                           \n\n                                  \n8      ♜︎           ♜︎       ♚︎      \n                                  \n7  ♕︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6                                 \n                                  \n5              ♙︎                  \n                                  \n4      ♙︎                   ♛︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎          \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. You're in check - what are your options, and which keeps your    \nwinning chances?                                                                \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31",
+  "moment_label": "31. Kh1",
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 27,
+  "source": "live-eval-2dtDqQgR-hmrpy5ys/events.jsonl",
+  "text": "Kh2, because it avoids the perpetual.",
+  "coach_previous": "\nCoach:\nWe are already at the final moment! This is move 31, and Black has just played  \n30... Qg4+.                                                                     \n\n                                  \n8      ♜︎           ♜︎       ♚︎      \n                                  \n7  ♕︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6                                 \n                                  \n5              ♙︎                  \n                                  \n4      ♙︎                   ♛︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎          \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. You're in check - what are your options, and which keeps your    \nwinning chances?                                                                \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31",
+  "moment_label": "31. Kh1",
+  "gold": {
+   "label": "move",
+   "move": "Kh2",
+   "explanation": true
+  }
+ },
+ {
+  "id": 28,
+  "source": "live-eval-2dtDqQgR-hmrpy5ys/events.jsonl",
+  "text": "But isn't that a draw anyway?",
+  "coach_previous": "\nCoach:\n31. Kh2 is indeed the best move, but it's not primarily about avoiding a        \nperpetual check.                                                                \n\nAfter 31. Kh2, look at the h3 square. What piece covers it, and along which     \nline?                                                                           \n",
+  "lesson_status": "awaiting_explanation",
+  "moment_fen": "1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31",
+  "moment_label": "31. Kh1",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 29,
+  "source": "live-eval-2dtDqQgR-hmrpy5ys/events.jsonl",
+  "text": "Repeat that in Spanish, briefly.",
+  "coach_previous": "· trace | verdict-contradiction lint: Kh1 praised despite blunder\n\nCoach:\nYes, the position is drawish with best play, but the difference between Kh1 and \nKh2 is the difference between holding that draw and losing immediately.         \n\nIf you play 31. Kh1 (which you did in the game, and which 87% of players at your\nlevel choose), Black plays 31... Qh3+. This forces your king back to g1, and    \nthen Black plays 32... Qg4+. You are caught in a loop, but worse, Black can     \neventually play Qf4+, pinning your f2 pawn and setting up a winning attack.     \n\nIf you play 31. Kh2, your king itself controls the h3 square. This stops Black  \nfrom playing Qh3+ and forces them to find a different way to keep the pressure  \non, which gives you the time you need to defend and hold the draw.              \n\nDoes that make sense?                                                           \n",
+  "lesson_status": "awaiting_explanation",
+  "moment_fen": "1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31",
+  "moment_label": "31. Kh1",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 30,
+  "source": "live-eval-2dtDqQgR-hmrpy5ys/events.jsonl",
+  "text": "OK, let's finish the review.",
+  "coach_previous": "\nCoach:\nSí, la posición tiende a tablas, pero 31. Kh1 pierde y 31. Kh2 salva el juego.  \n\nCon 31. Kh1, las negras juegan 31... Qh3+ y luego Qg4+, atrapándote y           \neventualmente ganando con Qf4+ (clavando tu peón en f2). Con 31. Kh2, tu propio \nrey controla la casilla h3, evitando Qh3+ y dándote tiempo para defender y      \nasegurar las tablas.                                                            \n",
+  "lesson_status": "awaiting_explanation",
+  "moment_fen": "1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31",
+  "moment_label": "31. Kh1",
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 31,
+  "source": "live-eval-2dtDqQgR-ozc4z4_l/events.jsonl",
+  "text": "Thanks, I'm ready for the next moment.",
+  "coach_previous": "e1 could mean white rooks on a1, f1\n· trace | ambiguous-piece lint: your rook on f1 could mean white rooks on a1, f1\n· trace | ambiguous-piece lint: the rook to e1 could mean white rooks on d1, f1\n· trace | ambiguous-piece lint: your rook on f1 could mean white rooks on d1, f1\n· trace | ambiguous-piece lint: the rook to e1 could mean white rooks on e1, f1\n· trace | ambiguous-piece lint: your rook on f1 could mean white rooks on e1, f1\n· trace | ambiguous-piece lint: the rook to e1 could mean white rooks on d1, e1\n· trace | ambiguous-piece lint: the rook to e1 could mean white rooks on d1, e4\n· trace | ambiguous-piece lint: the rook to e1 could mean white rooks on e5, f1\n\nCoach:\nI mean that moving the rook to e1 isn't just about saving it—it's about avoiding\na trap!                                                                         \n\nIn the game, you played 24. Kxg2 to win the pawn. But taking that pawn          \nimmediately allows Black to play 24... Qf4!. This pins your f2 pawn against your\nrook on f1 and launches a very dangerous attack against your king.              \n\nBy playing 24. Rfe1 instead, you challenge the e-file and attack their rook,    \nforcing Black to react (for example, by playing Rec8). Only after securing your \nposition do you eventually take the g2 pawn safely.                             \n\nDoes that make sense, or do you have more questions about this position before  \nwe move on?                                                                     \n",
+  "lesson_status": "awaiting_diagnosis",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 32,
+  "source": "live-eval-2dtDqQgR-par4cj6m/events.jsonl",
+  "text": "Can you expand on why e4 is a threat? What's Black's plan?",
+  "coach_previous": "                                        \n    • Self-Correction on Hinting: The prompt says \"let them look again\". I can  \n      use the hint ladder from the digest if needed.                            \n    • Digest Hint L1: \"This is not primarily about grabbing material. What move \n      improves your active piece or supports your main asset?\" (Wait, this hint \n      is for White's move. The student only answered the threat part).          \n    • Let's just ask them to find the main threat, or they can also give their  \n      candidate moves for White.                                                \n 3 Drafting the text: e4 is definitely a real idea in this position and         \n   something to watch out for, but it's actually not Black's most dangerous     \n   threat! If White does nothing, Black has an even stronger move that causes   \n   immediate problems.                                                          \n   Take another look. What else might Black be threatening? And what candidate  \n   moves are you considering for White?e4 is definitely a real idea in this     \n   position and something to watch out for, but it's actually not Black's most  \n   dangerous threat! If White does nothing, Black has an even stronger move that\n   causes immediate problems.                                                   \n\nTake another look. What else might Black be threatening? And what candidate     \nmoves are you considering for White?                                            \n",
+  "lesson_status": "awaiting_answer",
+  "moment_fen": "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20",
+  "moment_label": "20. Nxb5",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 33,
+  "source": "live-eval-2dtDqQgR-par4cj6m/events.jsonl",
+  "text": "I think I should moe Ne4 to block their pawn's advancement, and to gain tempo by attacking their queen",
+  "coach_previous": "xe4), Black's plan is to follow up with\n   Qg6. Because Black just moved their rook to e8 on the previous turn, pushing \n   that e-pawn opens up the e-file for their rook. This sequence activates      \n   Black's queen, puts pressure on your position, and allows Black to win back  \n   your passed pawn on d5.                                                      \n   So the idea behind e4 isn't just to attack the knight—it's to sacrifice a    \n   pawn to open lines and activate Black's pieces.\" (Check constraints: no tail \n   redirect, answer directly, use verified facts). Verified facts used: e4      \n   attacks f3 knight. Nxe4 is the response. Black follows with Qg6. Black wins  \n   the d5 pawn (Nxd5). e-file is opened.                                        \n 5 Final Polish: Keep it concise and clear. If Black plays e4, they are pushing \n   their pawn to directly attack your knight on f3.                             \n\nBut it's actually a clever pawn sacrifice designed to open up the board. If you \ncapture that pawn (for example, with Nxe4), Black's plan is to follow up with   \nQg6. Because Black just moved their rook to e8 on the previous turn, pushing    \nthat e-pawn opens up the e-file. This sequence activates Black's queen, puts    \npressure on your position, and allows Black to win back your passed pawn on d5. \n\nSo the idea behind e4 isn't just to annoy your knight—it's to sacrifice a pawn  \nto open lines and activate Black's pieces.                                      \n",
+  "lesson_status": "awaiting_answer",
+  "moment_fen": "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20",
+  "moment_label": "20. Nxb5",
+  "gold": {
+   "label": "move",
+   "move": "Ne4",
+   "explanation": true
+  }
+ },
+ {
+  "id": 35,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "But isn't that a draw anyway?",
+  "coach_previous": "\nCoach:\nYes, 31. Kh2 is the right choice!                                               \n\nIn the game, you played 31. Kh1, which is what about 87% of players at your     \nlevel do—it feels very natural to tuck the king into the corner. But after 31.  \nKh1, Black plays 31... Qh5+.                                                    \n\nIf you play 31. Kh2, Black can still play 31... Qh5+, but the difference is in  \nthe follow-up. After 31. Kh1 Qh5+ 32. Kg2 Qg6+ 33. Kf3, Black has the           \ndevastating 33... Rb6, bringing the rook into the attack.                       \n\nBy playing 31. Kh2, you keep your king slightly safer and avoid the worst of    \nBlack's attack.                                                                 \n\nThat wraps up our critical moments! Looking at the game as a whole, we saw a    \nrecurring theme: in the middlegame, you missed a few of Black's direct threats  \n(like Qxg4+ and Qh5+). The key habit to build here is to always ask yourself    \n\"What is my opponent threatening?\" before you make your move, especially when   \nthere's tension or material on the line.                                        \n\nHow are you feeling about these concepts?                                       \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 36,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "Repeat that in Spanish, briefly.",
+  "coach_previous": "\nCoach:\nYou make a really good point—31. Kh2 actually leads to a draw by perpetual      \ncheck!                                                                          \n\nThe engine line for 31. Kh2 continues 31... Qh5+ 32. Kg3 Qg5+ 33. Kf3 Qf5+ 34.  \nKg3 Qg6+, and the king just dances back and forth.                              \n\nThe critical difference is that 31. Kh1 doesn't avoid the draw to play for a    \nwin—it avoids the draw and actually loses.                                      \n\nAfter 31. Kh1 Qh5+ 32. Kg2 Qg6+ 33. Kf3, Black doesn't have to take the         \nperpetual check. Instead, they play 33... Rb6!. Now Black's rook joins the      \nattack, and White's king is caught in a mating net with no escape.              \n\nSo in this position, because Black's attack is so dangerous, securing the draw  \nwith Kh2 was actually the best possible outcome. When you're under heavy fire,  \nfinding the perpetual check is a huge success!                                  \n\nDoes that make sense? If you don't have any other questions about this position,\nwe can wrap up our review!                                                      \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 37,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "OK, let's finish the review.",
+  "coach_previous": "\nCoach:\nTienes razón, 31. Kh2 lleva a un empate por jaque perpetuo, ¡lo cual es el mejor\nresultado aquí!                                                                 \n\nSi juegas 31. Kh1, las negras no se conforman con el empate: tras unos jaques,  \njuegan 33... Rb6!, sumando la torre a un ataque de mate imparable. Bajo tanta   \npresión, asegurar el empate era tu única salvación.                             \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 38,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "Annotate every move of the game.",
+  "coach_previous": "\nCoach:\nGreat job working through these positions today!                                \n\nThe main takeaway from this game is that you ignored a direct threat three times\nin the middlegame (24. Kxg2, 26. Qxa7, and 31. Kh1). Going forward, make it a   \nhabit to always ask \"What is my opponent threatening?\" before you make your     \nmove, especially when there's material to grab.                                 \n\nKeep up the good work, and let me know when you're ready for your next game!    \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 39,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "How did my pawn structure evolve throughout the game?",
+  "coach_previous": "· trace | teaching plan: {'intent': 'decline_full_game_annotation', 'language': \n'English', 'density': 'normal', 'withhold_answer': False, 'socratic_redirect': \nFalse, 'no_tail_redirect': False, 'stay_on_topic': False, 'decline': True, \n'reasons': ['decline:full_game_annotation']}\nI can't annotate every move inside the interactive coach. Load or review the \ngame and we'll work through the critical moments one at a time; a separate \n`/annotate_pgn` pipeline is future work, not this mode.\n\n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 40,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "And how did Black's pawn structure evolve?",
+  "coach_previous": "\nCoach:\nHere is how your pawn structure evolved during the game:                        \n\nEarly on, the center opened up. By move 17, the c-file became completely open,  \nand shortly after, you created an isolated passed pawn on d5. This pawn became  \nthe spearhead of your position—it was a strong asset, but because it had no     \nfriendly pawns on adjacent files to defend it, it required constant support from\nyour pieces.                                                                    \n\nAs the middlegame progressed, the queenside opened up further. When you played  \n20. Nxb5, the b-file became half-open for Black. Later, when you played 26.     \nQxa7, you created two passed pawns on a3 and b4 (they became \"runners\" with no  \nenemy pawns to stop them), but this also left the a-file half-open for Black.   \n\nThe most critical changes happened around your king. You started pushing your   \nkingside pawns with 22. h3 and 23. hxg4. When Black played 23... fxg2 and you   \nrecaptured with 24. Kxg2, your king shield was significantly altered. You were  \nmissing your g2 and h2 pawns, and your remaining g4 pawn eventually became      \npinned when Black played 25... Qg6, leading to the dangerous Qxg4+ threat we    \ndiscussed. By the end of the game, the g-file and h-file were half-open for you,\nbut your king was left very exposed on h1 without its home shield pawns.        \n\nDo you have any other questions about the game, or are you ready to wrap up?    \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 41,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "Did the g- and h-files actually become open, or were only my pawns removed?",
+  "coach_previous": "\nCoach:\nBlack's pawn structure evolved in a way that eventually gave them a lot of open \nlines and attacking chances.                                                    \n\nEarly on, just like for you, the center opened up. By move 17, the c-file was   \ncompletely open, and the d-file became half-open for Black. This gave their     \npieces, especially their rooks, clear pathways to operate.                      \n\nWhen you played 20. Nxb5, the b-file also became half-open for Black, giving    \nthem even more queenside pressure.                                              \n\nThe most dramatic changes happened on the kingside. When Black played 22...     \nexf3, the e-file opened up completely. Then, after 23... fxg2, Black created a  \nvery dangerous passed pawn on g2 (it became a \"runner\" deep in your territory). \nEven though you captured it with 24. Kxg2, the damage to your king shield was   \ndone.                                                                           \n\nInterestingly, Black's own king shield stayed incredibly solid throughout the   \nentire game. Even at the very end, their king on g8 was still safely tucked     \nbehind its original f7, g7, and h7 pawns. This meant Black could launch their   \nmassive attack with Qxg4+ and Qh5+ without having to worry about their own      \nking's safety.                                                                  \n\nDo you have any other questions about the game, or are you ready to wrap up?    \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 42,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "Which of my moves were better or worse than expected for a player at my level?",
+  "coach_previous": "\nCoach:\nThat's a great question about terminology!                                      \n\nNeither the g-file nor the h-file became fully \"open.\" In chess, a file is only \nconsidered \"open\" if there are no pawns at all (from either side) on that file. \n\nWhat happened here is that your pawns were removed, but Black's pawns (on g7 and\nh7) were still there. Because of that, the g-file and h-file became half-open   \nfor White. This means your rooks could potentially use those files to attack    \nBlack's pawns, but Black's rooks couldn't use them as easily because their own  \npawns were in the way.                                                          \n\nHowever, because your king was on the kingside, having those files half-open    \nactually worked against you—it meant your king had lost its pawn shield, making \nit much easier for Black's pieces (like the queen) to swing over and attack.    \n\nDoes that clarify the difference between an open and a half-open file?          \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 43,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "How risky was the last position: was I playing for a win or a draw?",
+  "coach_previous": "                                 \n\nHere is how your critical moments compared to what is expected at your level:   \n\nWhere you played like most of your peers (Common Mistakes):                     \n\n • 24. Kxg2: About 84% of players at your level grab this pawn, just like you   \n   did. It's a very natural instinct, but it ignores the threat of Qf4.         \n • 31. Kh1: A massive 87% of players tuck their king into the corner here. It   \n   feels safer, but as we saw, it allows the fatal Rb6 follow-up.               \n\nWhere you made an unusual mistake:                                              \n\n • 26. Qxa7: Only about 4% of players at your level grab this pawn. Most players\n   (65%) try to defend with f3. This suggests that grabbing the pawn wasn't a   \n   lack of knowledge, but likely a slip in attention or a rush to win material  \n   without checking for threats first.                                          \n\nWhere you played better than expected:                                          \n\n • You had 3 \"only-moves\" in this game (moves where only one specific move      \n   maintains the evaluation, and you found it!). For example, 8. cxd3! and 9. a3\n   Na6! were excellent, precise moves in the opening.                           \n\nOverall, your opening and early middlegame were very solid. The main area for   \nimprovement is just taking that extra second to scan for direct threats before  \ngrabbing material!                                                              \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 44,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "What should I remember and practice from this session?",
+  "coach_previous": "\nCoach:\nIn that final position (move 31), the situation was highly drawish at your      \nlevel.                                                                          \n\nEven though you were up a pawn, Black's attack was so dangerous that playing for\na win was no longer realistic. The data shows that players at your level draw   \nthis position about 63% of the time (usually by perpetual check, if White finds \nKh2). Your chances of actually winning were only about 17%.                     \n\nSo in that moment, you were definitely playing to secure the draw. When you're  \nunder that much pressure, finding the safe path to a draw is the right          \ngoal—don't try to force a win when the position demands defense!                \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 45,
+  "source": "live-eval-2dtDqQgR-t3hufhwt/events.jsonl",
+  "text": "What has actually been saved? Do I need /memorize?",
+  "coach_previous": "\nCoach:\nThe main takeaway from this session is that you ignored a direct threat three   \ntimes in the middlegame (24. Kxg2, 26. Qxa7, and 31. Kh1).                      \n\nTo practice this, make it a strict habit to ask yourself \"What is my opponent   \nthreatening?\" before every single move, especially when you are tempted to grab \nmaterial.                                                                       \n\nKeep up the great work, and let me know when you're ready to review your next   \ngame!                                                                           \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 46,
+  "source": "manual-2dtDqQgR-20261011T223922Z/events.jsonl",
+  "text": "please load lichess game 2dtDqQgR",
+  "coach_previous": "",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "other"
+  }
+ },
+ {
+  "id": 47,
+  "source": "manual-2dtDqQgR-20261012T004804Z/events.jsonl",
+  "text": "load lichess game 2dtDqQgRy2OD ad let's review it",
+  "coach_previous": "",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "other"
+  }
+ },
+ {
+  "id": 48,
+  "source": "manual-2dtDqQgR-20261012T004804Z/events.jsonl",
+  "text": "https://lichess.org/2dtDqQgRy2OD",
+  "coach_previous": "\nCoach:\nI tried to load that game, but I ran into an error (it looks like that ID might be incomplete\nor invalid).                                                                                 \n\nCould you double-check the game ID, or just paste the full Lichess URL here? Once I have it, \nwe'll get right into the review!                                                             \n",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "other"
+  }
+ },
+ {
+  "id": 49,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events-b.jsonl",
+  "text": "What do you remember about my last session?",
+  "coach_previous": "",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 51,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events-b.jsonl",
+  "text": "b5, keep pushing my pawns",
+  "coach_previous": "\nCoach:\nLet's do it! Here is the position from your dossier:                                         \n\n                                  \n8      ♜︎           ♜︎       ♚︎      \n                                  \n7  ♕︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6                                 \n                                  \n5              ♙︎                  \n                                  \n4      ♙︎                   ♛︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎          \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nAs a reminder, the pattern we are working on is ignoring opponent threats. In this position, \nBlack just played ...Qg4+.                                                                   \n\nTake a look at the board. What candidate moves would you consider, and what is the best move \nfor White here?                                                                              \n",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "move",
+   "move": "b5",
+   "explanation": true
+  }
+ },
+ {
+  "id": 52,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events-b.jsonl",
+  "text": "Ne4",
+  "coach_previous": "\nCoach:\nLet's look at another position from your dossier.                                            \n\n                                  \n8  ♜︎               ♜︎       ♚︎      \n                                  \n7  ♟︎       ♞︎           ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♟︎       ♙︎   ♟︎              \n                                  \n4      ♙︎                   ♞︎      \n                                  \n3  ♙︎       ♘︎           ♘︎          \n                                  \n2                  ♕︎   ♙︎   ♙︎   ♙︎  \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nIn this position, the mistake you previously made was a bad trade. Remember the habit we're  \nworking on: Before taking material, ask what the position's urgent priority is.              \n\nTake a look at the board. What candidate moves would you consider here, and what is the best \nmove for White?                                                                              \n",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "move",
+   "move": "Ne4"
+  }
+ },
+ {
+  "id": 55,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events-b.jsonl",
+  "text": "yes that sound great",
+  "coach_previous": "han making one huge blunder. This happened in about 4% of your games. This is a      \nmeta-skill we can work on: staying focused and re-evaluating the position when things start  \nto get complicated.                                                                          \n\nLooking at your specific mistakes, two main patterns emerged. They are actually two sides of \nthe same coin: Choosing a natural move over the position's urgent priority.                  \n\n • Pattern 1: In the Middlegame. This happened 26 times across 13 games. It's your most      \n   frequent mistake, and also the most damaging, costing you an average of 18% win           \n   probability each time.                                                                    \n • Pattern 2: In the Opening. This happened 20 times across 10 games, costing an average of  \n   20% win probability per slip.                                                             \n\nSince these are essentially the same habit—just in different phases of the game—we can tackle\nthem together. The habit we want to build is: Name the position's urgent priority before     \nchoosing a natural move.                                                                     \n\nI recommend we start by looking at some examples of Pattern 1 (the middlegame version), since\nit's the most frequent and damaging. Does that sound good, or would you prefer to start with \nthe opening examples?                                                                        \n",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 56,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events-b.jsonl",
+  "text": "black is threatening queen to g6",
+  "coach_previous": "\nCoach:\nAwesome, let's dive into Pattern 1.                                                          \n\nHere is the first position, from your game against the Lichess AI level 3                    \n(https://lichess.org/yqaHiHqT). We are at move 23, and Black has just played 22... Rfd8.     \n\n                                  \n8              ♜︎           ♚︎      \n                                  \n7  ♟︎           ♜︎       ♟︎   ♟︎      \n                                  \n6          ♟︎       ♛︎           ♟︎  \n                                  \n5  ♕︎       ♙︎       ♟︎              \n                                  \n4      ♙︎           ♙︎              \n                                  \n3  ♙︎               ♗︎   ♙︎          \n                                  \n2                              ♙︎  \n                                  \n1  ♖︎               ♖︎       ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black threatening?       \n",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "threat",
+   "threat": "queen to g6"
+  }
+ },
+ {
+  "id": 57,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events-b.jsonl",
+  "text": "balck is threatening Qg6",
+  "coach_previous": "· trace | grading-integrity guard: blocked response after stale/fabricated grading input\n· trace | grader-verdict lint: verdict not_a_real_threat from evaluate_threat_answer was not \nacknowledged\n\nCoach:\nI need to correct the flow: I tried to grade a move or threat that was not actually in your  \nlatest message, so I will not treat it as verified. Please restate the candidate move or     \nthreat you want me to check, or ask me to explain the position directly.                     \n",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "threat",
+   "threat": "Qg6"
+  }
+ },
+ {
+  "id": 58,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events-b.jsonl",
+  "text": "Load the Lichess game 2dtDqQgR",
+  "coach_previous": "· trace | grader-verdict lint: verdict correct_threat from evaluate_threat_answer was not \nacknowledged\n\nCoach:\nExactly! Qg6+ is the main threat. If White does nothing, Black plays Qg6+, and after the king\nmoves, Black follows up with Qh5 and Rd2, building a massive attack.                         \n\nNow that you've identified the position's urgent priority, what move would you choose for    \nWhite to handle this?                                                                        \n",
+  "lesson_status": "unavailable",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "other"
+  }
+ },
+ {
+  "id": 61,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "ok thank you",
+  "coach_previous": "\nCoach:\nIf Black gets to play e4, it immediately attacks your knight on f3.                          \n\nIf we look at what happens if you just pass a turn (say, playing a4) and Black plays e4, the \nengine line shows that if you capture the pawn with Nxe4, Black responds with Qg6. This      \ncreates a powerful attack, and Black's knight on c7 can then jump to d5, putting immense     \npressure on your position.                                                                   \n\nThe core issue is that e4 forces your f3 knight to move or be captured, which disrupts your  \ncoordination and allows Black's pieces (especially the queen and knights) to become very     \nactive and dangerous.                                                                        \n",
+  "lesson_status": "awaiting_diagnosis",
+  "moment_fen": "r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20",
+  "moment_label": "20. Nxb5",
+  "gold": {
+   "label": "move_on"
+  }
+ },
+ {
+  "id": 62,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "Wait, go back to the previous position. But what is that pressure on b5 good for? It's defended by their knight on c7.",
+  "coach_previous": "\nCoach:\nExactly! 20. Ne4 is the best move, and you nailed the reason. It blocks the pawn advance and \nattacks the queen on d6 with tempo, keeping your piece active instead of trading it away for \na pawn on b5 (which is what happened in the game with 20. Nxb5).                             \n\nI've logged that habit: before taking material, always ask what the position's urgent        \npriority is.                                                                                 \n\nLet's move to the next critical moment. This is move 24 of the game; the opponent has just   \nplayed 23... fxg2.                                                                           \n\n                                  \n8  ♜︎               ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♕︎       ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♟︎      \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black threatening?       \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 63,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "I still have quesions about the previous position. Why is Ne4 best, what happens next, and what would humans do?",
+  "coach_previous": "by the knight on c7, but take a    \nlook at your queen on e2! She is also looking at b5, right behind your knight on c3.         \n\nBecause you have two attackers (the knight and the queen) and Black only has one defender    \n(the c7 knight), playing 20. Nxb5 Nxb5 21. Qxb5 actually wins the pawn free and clear. That's\nexactly why it was so tempting to play in the game!                                          \n\nBut as we saw, grabbing that pawn wasn't worth ignoring Black's e4 threat and trading off    \nyour active knight.                                                                          \n\nDoes that make sense? If so, let's jump back to our second critical moment (move 24, after   \nBlack played 23... fxg2):                                                                    \n\n                                  \n8  ♜︎               ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♕︎       ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♟︎      \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black threatening?       \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 64,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "still on move 20. When you say Black has to move the queen, do you mean literally forced, the engine's choice, or what people usually do?",
+  "coach_previous": " keep the pressure on. By contrast, \ngrabbing the pawn on b5 traded away your active knight and allowed Black to take over the    \ncenter.                                                                                      \n\nWhat humans do: At the ~1140 level you were playing at here, grabbing the pawn with 20. Nxb5 \nis actually the most popular choice (about 28% of players do it). Another 18% try 20. h3.    \nOnly about 17% of players find 20. Ne4. It's a tough move to spot because the free pawn on b5\nis so tempting!                                                                              \n\nDoes that clear up the first position? If you're ready, we can look at our second critical   \nmoment (move 24, after Black played 23... fxg2):                                             \n\n                                  \n8  ♜︎               ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♕︎       ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♟︎      \n                                  \n1              ♖︎       ♖︎   ♔︎      \n   a   b   c   d   e   f   g   h  \n\nWhite to move. What candidate moves would you consider, and what is Black threatening?       \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 65,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "Give me one small hint without telling me the move",
+  "coach_previous": "· trace | grader-verdict lint: verdict wrong from evaluate_student_answer was not \nacknowledged\n\nCoach:\n24. Kxg2 is exactly what you played in the game, and it's incredibly tempting—in fact, about \n85% of players at your level grab that pawn!                                                 \n\nHowever, it's actually an inaccuracy that lets Black back into the game. Taking the pawn     \nignores a very dangerous forcing threat that Black has.                                      \n\nBefore we look for a better move, let's figure out what Black wants to do. If you don't take \nthe pawn, what forcing threat against your king or material is Black threatening to play?    \n",
+  "lesson_status": "awaiting_answer",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "hint"
+  }
+ },
+ {
+  "id": 66,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "Before I answer, what do you mean by that?",
+  "coach_previous": "· trace | claim-gate (L1): 1 illegal-move finding(s): e1 \n· trace | ambiguous-piece lint: the rook on f1 could mean white rooks on d1, f1\n· trace | ambiguous-piece lint: the rook on f1 could mean white rooks on d1, g1\n\nCoach:\nThat's part of it—it does move the rook and offer a trade. But there's a more specific       \ntactical reason why leaving the rook on f1 was so dangerous.                                 \n\nAfter 24. Rfe1, what tactical idea around (an unverified move) changes?                      \n",
+  "lesson_status": "awaiting_explanation",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 67,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "I don't know why. Please explain it.",
+  "coach_previous": "\nCoach:\nI mean, think about the punishment I just showed you for 24. Kxg2.                           \n\nI mentioned that if you take the pawn, Black plays 24... Qf4, which pins your f2 pawn against\nyour f1 rook.                                                                                \n\nIf you play 24. Rfe1 instead, your rook is no longer on f1. How does that change Black's Qf4 \nthreat?                                                                                      \n",
+  "lesson_status": "awaiting_explanation",
+  "moment_fen": "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24",
+  "moment_label": "24. Kxg2",
+  "gold": {
+   "label": "give_up"
+  }
+ },
+ {
+  "id": 68,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "Rd4",
+  "coach_previous": "\nCoach:\nThose are two excellent candidates! f3 is actually what most players consider first here, and\nRd4 is a very strong idea.                                                                   \n\nTo help you decide between them, what forcing threat is Black actually threatening to play?  \nOnce you spot their threat, which of those two moves do you choose?                          \n",
+  "lesson_status": "diagnosis_logged",
+  "moment_fen": "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+  "moment_label": "26. Qxa7",
+  "gold": {
+   "label": "move",
+   "move": "Rd4"
+  }
+ },
+ {
+  "id": 69,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "qe4",
+  "coach_previous": "\nCoach:\nThat's exactly the right idea—it defends the g4 pawn. But let's be specific about why that   \npawn needs defending so badly.                                                               \n\nIf you don't defend it (like when you played 26. Qxa7), what forcing threat on g4 is Black   \ngoing to play?                                                                               \n",
+  "lesson_status": "awaiting_explanation",
+  "moment_fen": "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26",
+  "moment_label": "26. Qxa7",
+  "gold": {
+   "label": "threat",
+   "threat": "qe4"
+  }
+ },
+ {
+  "id": 70,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "I do, but can we review one more position first? the next critical one",
+  "coach_previous": "so deadly that the engine shows White is forced to give up the queen for the rook  \n(Qxb6), leaving Black completely winning.                                                    \n\nSo 31. Kh2 was the only move to secure the draw by safely handling those checks! I've logged \nour final habit: name the position's urgent priority before choosing a natural move.         \n\n---------------------------------------------------------------------------------------------\n\nGame Synthesis That wraps up our critical moments! Looking at the game as a whole, we saw two\nverified themes:                                                                             \n\n 1 A Bad Trade: On move 20, the temptation to win a pawn led to trading away your most active\n   knight, which let Black take over the center.                                             \n 2 Ignored Threats: This was the main pattern today (moves 24, 26, and 31). In the late      \n   middlegame, grabbing material or making a natural king move allowed Black to launch       \n   devastating, forcing attacks against your king.                                           \n\nThe big takeaway habit for today is simple but powerful: Before taking material or making a  \nnatural move, always stop and ask what the opponent's most forcing threat is.                \n\nGreat job working through these tough defensive positions! Let me know if you have any final \nquestions about this game.                                                                   \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "navigate"
+  }
+ },
+ {
+  "id": 71,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "yes, let's look at move 4",
+  "coach_previous": "\nCoach:\nWe've actually covered all the critical moments the engine flagged for this game! Those four \npositions were the main turning points where the evaluation shifted significantly.           \n\nSince we've reached the end of the agenda, what was your question? Or is there a specific    \nmove number or moment from the game you'd like to look at together?                          \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "navigate"
+  }
+ },
+ {
+  "id": 72,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "let's look at the move that I rferenced at the beginning, when I captured that pawn with my queen. whaat moove was that?",
+  "coach_previous": "· trace | claim-gate (L1): 1 illegal-move finding(s): c7 \n\nCoach:\nJugar 4. Nb5 es muy común en tu nivel para atacar el peón en (an unverified move), pero es   \nuna amenaza de un solo turno. Las negras se defienden fácilmente con 4... Na6 (como ocurrió  \nen la partida).                                                                              \n\nEn la apertura, es mejor evitar mover la misma pieza dos veces. El módulo prefiere un        \ndesarrollo simple como 4. e3 o 4. Nf3 para sacar tus otras piezas y preparar la seguridad del\nrey.                                                                                         \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "navigate"
+  }
+ },
+ {
+  "id": 73,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "ah, treu. can we look at ove 25? ask me aqueitson about it",
+  "coach_previous": "\nCoach:\nThat was move 26, when you played 26. Qxa7!                                                  \n\nYou grabbed the pawn on a7 with your queen. As we saw during our review, that was our third  \ncritical moment. Grabbing that pawn was super tempting, but it fell right into our main theme\nfor the day: it ignored Black's massive threat of 26... Qxg4+, which launched a devastating  \nattack on your king.                                                                         \n\nThe solution we found for that position was 26. Rd4, which controlled the g4 square and      \nstopped the threat before you went after any material.                                       \n\nDid you have any other questions about that moment, or about the game in general?            \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "navigate"
+  }
+ },
+ {
+  "id": 74,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "Just tell me the answer, don't quiz me.",
+  "coach_previous": "\nCoach:\nHere is the position right before you played 25. Qc5:                                        \n\n                                  \n8      ♜︎           ♜︎       ♚︎      \n                                  \n7  ♟︎                   ♟︎   ♟︎   ♟︎  \n                                  \n6              ♛︎                  \n                                  \n5      ♕︎       ♙︎                  \n                                  \n4      ♙︎                   ♙︎      \n                                  \n3  ♙︎                              \n                                  \n2                      ♙︎   ♔︎      \n                                  \n1              ♖︎       ♖︎          \n   a   b   c   d   e   f   g   h  \n\nBlack just played 24... Rab8.                                                                \n\nYour queen on b5 is under attack by that rook! What candidate moves would you consider for   \nyour queen here, and which one do you think is best?                                         \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "give_up"
+  }
+ },
+ {
+  "id": 75,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "I have quesitons about the game now",
+  "coach_previous": "\nCoach:\nThe best move here is 25. Qd3.                                                               \n\nIn the game, you played 25. Qc5, which is also a very reasonable move (the engine evaluates  \nit at +0.44, while Qd3 is +0.63). Both moves get the queen to safety while keeping an eye on \nthe center.                                                                                  \n\nThe slight difference is that 25. Qd3 keeps the queen more centrally located, where she can  \nhelp defend the kingside (which, as we saw later, became very important!) and support the d5 \npawn. 25. Qc5 puts the queen on a slightly more exposed square where she can be attacked by  \nBlack's pieces later on.                                                                     \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ },
+ {
+  "id": 76,
+  "source": "manual-2dtDqQgR-20261012T010955Z/events.jsonl",
+  "text": "which moves did I do that a player my level was not expected to do? list both the too good moves and the too bad moves",
+  "coach_previous": "\nCoach:\nThe biggest takeaway from this session is the pattern of ignoring threats in the middlegame, \nwhich happened three times (moves 24, 26, and 31).                                           \n\nTo practice this, make it a habit to always ask \"what is my opponent's most forcing threat?\" \nbefore you grab material or make a natural king move.                                        \n\nGreat work today, and good luck in your next games!                                          \n",
+  "lesson_status": "lesson_complete",
+  "moment_fen": null,
+  "moment_label": null,
+  "gold": {
+   "label": "question"
+  }
+ }
+]

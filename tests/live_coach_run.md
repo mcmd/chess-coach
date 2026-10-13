@@ -24,6 +24,8 @@ Defaults: source profile `mcmd`, startup deadline 90 seconds, loading deadline
 600 seconds, later-turn deadline 300 seconds, reviewer deadline 600 seconds.
 These are keyword arguments (`source_profile`, `startup_timeout`, `load_timeout`,
 `turn_timeout`, `reviewer_timeout`); `root` can supply an explicit repository path.
+`config_overrides` sets per-run profile settings without changing the source profile
+(e.g. `{"router_model": "gemini-3.8-flash"}` for a router run); the manifest records it.
 
 Any omp development agent with Eval access can invoke the same callable.
 To delegate the whole eval, spawn a runner subagent instructed to call it and

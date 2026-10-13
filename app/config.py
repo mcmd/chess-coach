@@ -52,6 +52,10 @@ class AppConfig:
     spar_temperature: float = 1.0     # sparring sampling sharpness over Maia's top moves:
                                       # 1.0 = proportional to human likelihood (default, most
                                       # human-realistic); <1 sharper (0 = always top move); >1 flatter
+    # Message router (opt-in). When set, a Flash model classifies each student message
+    # and the backend grades moves/threats/explanations itself; None = off (today's flow).
+    router_model: str | None = None
+    router_thinking_level: str = "low"  # low: same routing as medium on the routing eval, no 8-18 s tail
 
     # Engine quality knobs. Broad scans are cheaper; agenda/threat/practicality
     # analysis is where extra time most directly improves coaching quality.
@@ -195,6 +199,8 @@ Examples:
         maia3_offline=bool(app_config.get("maia3_offline", False)),
         maia_history_plies=int(engine_value("maia_history_plies", 12)),
         spar_temperature=float(app_config.get("spar_temperature", 1.0)),
+        router_model=app_config.get("router_model") or None,
+        router_thinking_level=str(app_config.get("router_thinking_level", "low")),
         review_eval_time=float(engine_value("review_eval_time", 1.0)),
         agenda_best_depth=int(engine_value("agenda_best_depth", 20)),
         agenda_best_time=float(engine_value("agenda_best_time", 6.0)),

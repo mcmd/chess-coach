@@ -214,7 +214,8 @@ class Recorder:
         names = ("move_index", "current_game_id", "lesson_metadata", "diagnostics",
                  "socratic_attempts", "review_context", "teaching_ledger", "active_dossier_drill",
                  "grading_integrity_events", "claim_gate_events", "grader_verdict_events",
-                 "ambiguous_piece_events", "verdict_contradiction_events", "deliberation_events")
+                 "ambiguous_piece_events", "verdict_contradiction_events", "deliberation_events",
+                 "router_events", "pregraded")
         data = {name: getattr(state, name, None) for name in names}
         data.update(board_fen=state.board.fen(),
                     loaded_moves_uci=[move.uci() for move in state.loaded_moves])

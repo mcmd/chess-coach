@@ -367,7 +367,7 @@ def _report(run_dir: Path, execution: dict, review_status: str, review: dict | N
 
 async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
                    load_timeout=600, turn_timeout=300, reviewer_timeout=600,
-                   agent_fn=None, tool_fn=None) -> dict:
+                   agent_fn=None, tool_fn=None, config_overrides=None) -> dict:
     """Run a fresh real session and separate harness agents; return artifact paths.
 
     `%load` injects the harness's `agent` and `tool` globals. When imported as a
@@ -390,6 +390,8 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
     root_config = json.loads((root / "config.json").read_text(encoding="utf-8"))
     profiles = (root / root_config.get("profiles_dir", "profiles")).resolve()
     config = json.loads((profiles / source_profile / "config.json").read_text(encoding="utf-8"))
+    # Per-run settings (e.g. {"router_model": "gemini-3.8-flash"}); the source profile is not changed.
+    config.update(config_overrides or {})
     if config.get("user_elo", 1200) != 1200 or config.get("language", "English") != "English":
         raise ValueError("This scenario requires English and Elo 1200; source profile was not changed")
     if "mcmd" not in [name.casefold() for name in (config.get("usernames", {}).get("lichess") or [])]:
@@ -413,6 +415,7 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
         (run_dir / agent_file).write_bytes((root / ".omp/agents" / agent_file).read_bytes())
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True)
     manifest = {"run_id": run_dir.name, "started_at": _utc(), "source_profile": source_profile,
+                "config_overrides": dict(config_overrides or {}),
                 "source_head": revision.stdout.strip() if revision.returncode == 0 else None,
                 "working_tree_cleanliness": "not asserted", "roles": roles, "agents": {},
                 "input_adapter": "newline stdin; actual coach.main/model/tools/renderer",

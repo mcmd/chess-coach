@@ -11,6 +11,8 @@ backend runs the **analysis** and owns all chess truth. There is no web app —
 ```
 coach.py             thin wiring: config -> state -> engines -> tools -> chat -> REPL
 app/commands.py      slash-command / chat-input processing (CommandProcessor, testable)
+app/router.py        opt-in message router: a fast model labels the student's message; the
+                     backend checks it and grades moves/threats/explanations itself
 app/agent_loop.py    Gemini tool-execution loop + response rendering
 app/state.py         SessionState (single source of truth) + TimelineManager (board mutations)
 app/engines.py       EngineManager: Stockfish subprocess + in-process Maia-3 (tiered
