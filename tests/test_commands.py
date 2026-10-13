@@ -46,6 +46,21 @@ def test_saved_state_question_gets_the_verified_persistence_facts(stub_config):
     assert "persistence facts" not in proc.process("What should I remember from this session?").prompt
 
 
+def test_student_messages_are_kept_per_agenda_moment(stub_config):
+    from tests.test_review import PGN as RPGN, _scripted_engines
+    proc, state, _ = make_processor(stub_config, _scripted_engines())
+    proc.process(RPGN)
+    state.lesson_metadata = {"last_game_id": state.current_game_id, "last_agenda_index": 0,
+                             "lesson_status": "awaiting_answer"}
+    proc.process("Ne4, to gain tempo on the queen")
+    proc.process("Why not take on b5?")
+    assert state.moment_student_texts == ["Ne4, to gain tempo on the queen", "Why not take on b5?"]
+
+    state.lesson_metadata["last_agenda_index"] = 1
+    proc.process("Kxg2")
+    assert state.moment_student_texts == ["Kxg2"]
+
+
 # --- PGN DETECTION GUARD (F4 regression) ---
 
 def test_chat_mentioning_move_one_is_not_a_pgn():

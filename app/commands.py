@@ -144,6 +144,7 @@ class CommandProcessor:
         if looks_like_pgn(text):
             return self._load_pasted_pgn(text)
 
+        self._remember_moment_text(text)
         plan = plan_free_text_turn(text, default_language=getattr(self.config, "language", "English"))
         if self._completion_ack_requests_close(text, plan):
             plan = TeachingPlan(
@@ -220,6 +221,17 @@ class CommandProcessor:
 
     _ACTIVE_LESSON = ("fresh_review", "awaiting_answer", "awaiting_explanation",
                       "awaiting_diagnosis", "diagnosis_logged")
+
+    def _remember_moment_text(self, text: str) -> None:
+        """Keep the student's messages for the current agenda moment, so a reason given with the
+        move can still be graded after a detour question (provenance accepts these, verbatim)."""
+        meta = self.state.lesson_metadata or {}
+        key = f"{self.state.current_game_id}:{meta.get('last_agenda_index')}"
+        if key != self.state.moment_student_key:
+            self.state.moment_student_key = key
+            self.state.moment_student_texts = []
+        self.state.moment_student_texts.append(text)
+        self.state.moment_student_texts[:] = self.state.moment_student_texts[-12:]
 
     def _current_moment(self):
         """The agenda moment the coach is quizzing on, during an active review only."""

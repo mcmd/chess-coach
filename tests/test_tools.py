@@ -646,6 +646,21 @@ def test_explanation_with_typos_fixed_is_accepted_but_stale_replay_is_not(stub_c
     assert tools.evaluate_explanation(START, "not sure")["verdict"] == "stale_or_fabricated_student_input"
 
 
+def test_explanation_given_earlier_in_the_same_moment_is_genuine(stub_config):
+    # Run fjtvd2b8: at S4 the student gave the move with its reason; after two detour questions
+    # ("let's go back to move 24") the coach graded that verbatim reason and it was rejected as
+    # stale, so the integrity guard replaced the whole reply.
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    reason = "I think I should moe Ne4 to block their pawn's advancement, and to gain tempo"
+    state.moment_student_texts = [reason, "Why is Ne4 better than taking on b5?"]
+    state.latest_user_text = "Thanks, that's clear. Let's go back to move 24."
+
+    assert tools.evaluate_explanation(START, reason).get("verdict") != "stale_or_fabricated_student_input"
+    state.moment_student_texts = []
+    assert tools.evaluate_explanation(START, reason)["verdict"] == "stale_or_fabricated_student_input"
+
+
 def test_described_moves_resolve_to_the_named_piece_not_a_pawn():
     from app.notation import legal_san_mentions
     session_b = chess.Board("3r2k1/p2r1pp1/2p1q2p/Q1P1p3/1P2P3/P3BP2/7P/R3R1K1 w - - 1 23")

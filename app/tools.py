@@ -556,8 +556,13 @@ class CoachTools:
                 continue
             if san in _legal_san_mentions(board, latest):
                 return None
-        if field_name == "student_explanation" and self._near_verbatim(submitted, latest):
-            return None
+        if field_name == "student_explanation":
+            # The student's own reason may come from an earlier message in this same moment
+            # (given with the move, before a detour question); verbatim or typo-level only.
+            for text in [latest] + list(getattr(self.state, "moment_student_texts", None) or []):
+                if (submitted_compact and submitted_compact in self._compact_student_text(text)) \
+                        or self._near_verbatim(submitted, text):
+                    return None
         event = {
             "type": "stale_or_fabricated_student_input",
             "tool": tool_name,

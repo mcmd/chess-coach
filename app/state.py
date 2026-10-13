@@ -31,6 +31,8 @@ class SessionState:
     last_coach_reply: str = ""                   # rendered text of the coach's last reply (router context)
     pregraded: dict = field(default_factory=dict)  # "tool:fen" -> {tool, args, result}: graded by the backend this turn
     router_events: list[dict] = field(default_factory=list)  # Flash router decisions (observability)
+    moment_student_texts: list[str] = field(default_factory=list)  # student messages during the current agenda moment
+    moment_student_key: str = None               # "game:agenda_index" the texts above belong to
     # Board diagram theme (set from config at startup; defaults = lichess green).
     board_light_color: str = "#eeeed2"
     board_dark_color: str = "#769656"
