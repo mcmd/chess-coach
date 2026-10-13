@@ -497,15 +497,18 @@ def test_grading_result_tells_the_coach_to_state_the_verdict_first(stub_config):
     assert "WHY" in result["next_step"]
 
 
-def test_a_timed_out_model_call_is_retried_once_at_medium_thinking():
+def test_a_timed_out_model_call_is_retried_once_at_medium_thinking_without_a_limit():
     # #38: one /review call thought for 341 s (62,914 thinking tokens). A call that hits the
-    # per-call time limit is retried once with thinking_level=medium; other calls are untouched.
+    # per-call time limit is retried once with thinking_level=medium. The retry has no limit:
+    # when the API itself is slow (live eval 2026-10-13: the first turn took >89 s twice), a
+    # limited retry turned a slow answer into an error.
     import httpx
     from google.genai import types
     from app.agent_loop import _send_with_spinner
 
     class SlowChat:
-        coach_config = types.GenerateContentConfig(temperature=0.2, system_instruction="coach")
+        coach_config = types.GenerateContentConfig(temperature=0.2, system_instruction="coach",
+                                                   http_options=types.HttpOptions(timeout=90000))
 
         def __init__(self):
             self.configs = []
@@ -521,6 +524,7 @@ def test_a_timed_out_model_call_is_retried_once_at_medium_thinking():
     retry = chat.configs[1]
     assert retry.thinking_config.thinking_level.lower() == "medium"
     assert retry.system_instruction == "coach" and retry.temperature == 0.2
+    assert retry.http_options is None or retry.http_options.timeout is None
 
 
 def _gemini_response(*parts):

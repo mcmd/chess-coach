@@ -51,7 +51,9 @@ def _extract_function_calls(response):
 
 # #38: one call thought for 341 s (62,914 thinking tokens) while every other call used under
 # 2,000. Each call has a time limit (prompts.create_chat_session); a call that hits it is
-# retried once at this thinking level. A failed call leaves nothing in the chat history.
+# retried once at this thinking level, without the limit: when the API itself is slow (live
+# eval 2026-10-13, >89 s twice for the first turn), a limited retry turns a slow answer into an
+# error. A failed call leaves nothing in the chat history.
 TIMEOUT_RETRY_THINKING_LEVEL = "medium"
 
 
@@ -76,9 +78,10 @@ def _send_with_spinner(chat, payload):
             if base is None or not _is_timeout(exc):
                 raise
             trace(f"model call timed out ({type(exc).__name__}); retrying once at "
-                  f"thinking_level={TIMEOUT_RETRY_THINKING_LEVEL}")
-            retry = base.model_copy(update={"thinking_config": types.ThinkingConfig(
-                thinking_level=TIMEOUT_RETRY_THINKING_LEVEL)})
+                  f"thinking_level={TIMEOUT_RETRY_THINKING_LEVEL} without a time limit")
+            retry = base.model_copy(update={
+                "thinking_config": types.ThinkingConfig(thinking_level=TIMEOUT_RETRY_THINKING_LEVEL),
+                "http_options": None})
             return chat.send_message(payload, config=retry)
 
 
