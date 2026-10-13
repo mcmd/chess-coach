@@ -402,11 +402,11 @@ def test_human_tendency_summary_says_whether_most_players_agree(stub_config):
     # "most humans at this level try Qh6 or Qg6". The backend now writes the sentence to quote.
     split = FakeEngines(maia={START: {"e2e4": 0.32, "d2d4": 0.13, "g1f3": 0.12}})
     summary = make_tools(stub_config, split)[0].analyze_position(START)["human_tendency_at_student_elo"]
-    assert summary["in_words"] == ("No single move is chosen by most players at this level: "
+    assert summary["in_words"] == ("No single move is chosen by most players rated about 1150: "
                                    "e4 32%, d4 13%, Nf3 12%.")
     clear = FakeEngines(maia={START: {"e2e4": 0.73, "d2d4": 0.07}})
     summary = make_tools(stub_config, clear)[0].analyze_position(START)["human_tendency_at_student_elo"]
-    assert summary["in_words"] == "Most players at this level choose e4 (73%)."
+    assert summary["in_words"] == "Most players rated about 1150 choose e4 (73%)."
 
 
 def test_submit_diagnosis_accepts_allows_forcing_sequence(stub_config):

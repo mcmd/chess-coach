@@ -190,12 +190,13 @@ _THREAT_VERDICTS = {
 }
 
 
-def grading_next_step(tool: str, result: dict) -> str | None:
+def grading_next_step(tool: str, result: dict, can_grade_explanation: bool = True) -> str | None:
     """The verdict to say first and the one thing to do next, for one grading result.
 
     Live runs: the coach often skipped telling the student the verdict (baseline cgxiksj3:
     S4, S11, S16, S18), and once read a correct THREAT answer as permission to reveal the
-    withheld move (e054prsf S2). Used for the coach's own tool calls and for router pre-grading."""
+    withheld move (e054prsf S2). Used for the coach's own tool calls and for router pre-grading;
+    the router grades a reason in the same message itself, so it passes can_grade_explanation=False."""
     if not isinstance(result, dict) or result.get("error") \
             or result.get("verdict") == "stale_or_fabricated_student_input":
         return None
@@ -224,7 +225,10 @@ def grading_next_step(tool: str, result: dict) -> str | None:
     else:
         said = _MOVE_VERDICTS.get(verdict, "").format(m=result.get("student_move") or "that move")
     if verdict in ("best", "excellent_alternative"):
-        step = "ask WHY it works."
+        # 19enjp8m S4: the student gave the reason with the move and was asked for it again.
+        step = ("if their message already says why, grade those words with evaluate_explanation "
+                "instead of asking again; otherwise ask WHY it works." if can_grade_explanation
+                else "ask WHY it works.")
     elif result.get("reveal_allowed"):
         step = "reveal the better move and its verified line, and ask why it works."
     else:
@@ -232,16 +236,18 @@ def grading_next_step(tool: str, result: dict) -> str | None:
     return (f"Say first: {said}. Then: " if said else "Then: ") + step
 
 
-def _human_moves_in_words(top_moves: list) -> str | None:
+def _human_moves_in_words(top_moves: list, elo: int) -> str | None:
     """A sentence the coach can quote. Router run t0zauzig: Qh6 31.6%, Qa6 12.6%, Qg6 11.6%
-    became "most humans at this level try Qh6 or Qg6" (no majority; the second move dropped)."""
+    became "most humans at this level try Qh6 or Qg6" (no majority; the second move dropped).
+    The rating Maia was asked about is named (19enjp8m mixed it up with the game-time rating)."""
     moves = [m for m in top_moves or [] if m.get("move") and m.get("probability") is not None][:3]
     if not moves:
         return None
+    cohort = f"players rated about {elo}"
     if moves[0]["probability"] >= 0.5:
-        return f"Most players at this level choose {moves[0]['move']} ({moves[0]['probability']:.0%})."
+        return f"Most {cohort} choose {moves[0]['move']} ({moves[0]['probability']:.0%})."
     listed = ", ".join(f"{m['move']} {m['probability']:.0%}" for m in moves)
-    return f"No single move is chosen by most players at this level: {listed}."
+    return f"No single move is chosen by most {cohort}: {listed}."
 
 
 def _backend_diagnosis_sentence(record) -> str:
@@ -339,7 +345,7 @@ class CoachTools:
         maia = self.engines.maia_predict(board.fen(), history_uci=hist, tier="deep")
         if maia:
             maia_summary = {"top_human_moves": maia["top_moves"],
-                            "in_words": _human_moves_in_words(maia["top_moves"]),
+                            "in_words": _human_moves_in_words(maia["top_moves"], self.config.user_elo),
                             "win_probability_for_side_to_move": maia["win_probability_for_side_to_move"]}
             d, l = maia.get("draw_probability"), maia.get("loss_probability")
             if d is not None:
@@ -518,7 +524,8 @@ class CoachTools:
         if maia:
             prob = maia["raw_probs"].get(move.uci())
             if prob is not None and prob >= 0.15:
-                result["human_popularity"] = f"~{prob:.0%} of similar-rated players choose this move"
+                result["human_popularity"] = (f"~{prob:.0%} of players rated about {self.config.user_elo} "
+                                              "choose this move")
 
         if reveal:
             if agenda_move is not None:

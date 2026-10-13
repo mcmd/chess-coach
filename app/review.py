@@ -100,6 +100,7 @@ class MoveRecord:
     motifs: list = field(default_factory=list)
     maia_top: list = field(default_factory=list)
     maia_played_prob: float = None
+    maia_elo: int = None                    # rating Maia was asked about (the mover's game-time Elo)
     was_maia_top: bool = False              # student played Maia's most likely human move
     avoided_natural_mistake: str = None     # praise: sidestepped the statistically natural error
     brilliancy_note: str = None             # praise: only good move AND peers rarely find it
@@ -459,8 +460,10 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
                      "(paste this EXACT token to show the diagram)")
     if r.position_facts:
         lines.append(f"  Verified position facts (cite ONLY these for positional claims): {r.position_facts}")
+    # The rating is in the sentence itself: "at your level" was said of game-time numbers (19enjp8m).
+    cohort = f"players rated ~{r.maia_elo}" if r.maia_elo else "similar-rated players"
     if r.maia_played_prob is not None:
-        lines.append(f"  Maia: ~{r.maia_played_prob:.0%} of similar-rated players choose {r.san}. "
+        lines.append(f"  Maia: ~{r.maia_played_prob:.0%} of {cohort} choose {r.san}. "
                      f"Top human moves: " + ", ".join(f"{m['move']} ({m['probability']:.0%})" for m in r.maia_top))
     if r.book_share:
         lines.append(f"  Theory note: {r.san} is established master theory (~{r.book_share:.0%} of "
@@ -482,7 +485,7 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
                      "process slip (time, attention, tilt), NOT a knowledge gap. Check the clock "
                      "data and coach the habit, not the pattern.")
     if r.best_move_human_prob is not None:
-        lines.append(f"  Findability: ~{r.best_move_human_prob:.0%} of similar-rated players find "
+        lines.append(f"  Findability: ~{r.best_move_human_prob:.0%} of {cohort} find "
                      "the right move here — calibrate your hints and your praise accordingly.")
     if r.human_win_prob is not None:
         engine_pct = cp_to_win_pct(r.eval_before_cp if r.color == "white" else -r.eval_before_cp)
@@ -804,7 +807,8 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             was_maia_top = natural_uci == uci
             if not was_maia_top and drop < 5 and natural_prob >= 0.35:
                 avoided = _check_avoided_natural_mistake(
-                    engines, fen_before, mover_white, before_m, natural_uci, natural_prob, san, eval_time_ply)
+                    engines, fen_before, mover_white, before_m, natural_uci, natural_prob, san, eval_time_ply,
+                    elo=mover_elo)
 
         is_only = False
         if is_best and not is_forced and abs(before_m) < 400:
@@ -820,7 +824,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             played_prob = maia_played_prob if maia_played_prob is not None else 0.0
             if quality == "only_move" and played_prob <= 0.15:
                 brilliancy = (f"{san} was the ONLY good move, and only ~{played_prob:.0%} of "
-                              "similar-rated players find it")
+                              f"players rated ~{mover_elo} find it")
             if quality in ("blunder", "mistake"):
                 if played_prob >= 0.30:
                     typicality = "typical_for_level"
@@ -836,7 +840,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             time_flag=time_flag_for(quality, time_spent, clock_remaining, is_forced),
             punisher_uci=next_best, history_uci=history_before or [],
             prev_move_san=prev_move_san, in_check=in_check,
-            maia_top=maia_top, maia_played_prob=maia_played_prob,
+            maia_top=maia_top, maia_played_prob=maia_played_prob, maia_elo=mover_elo if maia else None,
             was_maia_top=was_maia_top, avoided_natural_mistake=avoided,
             brilliancy_note=brilliancy, error_typicality=typicality,
             best_move_human_prob=best_move_human_prob,
@@ -910,7 +914,7 @@ def _eval_with_best(engines, board: chess.Board, eval_time: float = 0.5):
 
 
 def _check_avoided_natural_mistake(engines, fen_before, mover_white, before_m,
-                                   natural_uci, natural_prob, played_san, eval_time=0.5):
+                                   natural_uci, natural_prob, played_san, eval_time=0.5, elo=None):
     """The student declined the move most humans play here. If that natural
     move loses significant win%, this is an earned praise moment."""
     try:
@@ -930,7 +934,8 @@ def _check_avoided_natural_mistake(engines, fen_before, mover_white, before_m,
         natural_m = natural_cp if mover_white else -natural_cp
         natural_drop = cp_to_win_pct(before_m) - cp_to_win_pct(natural_m)
         if natural_drop >= 15:
-            return (f"{natural_prob:.0%} of similar-rated players choose {natural_san} here, "
+            cohort = f"players rated ~{elo}" if elo else "similar-rated players"
+            return (f"{natural_prob:.0%} of {cohort} choose {natural_san} here, "
                     f"which loses {natural_drop:.0f} win% — the student played {played_san} instead")
     except Exception:
         pass
@@ -1458,7 +1463,9 @@ def _assess_practicality(r: MoveRecord, engines, review: GameReview, deep_after_
 def _attach_lesson_primitives(r: MoveRecord, board_before: chess.Board, board_after: chess.Board) -> None:
     r.lesson_objective = _infer_lesson_objective(r)
     r.recommended_diagnosis = _recommended_diagnosis(r)
-    r.initial_question = _initial_question(board_before)
+    risk = (_wdl_risk_profile(r.human_win_prob, r.human_draw_prob, r.human_loss_prob or 0.0)[0]
+            if r.human_win_prob is not None and r.human_draw_prob is not None else None)
+    r.initial_question = _initial_question(board_before, risk)
     r.question_ladder = _question_ladder(r, board_before)
     r.explanation_primitives = _explanation_primitives(r, board_before, board_after)
 
@@ -1557,10 +1564,14 @@ def _is_simple_capture_punishment(r: MoveRecord) -> bool:
         return False
 
 
-def _initial_question(board_before: chess.Board) -> str:
+def _initial_question(board_before: chess.Board, risk: str = None) -> str:
+    """`risk` is the moment's Maia risk verdict (_wdl_risk_profile); the in-check question names
+    the goal only when that verdict supports it."""
     side = "White" if board_before.turn == chess.WHITE else "Black"
     if board_before.is_check():
-        return f"{side} to move. You're in check - what are your options, and which keeps your winning chances?"
+        goal = {"must-hold": "which gives you the best chance to hold the game",
+                "winning": "which keeps your winning chances"}.get(risk, "which is your best option")
+        return f"{side} to move. You're in check - what are your options, and {goal}?"
     opponent = "Black" if side == "White" else "White"
     return f"{side} to move. What candidate moves would you consider, and what is {opponent} threatening?"
 

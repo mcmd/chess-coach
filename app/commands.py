@@ -321,7 +321,8 @@ class CommandProcessor:
         event["action"] = "pregraded:" + ",".join(e["tool"] for e in graded)
         return ("\n[Backend: the student's message was already graded by the backend for this turn. "
                 "Results: " + json.dumps(graded, ensure_ascii=False, default=str) + ". Next step: "
-                + (grading_next_step(graded[-1]["tool"], graded[-1]["result"]) or "respond to the grading.")
+                + (grading_next_step(graded[-1]["tool"], graded[-1]["result"], can_grade_explanation=False)
+                   or "respond to the grading.")
                 + " Do not call any grading tool this turn; the student's next message is graded next turn. "
                 "A withheld answer stays withheld unless a result above reveals that same item.]")
 

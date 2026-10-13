@@ -497,6 +497,27 @@ def test_grading_result_tells_the_coach_to_state_the_verdict_first(stub_config):
     assert "WHY" in result["next_step"]
 
 
+def test_a_correct_move_given_with_a_reason_gets_the_reason_graded_not_asked_again(stub_config):
+    # Live eval 19enjp8m S4: "Ne4 to block their pawn's advancement, and to gain tempo by attacking
+    # their queen" was graded as best, then the coach asked why anyway; the moment stayed open and
+    # the later "go back to move 24" had to close it.
+    from app.tools import grading_next_step
+    from tests.test_tools import _answer_engines, START
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), _answer_engines(), stub_config)
+    call = SimpleNamespace(name="evaluate_student_answer", args={"fen": START, "student_move_san": "e4"})
+    chat = FakeChat([SimpleNamespace(candidates=[], function_calls=[call]), _text_response("ok")])
+
+    run_agent_turn(chat, tools, "e4, because it takes the centre and frees the bishop")
+
+    step = chat.sent[1][0].function_response.response["result"]["next_step"]
+    assert "evaluate_explanation" in step
+    # The router grades a reason in the same message itself and forbids grading tools that turn.
+    routed = grading_next_step("evaluate_student_answer", {"verdict": "best", "student_move": "e4"},
+                               can_grade_explanation=False)
+    assert "evaluate_explanation" not in routed and "WHY" in routed
+
+
 def test_a_timed_out_model_call_is_retried_once_at_medium_thinking_without_a_limit():
     # #38: one /review call thought for 341 s (62,914 thinking tokens). A call that hits the
     # per-call time limit is retried once with thinking_level=medium. The retry has no limit:

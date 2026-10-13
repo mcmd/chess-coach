@@ -168,13 +168,15 @@ def test_digest_contains_agenda_and_withholds_answer():
     assert "evaluate_student_answer" in digest
 
 
-def test_initial_question_switches_template_when_side_is_in_check():
-    board = chess.Board("4k3/8/8/8/8/8/8/4K2r w - - 0 1")
-
-    question = _initial_question(board)
-
-    assert question == "White to move. You're in check - what are your options, and which keeps your winning chances?"
-    assert "threatening" not in question
+def test_in_check_question_states_the_goal_the_risk_profile_supports():
+    # Live eval 19enjp8m, move 31: "which keeps your winning chances?" in a position whose Maia
+    # WDL (10/53/37, must-hold) and best play (a draw) make holding the goal.
+    board = chess.Board("1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31")
+    must_hold = _initial_question(board, risk="must-hold")
+    assert "hold" in must_hold and "winning" not in must_hold and "threatening" not in must_hold
+    assert "winning chances" in _initial_question(board, risk="winning")
+    unknown = _initial_question(board)
+    assert "in check" in unknown and "winning" not in unknown and "hold" not in unknown
 
 
 def test_forced_recapture_classified_forced():
@@ -348,7 +350,11 @@ def test_typical_blunder_flagged_for_normalization():
     review = review_game(PGN, _scripted_engines(), _Cfg())
     blunder = review.records[4]  # Qxf7+ played by 45% of peers
     assert blunder.error_typicality == "typical_for_level"
-    assert "COMMON at this level" in review.digest()
+    digest = review.digest()
+    assert "COMMON at this level" in digest
+    # Live eval 19enjp8m: "at your level" was said of numbers Maia gave for the game-time rating.
+    assert blunder.maia_elo == 1150
+    assert "~45% of players rated ~1150 choose Qxf7+" in digest
 
 
 def test_atypical_blunder_flagged_as_process_slip():
