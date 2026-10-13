@@ -91,6 +91,23 @@ def test_router_failure_leaves_the_prompt_unchanged(stub_config):
     assert routed_proc.process(message).prompt == plain_proc.process(message).prompt
 
 
+def test_correct_threat_note_keeps_the_better_move_withheld(stub_config):
+    # Router run e054prsf, S2: after the backend graded "e4" as the correct threat, the coach
+    # revealed the withheld best move (20. Ne4) and graded an explanation the student never gave.
+    proc, state, record = _routed_lesson(stub_config, None)
+    board = chess.Board(record.fen_before)
+    board.push(chess.Move.null())
+    threat = board.san(next(iter(board.legal_moves)))
+    proc.router.route = Route(label="threat", threat=threat, about_current_moment=True)
+    proc.tools.evaluate_threat_answer = lambda fen, threat_move_san: {
+        "verdict": "correct_threat", "student_threat": threat_move_san, "reveal_allowed": True}
+
+    prompt = proc.process(f"Black is threatening {threat}").prompt
+
+    assert "ask which move" in prompt and "better move stays withheld" in prompt
+    assert "Do not call any grading tool this turn" in prompt
+
+
 def test_give_up_missed_by_the_rules_is_still_recorded(stub_config):
     proc, state, record = _routed_lesson(stub_config, Route(label="give_up"))
 
