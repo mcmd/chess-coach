@@ -118,6 +118,7 @@ class MoveRecord:
     saving_resource: str = None             # withheld: the narrow defense after the mistake, with findability
     board_token: str = None  # pre-minted diagram token for the position before the move
     best_line_motifs: list = field(default_factory=list)  # tactics the student MISSED
+    deep_eval_before_cp: int = None  # white POV: best play from fen_before at agenda depth (vs the scan eval)
     suggested_categories: list = field(default_factory=list)
     position_facts: str = None  # backend-verified positional facts for the position before the move
     lesson_objective: str = None
@@ -381,6 +382,21 @@ def _wdl_risk_profile(win: float, draw: float, loss: float) -> tuple:
     return ("balanced", "")
 
 
+# A scan/deep disagreement this large changes how the position should be described.
+DEEP_EVAL_DISAGREEMENT_CP = 150
+
+
+def _deep_eval_note(r: MoveRecord) -> str:
+    """The fast scan eval can contradict the agenda's deep analysis of best play (live eval
+    2026-10-13: scan +0.00 before 31. Kh1, but the depth-20 best line wins White's queen, and
+    the coach called the position level). Say so in the moment header."""
+    deep = r.deep_eval_before_cp
+    if deep is None or abs(deep - r.eval_before_cp) < DEEP_EVAL_DISAGREEMENT_CP:
+        return ""
+    return (f" Deep check: with best play the eval before the move is {deep / 100.0:+.2f}, not "
+            f"{r.eval_before_cp / 100.0:+.2f}; describe the position from the deep eval.")
+
+
 def moment_digest_lines(i: int, r: MoveRecord) -> list:
     """The digest block for one agenda moment — shared by single-game reviews
     and batch training reports so the coaching protocol sees identical data."""
@@ -388,7 +404,8 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
     wb = cp_to_win_pct(r.eval_before_cp if r.color == "white" else -r.eval_before_cp)
     wa = cp_to_win_pct(r.eval_after_cp if r.color == "white" else -r.eval_after_cp)
     lines.append(f"[Moment {i}] {r.move_label} by {r.color} — {r.quality} "
-                 f"(win% {wb:.0f} -> {wa:.0f}; eval {r.eval_before_cp / 100.0:+.2f} -> {r.eval_after_cp / 100.0:+.2f}).")
+                 f"(win% {wb:.0f} -> {wa:.0f}; eval {r.eval_before_cp / 100.0:+.2f} -> {r.eval_after_cp / 100.0:+.2f})."
+                 + _deep_eval_note(r))
     orient = f"  Orientation: this is move {r.number} of the game"
     if r.prev_move_san:
         # The opponent's move is one ply earlier: a Black reply precedes a White
@@ -1249,6 +1266,8 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
                 depth=int(_engine_setting(engines, "agenda_best_depth", 20)),
                 time_cap=float(_engine_setting(engines, "agenda_best_time", 6.0)))
             r.best_line = _select_best_line_for_record(r, board_before, infos)
+            if infos and infos[0].get("score") is not None:
+                r.deep_eval_before_cp = infos[0]["score"].white().score(mate_score=MATE_CP)
             r.best_line_motifs = detect_motifs_in_line(board_before, r.best_line)
             # The deep multipv PV is more authoritative than the shallow scan eval
             # that first set best_move_san. When they disagree on the FIRST move,
@@ -1694,8 +1713,8 @@ def _diagnosis_sentence(r: MoveRecord) -> str:
                 f"the position's main priority; {r.best_move_label or r.best_move_san} kept the stronger plan.")
     if _punishment_starts_with_forcing_check(r):
         first = r.punishment_line[0] if r.punishment_line else "a forcing check"
-        return (f"Played {r.move_label} without stopping {first}; "
-                f"{r.best_move_label or r.best_move_san} was needed to meet that forcing threat.")
+        return (f"Played {r.move_label}, which allowed the forcing {first}; "
+                f"{r.best_move_label or r.best_move_san} was the engine-verified defence.")
     if r.lesson_objective == "improve_pieces_before_committing_pawns":
         return (f"Played {r.move_label} before improving the pieces; "
                 f"{r.best_move_label or r.best_move_san} supported the position before changing the pawn structure.")

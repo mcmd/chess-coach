@@ -1048,6 +1048,31 @@ def test_no_key_reason_when_the_best_move_does_not_stop_the_forcing_move():
     assert "Kh2" in primitives["why_wrong_move_fails"] and "Qh5+" in primitives["why_wrong_move_fails"]
 
 
+# Baseline live eval 1l_zs5z1 (2026-10-13), move 31 as reviewed in that run.
+_MOVE31_RUN13 = dict(_GAME_2DTD_RECORDS[31],
+                     best_line=["Kh2", "Qh5+", "Kg3", "Qg6+", "Kh4", "Rb6", "Qxb6", "Qxb6"],
+                     punishment_line=["Qh4+", "Kg1", "Qg5+", "Kh2", "Qh6+", "Kg2", "Qg6+", "Kf3"])
+
+
+def test_diagnosis_sentence_never_claims_the_better_move_stops_the_forcing_check():
+    # The digest said "Played 31. Kh1 without stopping Qh4+; 31. Kh2 was needed to meet that
+    # forcing threat", and the coach taught that Kh2 prevents Qh4+. Qh4+ is legal after Kh2.
+    from app.review import MoveRecord, _diagnosis_sentence
+    sentence = _diagnosis_sentence(MoveRecord(eval_before_cp=0, eval_after_cp=-445, **_MOVE31_RUN13))
+    assert "without stopping" not in sentence and "needed to meet" not in sentence
+    assert "Kh1" in sentence and "Qh4+" in sentence and "Kh2" in sentence
+
+
+def test_moment_header_shows_the_deep_eval_when_the_scan_eval_disagrees():
+    # The scan said +0.00 before 31. Kh1; the depth-20 best line (Kh2 ... Rb6 Qxb6 Qxb6) wins
+    # White's queen, and the coach called the position "completely balanced".
+    from app.review import MoveRecord, moment_digest_lines
+    contradicted = MoveRecord(eval_before_cp=0, eval_after_cp=-445, deep_eval_before_cp=-894, **_MOVE31_RUN13)
+    agreeing = MoveRecord(eval_before_cp=0, eval_after_cp=-445, deep_eval_before_cp=-40, **_MOVE31_RUN13)
+    assert "-8.94" in moment_digest_lines(4, contradicted)[0]
+    assert "-8.94" not in moment_digest_lines(4, agreeing)[0] and "deep" not in moment_digest_lines(4, agreeing)[0]
+
+
 def test_pawn_push_to_avoid_tension_is_not_missed_fork():
     from app.review import MoveRecord, suggest_error_categories, _infer_lesson_objective, _recommended_diagnosis
     r = MoveRecord(
