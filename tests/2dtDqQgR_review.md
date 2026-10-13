@@ -114,7 +114,8 @@ missing later turns must not erase observed earlier behavior.
   the student's give-up rather than an invented guess.
 - S11: the explanation is graded without inventing a missing detail. A contentless
   probe such as "what changes around e1?" is a FAIL.
-- S12: the clarification question is answered first.
+- S12: the clarification question is answered first. If the coach had already presented
+  move 26, it answers about move 24 and then returns to move 26 without changing lesson state.
 - One diagnosis for move 24, logged once.
 
 ### S14–S17 — Move 26 (after `25...Qg6`)

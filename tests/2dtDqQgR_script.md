@@ -165,7 +165,9 @@ it moves my rook to safety, and offers a rook trade
 
 ### S12 — Move 24: clarification
 
-**Ready when:** the coach has responded to your explanation.
+**Ready when:** the coach has responded to your explanation. It may already have moved on
+to move 26 (the grader can tell it to teach the line instead of probing); send this anyway:
+it then tests answering a question about the previous moment without losing the current one.
 
 **Checks:** detour
 
