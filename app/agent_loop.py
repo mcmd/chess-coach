@@ -385,6 +385,11 @@ def candidate_boards(state, extra_fens=()) -> list:
             fens.add(prev_fen)
         for f in _line_position_fens(getattr(r, "fen_before", None), getattr(r, "best_line", None)):
             fens.add(f)
+        # The opponent's threats at the moment ("if you don't move the rook, Black plays
+        # gxf1=Q+"): the position with the opponent to move, as the threat probe uses.
+        threat_fen = _opponent_to_move_fen(getattr(r, "fen_before", None))
+        if threat_fen:
+            fens.add(threat_fen)
         for f in _line_position_fens(getattr(r, "fen_after", None), getattr(r, "punishment_line", None)):
             fens.add(f)
     for f in fens:
@@ -393,6 +398,18 @@ def candidate_boards(state, extra_fens=()) -> list:
         except ValueError:
             pass
     return boards
+
+
+def _opponent_to_move_fen(fen) -> str | None:
+    """`fen` with the other side to move (a pass), unless the side to move is in check."""
+    try:
+        board = chess.Board(fen)
+    except (TypeError, ValueError):
+        return None
+    if board.is_check():
+        return None
+    board.push(chess.Move.null())
+    return board.fen()
 
 
 def _previous_move_origin_fen(record) -> str | None:

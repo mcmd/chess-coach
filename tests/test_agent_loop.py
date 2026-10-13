@@ -345,6 +345,26 @@ _MOVE24_FEN = "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24"
 _MOVE4_FEN = "rn1qkbnr/ppp2ppp/4p3/3p1b2/3P1B2/2N5/PPP1PPPP/R2QKBNR w KQkq - 0 4"
 
 
+def test_opponent_threat_at_an_agenda_moment_is_verifiable():
+    # Router run e054prsf, move 24: "If you don't move the rook, Black can simply capture
+    # gxf1=Q+" was redacted: the gate knew only White-to-move positions at that moment.
+    from app.review import GameReview, MoveRecord
+    before = chess.Board(_MOVE24_FEN)
+    after = before.copy(stack=False)
+    after.push_san("Kxg2")
+    rec = MoveRecord(ply=46, number=24, color="white", san="Kxg2", uci="g1g2",
+                     fen_before=_MOVE24_FEN, fen_after=after.fen(),
+                     eval_before_cp=0, eval_after_cp=0, drop_pct=0.0, quality="inaccuracy")
+    state = SessionState()
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+
+    boards = candidate_boards(state)
+    recorded = ("If you don't move the rook, Black can simply capture it and promote their pawn to a new "
+                "piece (`gxf1=Q+` or `gxf1=R+`)")
+    assert find_illegal_moves(recorded, boards) == []
+    assert find_illegal_moves("Black can answer with `Qxa1`.", boards) == ["Qxa1"]
+
+
 def test_bare_squares_in_prose_are_not_move_claims():
     # Recorded 2026-10-12 replies, verbatim fragments; every square here was redacted.
     move24 = [chess.Board(_MOVE24_FEN)]
