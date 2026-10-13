@@ -1157,8 +1157,8 @@ def test_a_new_check_in_the_punishment_line_is_an_allowed_forcing_sequence():
 
 
 def test_a_recapture_refuted_by_a_new_check_is_an_allowed_forcing_sequence():
-    # #9's case, YbjNb8wD 16. Re3? (-7.19 -> -9.49): after ...Bxd2 the engine avoids 17. Qxd2?,
-    # which the rook leaving e1 made a blunder (...Qxa1+); it plays 17. Re2 a piece down.
+    # #9's case, YbjNb8wD 16. Re3? (-7.19 -> -9.49): after ...Bxd2, 17. Qxd2 runs into ...Qxa1+, a check
+    # the rook used to block; the engine line plays 17. Re2 (both -9.55 at depth 30).
     record = _record_after("r4rk1/ppp2ppp/5n2/8/1bPq4/1P1P1BPb/P2N1P1P/R2QR1K1 w - - 2 16", "Re3",
                            "Rb1", "Bxd2 Re2 Bc3 Rc1 Rae8 c5 Rxe2 Qxe2")
     assert _diagnose(record) == "allows_forcing_sequence"

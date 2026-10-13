@@ -2157,8 +2157,8 @@ def _allows_new_forcing_sequence(record: MoveRecord) -> bool:
     - the opponent's first check within three plies of the punishment line is new
       (ZU8uPxvn 10...f5 opens a2-g8: 11. d4 Qd6 12. Bc4+);
     - the opponent captures, the engine line declines the recapture, and recapturing would
-      allow a new checking capture the student cannot take back (YbjNb8wD 16. Re3? Bxd2:
-      17. Qxd2? Qxa1+, so the engine plays 17. Re2).
+      allow a new checking capture the student cannot take back (YbjNb8wD 16. Re3? Bxd2: 17. Qxd2
+      runs into ...Qxa1+, a check the rook used to block; the engine line plays 17. Re2 instead).
     A check that was already there is an ignored threat; in-check moments, mates (king
     safety) and simple recaptures are excluded. Lines without a check are not used: a capture
     that became possible usually means a hanging piece."""
