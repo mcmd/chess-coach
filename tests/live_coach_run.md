@@ -196,6 +196,16 @@ contextualized move sequence is not silently treated as a checked continuation.
 The reviewer must mark unexercised legality checks NOT OBSERVED rather than
 substituting chess intuition.
 
+Chess claims that the recorded evidence does not settle (evaluations, best or
+refuting moves, lines, threats, what players at a rating play) are checked with
+the local engines, never by calculating lines by hand:
+`.venv/bin/python scripts/verify_chess.py --fen FEN [--move SAN ...] [--line 'SAN ...'] [--elo N]`
+runs Stockfish from `config.json` at depth 30 from a cleared hash (time cap 600 s,
+only a safety net) and Maia3. Do not lower the depth: shallow searches missed the
+31. Kh2 refutation, which appears only at depth 16+. A result with
+`"complete": false` stopped short of the requested depth and is inconclusive.
+Cite the command with the reported depth and nodes.
+
 Give a fresh reviewer agent the frozen evidence, deterministic results, and
 `tests/2dtDqQgR_review.md`, using the configured reviewer model. It can also read
 the player script to understand what was asked, but it never supplies messages

@@ -111,11 +111,13 @@ class EngineManager:
         return score, best
 
     def top_lines(self, board: chess.Board, multipv: int = 3, depth: int = 18,
-                  time_cap: float = None):
-        """Multipv analysis with a wall-clock safety cap. Returns a list of InfoDicts."""
+                  time_cap: float = None, fresh_hash: bool = False):
+        """Multipv analysis with a wall-clock safety cap. Returns a list of InfoDicts.
+        `fresh_hash` searches as a new game, so earlier searches cannot colour the result."""
         trace(f"stockfish top_lines(depth={depth}, multipv={multipv}, cap={time_cap or self.DEEP_TIME_CAP}s)")
         limit = chess.engine.Limit(depth=depth, time=time_cap or self.DEEP_TIME_CAP)
-        infos = self.stockfish.analyse(board, limit, multipv=multipv)
+        infos = self.stockfish.analyse(board, limit, multipv=multipv,
+                                       **({"game": object()} if fresh_hash else {}))
         return infos if isinstance(infos, list) else [infos]
 
     def practical_eval(self, board: chess.Board, depth: int = 10, time_cap: float = 1.0):
