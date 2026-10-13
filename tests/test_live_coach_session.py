@@ -437,6 +437,27 @@ def test_error_pipe_flush_and_interrupt_leave_partial_evidence(tmp_path, surface
         os.close(write_fd)
 
 
+def test_an_interrupted_turn_is_flushed_before_the_recorder_stops_recording(tmp_path, surface):
+    # Live eval 19enjp8m: after an interrupted turn the coach printed "Goodbye!" and exited;
+    # main() then exported the error surface with console recording already off and crashed,
+    # so session_end was never written.
+    path = tmp_path / "events.jsonl"
+    writer = EventWriter(path)
+    previous = signal.getsignal(signal.SIGINT)
+    try:
+        with Recorder(writer) as recorder:
+            recorder.pending = True
+            with pytest.raises(KeyboardInterrupt):
+                recorder._interrupt(signal.SIGINT, None)
+            surface.print("Conversation saved. Goodbye!")
+        recorder.finish_turn()
+        reply = [e["data"] for e in events(path) if e["kind"] == "coach_reply"]
+        assert reply and reply[-1]["surface"] == "error" and "Goodbye!" in reply[-1]["text"]
+        assert signal.getsignal(signal.SIGINT) is previous and not surface.record
+    finally:
+        writer.close()
+
+
 def test_serializer_keeps_structured_unknowns_and_no_api_key(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "sensitive-value")
     serializer = Serializer()

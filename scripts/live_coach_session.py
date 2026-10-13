@@ -522,6 +522,12 @@ class Recorder:
         raise KeyboardInterrupt
 
     def __exit__(self, exc_type, exc, tb):
+        # Close the turn while the console still records: afterwards its text cannot be exported
+        # (live eval 19enjp8m crashed here after an interrupted turn and lost session_end).
+        if exc is not None and self.pending:
+            self.error(exc)
+        if self.error_surface_start is not None:
+            self.finish_turn()
         for owner, name, original in reversed(self.hooks):
             setattr(owner, name, original)
         self.hooks.clear()
@@ -560,15 +566,11 @@ def main(argv=None):
         exit_code = (exc.code if isinstance(exc, SystemExit) and isinstance(exc.code, int)
                      else 130 if isinstance(exc, KeyboardInterrupt) else 1)
         status = "interrupted" if isinstance(exc, KeyboardInterrupt) else "error"
-        if recorder.pending:
-            recorder.error(exc)
         writer.emit("session_error", error={"type": type(exc).__name__, "message": str(exc)})
         raise
     finally:
         sys.argv = previous_argv
         try:
-            if recorder.error_surface_start is not None:
-                recorder.finish_turn()
             writer.emit("session_end", state=recorder.snapshot(), status=status, exit_code=exit_code)
         finally:
             writer.close()
