@@ -1117,16 +1117,19 @@ def test_lines_shown_to_the_coach_say_whose_move_it_is():
     assert "20. Ne4 Qd7 21. h3 Nf6" in digest
 
 
-def _record_after(fen_before, san, punishment, motifs=()):
-    from app.review import MoveRecord
+def _record_after(fen_before, san, best, punishment):
+    """A record as review builds it: the engine's punishment line and the motifs found in it."""
+    from app.review import MoveRecord, detect_motifs_in_line
     before = chess.Board(fen_before)
     move = before.parse_san(san)
     after = before.copy(stack=False)
     after.push(move)
-    return MoveRecord(ply=38, number=before.fullmove_number, color="white", san=san, uci=move.uci(),
-                      fen_before=fen_before, fen_after=after.fen(), eval_before_cp=0, eval_after_cp=-300,
-                      drop_pct=20.0, quality="mistake", best_move_san="h3",
-                      punishment_line=list(punishment), motifs=list(motifs))
+    line = punishment.split()
+    return MoveRecord(ply=0, number=before.fullmove_number, color="white" if before.turn else "black",
+                      san=san, uci=move.uci(), fen_before=fen_before, fen_after=after.fen(),
+                      eval_before_cp=0, eval_after_cp=-300, drop_pct=20.0, quality="blunder",
+                      best_move_san=best, is_capture=before.is_capture(move), punishment_line=line,
+                      motifs=detect_motifs_in_line(after, line))
 
 
 def _diagnose(record):
@@ -1136,11 +1139,23 @@ def _diagnose(record):
     return _recommended_diagnosis(record)
 
 
-def test_check_created_by_the_students_move_is_an_allowed_forcing_sequence():
-    # #9: 20. f4 opens the a7-g1 diagonal; ...Qb6+ was legal before but was not check.
-    record = _record_after("3q2k1/5ppp/8/8/8/8/1P3PPP/R5K1 w - - 0 20", "f4", ["Qb6+", "Kh1", "Qxb2"])
+# Positions and lines below are from the coaching corpus, checked with scripts/verify_chess.py
+# (Stockfish depth 30, cleared hash, every search complete).
+
+def test_a_new_check_in_the_punishment_line_is_an_allowed_forcing_sequence():
+    # ZU8uPxvn 10...f5? (-0.40 -> +3.20) opens a2-g8; the review's line reaches 12. Bc4+ (+3.10).
+    record = _record_after("r1b2rk1/pp2bppp/2n5/2pqp3/8/1P1P1N1P/P1P1BPP1/R1BQ1RK1 b - - 2 10", "f5",
+                           "Be6", "d4 Qd6 Bc4+ Kh8 Nxe5 Nxe5")
     assert _diagnose(record) == "allows_forcing_sequence"
     assert record.lesson_objective == "check_opponent_forcing_replies"
+
+
+def test_a_recapture_refuted_by_a_new_check_is_an_allowed_forcing_sequence():
+    # #9's case, YbjNb8wD 16. Re3? (-7.19 -> -9.49): after ...Bxd2 the engine avoids 17. Qxd2?,
+    # which the rook leaving e1 made a blunder (...Qxa1+); it plays 17. Re2 a piece down.
+    record = _record_after("r4rk1/ppp2ppp/5n2/8/1bPq4/1P1P1BPb/P2N1P1P/R2QR1K1 w - - 2 16", "Re3",
+                           "Rb1", "Bxd2 Re2 Bc3 Rc1 Rae8 c5 Rxe2 Qxe2")
+    assert _diagnose(record) == "allows_forcing_sequence"
 
 
 def test_a_threat_that_already_existed_stays_ignored_threat():
@@ -1150,17 +1165,11 @@ def test_a_threat_that_already_existed_stays_ignored_threat():
     assert _diagnose(record) == "ignored_threat"
 
 
-def test_an_allowed_mate_stays_king_safety():
-    record = _record_after("3q2k1/5ppp/8/8/8/8/1P3PPP/R5K1 w - - 0 20", "f4", ["Qb6+", "Kh1", "Qxb2"],
-                           motifs=[{"motif": "back_rank_mate", "move": "Qd1+", "detail": "mate on the back rank"}])
+def test_an_allowed_mate_is_king_safety_even_after_a_recapture():
+    # YbjNb8wD 20. Rxe8? (-9.58 -> mate in 5): ...Rxe8 recaptures, then ...Qxf1# at ply 9.
+    record = _record_after("4rrk1/pBp2ppp/5n2/8/2Pq4/1P1P2Pb/P2Q1P1P/4R1K1 w - - 1 20", "Rxe8",
+                           "Bg2", "Rxe8 Bf3 Qxd3 Be2 Qxd2 Bf1 Qe1 b4 Qxf1#")
     assert _diagnose(record) == "king_safety"
-
-
-def test_a_check_later_in_the_line_created_by_the_move_is_an_allowed_forcing_sequence():
-    # #9's motivating case, YbjNb8wD: 16. Re3? leaves rank 1, so ...Bxd2 Qxd2 ...Qxa1 is now check.
-    record = _record_after("r4rk1/ppp2ppp/5n2/8/1bPq4/1P1P1BPb/P2N1P1P/R2QR1K1 w - - 2 16", "Re3",
-                           ["Bxd2", "Qxd2", "Qxa1+"])
-    assert _diagnose(record) == "allows_forcing_sequence"
 
 
 def test_pawn_push_to_avoid_tension_is_not_missed_fork():

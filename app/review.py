@@ -28,6 +28,7 @@ QUALITY_GLYPHS = {
 }
 
 MATE_CP = 100000
+MATING_LINE_MAX_PLIES = 19   # a whole mate in 10; longer mating lines are cut here
 
 
 def cp_to_win_pct(cp: float) -> float:
@@ -1335,7 +1336,10 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
                 depth=int(_engine_setting(engines, "agenda_punishment_depth", 18)),
                 time_cap=float(_engine_setting(engines, "agenda_punishment_time", 4.0)))
             pv = infos[0].get("pv") or []
-            r.punishment_line = _pv_to_san(board_after, pv[:8])
+            # A mating line is kept whole (mate in N is 2N-1 plies) so the mate itself is seen:
+            # YbjNb8wD 20. Rxe8 allows mate in 5, whose ...Qxf1# is ply 9.
+            r.punishment_line = _pv_to_san(board_after, pv[:MATING_LINE_MAX_PLIES]
+                                           if infos[0]["score"].is_mate() else pv[:8])
             r.motifs = detect_motifs_in_line(board_after, r.punishment_line)
             deep_after_white_cp = infos[0]["score"].white().score(mate_score=MATE_CP)
         except Exception:
@@ -1461,6 +1465,8 @@ def _attach_lesson_primitives(r: MoveRecord, board_before: chess.Board, board_af
 
 def _infer_lesson_objective(r: MoveRecord) -> str:
     cats = set(r.suggested_categories)
+    if "king_safety" in cats:           # an allowed mate outranks every material lesson (#9)
+        return "king_safety_before_material"
     if _is_simple_capture_punishment(r):
         return "material_vs_activity"
     if "allows_forcing_sequence" in cats:
@@ -1471,8 +1477,6 @@ def _infer_lesson_objective(r: MoveRecord) -> str:
         return "defend_against_direct_threat"
     if "bad_trade" in cats:
         return "material_vs_activity"
-    if "king_safety" in cats:
-        return "king_safety_before_material"
     if "premature_attack" in cats:
         return "improve_pieces_before_committing_pawns"
     if r.time_flag in ("hope_chess", "time_scramble"):
@@ -1483,11 +1487,12 @@ def _infer_lesson_objective(r: MoveRecord) -> str:
 
 
 def _recommended_diagnosis(r: MoveRecord) -> str:
-    if _is_simple_capture_punishment(r):
-        return "bad_trade"
-    # #9 precedence: king safety, then a threat that already existed, then one the move created.
+    # #9 precedence: an allowed mate, a simple recapture, a threat the move created, then one
+    # that already existed.
     if "king_safety" in r.suggested_categories:
         return "king_safety"
+    if _is_simple_capture_punishment(r):
+        return "bad_trade"
     if r.lesson_objective == "check_opponent_forcing_replies":
         return "allows_forcing_sequence"
     if _punishment_starts_with_forcing_check(r):
@@ -2122,15 +2127,30 @@ def position_facts(board: chess.Board) -> str:
     return " | ".join(parts)
 
 
+def _check_created_by_move(before: chess.Board, sequence: list) -> bool:
+    """Replay `sequence` (opponent first) as if the student had passed instead of moving: the
+    student's move created the final check if a move is illegal there or the check is no check."""
+    probe = before.copy(stack=False)
+    probe.push(chess.Move.null())
+    for move in sequence[:-1]:
+        if not probe.is_legal(move):
+            return True
+        probe.push(move)
+    return not probe.is_legal(sequence[-1]) or not probe.gives_check(sequence[-1])
+
+
 def _allows_new_forcing_sequence(record: MoveRecord) -> bool:
     """#9: the student's move CREATED the opponent's forcing check (high precision, low recall).
 
-    Take the opponent's first check within the first three plies of the punishment line
-    (e.g. ...Bxd2 Qxd2 ...Qxa1+ after 16. Re3?) and replay the same moves from the pre-move
-    position with the opponent to move. If a move there is illegal, or the check is not check,
-    the student's move created it; if the check was already there, it is an ignored threat.
-    In-check moments, mates (king safety) and simple recaptures are excluded. Lines without a
-    check are not used: a capture that became possible usually means a hanging piece."""
+    Two shapes, each compared against the pre-move position with the student passing:
+    - the opponent's first check within three plies of the punishment line is new
+      (ZU8uPxvn 10...f5 opens a2-g8: 11. d4 Qd6 12. Bc4+);
+    - the opponent captures, the engine line declines the recapture, and recapturing would
+      allow a new checking capture the student cannot take back (YbjNb8wD 16. Re3? Bxd2:
+      17. Qxd2? Qxa1+, so the engine plays 17. Re2).
+    A check that was already there is an ignored threat; in-check moments, mates (king
+    safety) and simple recaptures are excluded. Lines without a check are not used: a capture
+    that became possible usually means a hanging piece."""
     if not record.punishment_line or _is_simple_capture_punishment(record):
         return False
     if {m.get("motif") for m in record.motifs} & {"checkmate", "back_rank_mate", "smothered_mate"}:
@@ -2140,24 +2160,38 @@ def _allows_new_forcing_sequence(record: MoveRecord) -> bool:
         after = chess.Board(record.fen_after)
         if before.is_check():
             return False
-        line = []
+        line, walk = [], after.copy(stack=False)
         for ply, san in enumerate(record.punishment_line[:3]):
-            move = after.parse_san(san)
+            move = walk.parse_san(san)
             line.append(move)
-            if ply % 2 == 0 and after.gives_check(move):
-                break
-            after.push(move)
-        else:
-            return False
+            if ply % 2 == 0 and walk.gives_check(move):
+                return _check_created_by_move(before, line)
+            walk.push(move)
     except (ValueError, AssertionError):
         return False
-    probe = before.copy(stack=False)
-    probe.push(chess.Move.null())
-    for move in line[:-1]:
-        if not probe.is_legal(move):
-            return True
-        probe.push(move)
-    return not probe.is_legal(line[-1]) or not probe.gives_check(line[-1])
+    return _refuted_recapture_is_new(before, after, line)
+
+
+def _refuted_recapture_is_new(before: chess.Board, after: chess.Board, line: list) -> bool:
+    capture = line[0]
+    if not after.is_capture(capture):
+        return False
+    board = after.copy(stack=False)
+    board.push(capture)
+    if len(line) > 1 and line[1].to_square == capture.to_square and board.is_capture(line[1]):
+        return False                      # the engine line recaptures: nothing refuted it
+    for recapture in [m for m in board.legal_moves if m.to_square == capture.to_square]:
+        reply_board = board.copy(stack=False)
+        reply_board.push(recapture)
+        for reply in list(reply_board.legal_moves):
+            if not (reply_board.is_capture(reply) and reply_board.gives_check(reply)):
+                continue
+            reply_board.push(reply)
+            safe = not any(m.to_square == reply.to_square for m in reply_board.legal_moves)
+            reply_board.pop()
+            if safe and _check_created_by_move(before, [capture, recapture, reply]):
+                return True
+    return False
 
 
 def suggest_error_categories(record: MoveRecord) -> list:
