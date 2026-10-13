@@ -240,6 +240,21 @@ class _PlayerRelay:
     def persist(self) -> None:
         _save_json(self.run_dir / "execution.json", {**self.result(), "sent_steps": self.sent_steps})
 
+    def finish(self, player_status: str, reason: str) -> None:
+        """The player ended. Every message step sent and SCRIPT_COMPLETE reported counts as a
+        completed script even if the player skipped the stop step; anything else while still
+        running is an unexpected stop."""
+        with self._lock:
+            if self.status != "RUNNING":
+                return
+            final = self.script.order[-1]
+            if player_status == "SCRIPT_COMPLETE" and self.script.allowed(self.last_step) == [final]:
+                self.status = "SCRIPT_COMPLETE"
+            else:
+                self.status = "STOPPED_UNEXPECTED"
+                self.error = reason or "Player ended before the script stop step"
+            self.persist()
+
 
 def _agent_model(root: Path, agent_name: str) -> str:
     """The `model:` selector in the role's project agent definition (`.omp/agents`)."""
@@ -463,9 +478,7 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
         player_result = await _await_agent(player_handle, player_limit)
         _save_json(run_dir / "player-result.json", player_result)
         manifest["agents"]["player"]["reported_model"] = player_result["model_id"]
-        if relay.status == "RUNNING":
-            relay.status = "STOPPED_UNEXPECTED"
-            relay.error = player_result.get("reason", "Player ended before the script stop step")
+        relay.finish(player_result.get("execution_status"), player_result.get("reason"))
         execution = {**relay.result(), "sent_steps": relay.sent_steps}
     except asyncio.CancelledError:
         if player_handle is not None:

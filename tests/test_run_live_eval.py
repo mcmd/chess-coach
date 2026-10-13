@@ -77,6 +77,25 @@ def test_timeout_preserves_pending_turn_and_does_not_retry(tmp_path):
     assert execution["error"] == "model deadline"
 
 
+def test_player_that_sent_every_step_completes_without_the_stop_step(tmp_path):
+    # Runs 1l_zs5z1 and e054prsf: the player sent S0-S29, reported SCRIPT_COMPLETE, but
+    # never sent the stop step, so the run was recorded as STOPPED_UNEXPECTED.
+    (tmp_path / "done").mkdir()
+    (tmp_path / "early").mkdir()
+    done = _PlayerRelay(Session(), _Script(SCRIPT), tmp_path / "done", 60, 30)
+    for step in ("S0", "S1", "S2"):
+        done.exchange(step)
+    done.finish("SCRIPT_COMPLETE", "all steps sent")
+    assert done.result()["execution_status"] == "SCRIPT_COMPLETE"
+
+    early = _PlayerRelay(Session(), _Script(SCRIPT), tmp_path / "early", 60, 30)
+    for step in ("S0", "S1"):
+        early.exchange(step)
+    early.finish("SCRIPT_COMPLETE", "claims done")
+    assert early.result()["execution_status"] == "STOPPED_UNEXPECTED"
+    assert early.result()["error"] == "claims done"
+
+
 def test_role_model_comes_from_the_agent_definition_and_missing_model_fails(tmp_path):
     agents = tmp_path / ".omp/agents"
     agents.mkdir(parents=True)
