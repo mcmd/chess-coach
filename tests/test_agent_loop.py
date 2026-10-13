@@ -497,6 +497,32 @@ def test_grading_result_tells_the_coach_to_state_the_verdict_first(stub_config):
     assert "WHY" in result["next_step"]
 
 
+def test_a_timed_out_model_call_is_retried_once_at_medium_thinking():
+    # #38: one /review call thought for 341 s (62,914 thinking tokens). A call that hits the
+    # per-call time limit is retried once with thinking_level=medium; other calls are untouched.
+    import httpx
+    from google.genai import types
+    from app.agent_loop import _send_with_spinner
+
+    class SlowChat:
+        coach_config = types.GenerateContentConfig(temperature=0.2, system_instruction="coach")
+
+        def __init__(self):
+            self.configs = []
+
+        def send_message(self, payload, config=None):
+            self.configs.append(config)
+            if len(self.configs) == 1:
+                raise httpx.ReadTimeout("model call exceeded its time limit")
+            return "reply"
+
+    chat = SlowChat()
+    assert _send_with_spinner(chat, "hello") == "reply"
+    retry = chat.configs[1]
+    assert retry.thinking_config.thinking_level.lower() == "medium"
+    assert retry.system_instruction == "coach" and retry.temperature == 0.2
+
+
 def _gemini_response(*parts):
     from google.genai import types
     return types.GenerateContentResponse(candidates=[types.Candidate(

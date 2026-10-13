@@ -197,6 +197,10 @@ def create_chat_session(client, config, tools, history):
         system_instruction=sys_prompt,
         temperature=0.2,
         tools=tools.get_tool_list(),
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        # Per-call time limit (#38); agent_loop retries a timed-out call once at medium thinking.
+        http_options=types.HttpOptions(timeout=int(config.model_call_timeout_s * 1000)),
     )
-    return client.chats.create(model=config.gemini_model, config=genai_config, history=history)
+    chat = client.chats.create(model=config.gemini_model, config=genai_config, history=history)
+    chat.coach_config = genai_config   # the base for per-call overrides (they replace the whole config)
+    return chat

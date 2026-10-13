@@ -188,6 +188,8 @@ Tip: run with `--trace` to watch exactly which tools the coach calls for each an
    `usernames` is matched case-insensitively against PGN `White`/`Black` headers so the coach knows which side you played; list every handle you use. `player_name` still works as a legacy single-handle alias. `review_eval_time` is Stockfish seconds per position during a game review (higher = more reliable classification, slower scan). `use_online_databases` toggles the Lichess explorer/tablebase enrichment. `maia3_offline` loads the Maia-3 checkpoint from the local Hugging Face cache only (set it `true` after the first run to silence the startup phone-home). Download [Stockfish](https://stockfishchess.org/download/) for your OS; Maia-3 installs via pip and downloads its checkpoint from Hugging Face on first run (cached thereafter).
 
    Optional, off by default: `"router_model": "gemini-3.8-flash"` (thinking level `"router_thinking_level"`, default `"low"`) makes a fast model classify each of your messages during a review, so the backend grades your move, threat or explanation itself and the coach model only writes the reply. The backend grades only text you actually wrote and moves that are legal in the current moment; anything else, a router failure, or a router reply slower than 10 seconds falls back to the normal flow (run with `--trace` to see each routing decision).
+
+   `"model_call_timeout_s"` (default 90) limits each coach-model call; a call that hits it (e.g. a runaway thinking budget) is retried once at medium thinking.
 3. Install and run:
    ```bash
    python -m venv .venv

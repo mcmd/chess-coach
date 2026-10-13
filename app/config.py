@@ -56,6 +56,7 @@ class AppConfig:
     # and the backend grades moves/threats/explanations itself; None = off (today's flow).
     router_model: str | None = None
     router_thinking_level: str = "low"  # low: same routing as medium on the routing eval, no 8-18 s tail
+    model_call_timeout_s: float = 90.0  # per coach-model call; a timed-out call is retried once (#38)
 
     # Engine quality knobs. Broad scans are cheaper; agenda/threat/practicality
     # analysis is where extra time most directly improves coaching quality.
@@ -201,6 +202,7 @@ Examples:
         spar_temperature=float(app_config.get("spar_temperature", 1.0)),
         router_model=app_config.get("router_model") or None,
         router_thinking_level=str(app_config.get("router_thinking_level", "low")),
+        model_call_timeout_s=float(app_config.get("model_call_timeout_s", 90.0)),
         review_eval_time=float(engine_value("review_eval_time", 1.0)),
         agenda_best_depth=int(engine_value("agenda_best_depth", 20)),
         agenda_best_time=float(engine_value("agenda_best_time", 6.0)),

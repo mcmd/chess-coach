@@ -49,12 +49,37 @@ def _extract_function_calls(response):
     return calls
 
 
+# #38: one call thought for 341 s (62,914 thinking tokens) while every other call used under
+# 2,000. Each call has a time limit (prompts.create_chat_session); a call that hits it is
+# retried once at this thinking level. A failed call leaves nothing in the chat history.
+TIMEOUT_RETRY_THINKING_LEVEL = "medium"
+
+
+def _is_timeout(exc) -> bool:
+    import httpx
+    from google.genai import errors
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    return isinstance(exc, errors.APIError) and (getattr(exc, "code", None) == 504
+                                                 or "DEADLINE_EXCEEDED" in str(exc))
+
+
 def _send_with_spinner(chat, payload):
     """The spinner only covers MODEL calls. Tools run outside any live display
     so long-running ones (game reviews) can show their own progress bars —
     Rich allows a single live display at a time."""
     with console.status("[bold yellow]Coach is thinking...[/bold yellow]", spinner="dots"):
-        return chat.send_message(payload)
+        try:
+            return chat.send_message(payload)
+        except Exception as exc:
+            base = getattr(chat, "coach_config", None)
+            if base is None or not _is_timeout(exc):
+                raise
+            trace(f"model call timed out ({type(exc).__name__}); retrying once at "
+                  f"thinking_level={TIMEOUT_RETRY_THINKING_LEVEL}")
+            retry = base.model_copy(update={"thinking_config": types.ThinkingConfig(
+                thinking_level=TIMEOUT_RETRY_THINKING_LEVEL)})
+            return chat.send_message(payload, config=retry)
 
 
 # Gemini sometimes returns its reasoning as an ordinary text part ("s Thinking Process:
