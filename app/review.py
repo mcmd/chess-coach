@@ -1463,6 +1463,8 @@ def _infer_lesson_objective(r: MoveRecord) -> str:
     cats = set(r.suggested_categories)
     if _is_simple_capture_punishment(r):
         return "material_vs_activity"
+    if "allows_forcing_sequence" in cats:
+        return "check_opponent_forcing_replies"
     if _punishment_starts_with_forcing_check(r):
         return "defend_against_direct_threat"
     if "ignored_threat" in cats:
@@ -1483,6 +1485,11 @@ def _infer_lesson_objective(r: MoveRecord) -> str:
 def _recommended_diagnosis(r: MoveRecord) -> str:
     if _is_simple_capture_punishment(r):
         return "bad_trade"
+    # #9 precedence: king safety, then a threat that already existed, then one the move created.
+    if "king_safety" in r.suggested_categories:
+        return "king_safety"
+    if r.lesson_objective == "check_opponent_forcing_replies":
+        return "allows_forcing_sequence"
     if _punishment_starts_with_forcing_check(r):
         return "ignored_threat"
     objective_map = {
@@ -1558,6 +1565,8 @@ def _question_ladder(r: MoveRecord, board_before: chess.Board) -> dict:
     objective = r.lesson_objective or ""
     if objective == "defend_against_direct_threat":
         ladder[1] = "First identify the forcing threat against your king or material, then choose a move that answers it."
+    elif objective == "check_opponent_forcing_replies":
+        ladder[1] = "Before choosing, ask: what checks, captures and threats would your move give the opponent?"
     elif objective == "material_vs_activity":
         ladder[1] = "This is not primarily about grabbing material. What move improves your active piece or supports your main asset?"
     elif objective == "king_safety_before_material":
@@ -1654,7 +1663,10 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
             f"{_numbered_line(r.fen_before, r.best_line)} to explain the concrete consequence." if r.best_line
             else f"{r.best_move_san} was the engine-verified improvement.")
 
-    if r.time_flag:
+    if r.lesson_objective == "check_opponent_forcing_replies":
+        data["process_habit"] = ("After choosing a candidate move, ask: what forcing checks, captures, and "
+                                 "threats does this move give my opponent?")
+    elif r.time_flag:
         data["process_habit"] = "Before moving quickly, ask what forcing checks, captures, or threats the opponent has."
     elif r.is_capture:
         data["process_habit"] = "Before taking material, ask what the position's urgent priority is."
@@ -2110,6 +2122,44 @@ def position_facts(board: chess.Board) -> str:
     return " | ".join(parts)
 
 
+def _allows_new_forcing_sequence(record: MoveRecord) -> bool:
+    """#9: the student's move CREATED the opponent's forcing check (high precision, low recall).
+
+    Take the opponent's first check within the first three plies of the punishment line
+    (e.g. ...Bxd2 Qxd2 ...Qxa1+ after 16. Re3?) and replay the same moves from the pre-move
+    position with the opponent to move. If a move there is illegal, or the check is not check,
+    the student's move created it; if the check was already there, it is an ignored threat.
+    In-check moments, mates (king safety) and simple recaptures are excluded. Lines without a
+    check are not used: a capture that became possible usually means a hanging piece."""
+    if not record.punishment_line or _is_simple_capture_punishment(record):
+        return False
+    if {m.get("motif") for m in record.motifs} & {"checkmate", "back_rank_mate", "smothered_mate"}:
+        return False
+    try:
+        before = chess.Board(record.fen_before)
+        after = chess.Board(record.fen_after)
+        if before.is_check():
+            return False
+        line = []
+        for ply, san in enumerate(record.punishment_line[:3]):
+            move = after.parse_san(san)
+            line.append(move)
+            if ply % 2 == 0 and after.gives_check(move):
+                break
+            after.push(move)
+        else:
+            return False
+    except (ValueError, AssertionError):
+        return False
+    probe = before.copy(stack=False)
+    probe.push(chess.Move.null())
+    for move in line[:-1]:
+        if not probe.is_legal(move):
+            return True
+        probe.push(move)
+    return not probe.is_legal(line[-1]) or not probe.gives_check(line[-1])
+
+
 def suggest_error_categories(record: MoveRecord) -> list:
     """Evidence-based diagnosis suggestions: tactics in the line the student
     MISSED map to missed_*; tactics in the opponent's punishment map to what
@@ -2147,6 +2197,8 @@ def suggest_error_categories(record: MoveRecord) -> list:
         suggestions.append("calculation_error")
     if punish_kinds & {"checkmate", "back_rank_mate", "smothered_mate"}:
         suggestions.append("king_safety")
+    elif _allows_new_forcing_sequence(record):
+        suggestions.append("allows_forcing_sequence")
     elif (not _is_simple_capture_punishment(record)
           and (any(k.endswith("fork") for k in punish_kinds)
           or punish_kinds & {"pin", "skewer", "discovered_check", "discovered_attack",

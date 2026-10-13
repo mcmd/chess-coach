@@ -409,6 +409,17 @@ def test_human_tendency_summary_says_whether_most_players_agree(stub_config):
     assert summary["in_words"] == "Most players at this level choose e4 (73%)."
 
 
+def test_submit_diagnosis_accepts_allows_forcing_sequence(stub_config):
+    from app.tools import ERROR_TAXONOMY
+    tools, state = make_tools(stub_config)
+    assert "allows_forcing_sequence" in ERROR_TAXONOMY
+    result = tools.submit_diagnosis(START, "allows_forcing_sequence",
+                                    "f4 opened the diagonal and allowed ...Qb6+ and ...Qxb2.",
+                                    "Check what forcing replies a move gives the opponent.")
+    assert result.get("success") is True
+    assert tools.submit_diagnosis(START, "allows_forcing_sequences", "x y z w v u", "a b c d e f").get("error")
+
+
 def test_analyze_position_rejects_illegal_hypothetical(stub_config):
     tools, _ = make_tools(stub_config)
     result = tools.analyze_position(START, moves_to_apply=["e4", "Ke7"])

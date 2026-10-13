@@ -1117,6 +1117,52 @@ def test_lines_shown_to_the_coach_say_whose_move_it_is():
     assert "20. Ne4 Qd7 21. h3 Nf6" in digest
 
 
+def _record_after(fen_before, san, punishment, motifs=()):
+    from app.review import MoveRecord
+    before = chess.Board(fen_before)
+    move = before.parse_san(san)
+    after = before.copy(stack=False)
+    after.push(move)
+    return MoveRecord(ply=38, number=before.fullmove_number, color="white", san=san, uci=move.uci(),
+                      fen_before=fen_before, fen_after=after.fen(), eval_before_cp=0, eval_after_cp=-300,
+                      drop_pct=20.0, quality="mistake", best_move_san="h3",
+                      punishment_line=list(punishment), motifs=list(motifs))
+
+
+def _diagnose(record):
+    from app.review import _infer_lesson_objective, _recommended_diagnosis, suggest_error_categories
+    record.suggested_categories = suggest_error_categories(record)
+    record.lesson_objective = _infer_lesson_objective(record)
+    return _recommended_diagnosis(record)
+
+
+def test_check_created_by_the_students_move_is_an_allowed_forcing_sequence():
+    # #9: 20. f4 opens the a7-g1 diagonal; ...Qb6+ was legal before but was not check.
+    record = _record_after("3q2k1/5ppp/8/8/8/8/1P3PPP/R5K1 w - - 0 20", "f4", ["Qb6+", "Kh1", "Qxb2"])
+    assert _diagnose(record) == "allows_forcing_sequence"
+    assert record.lesson_objective == "check_opponent_forcing_replies"
+
+
+def test_a_threat_that_already_existed_stays_ignored_threat():
+    # Move 26 of 2dtDqQgR: ...Qxg4+ was already available before 26. Qxa7.
+    from app.review import MoveRecord
+    record = MoveRecord(eval_before_cp=0, eval_after_cp=0, **_GAME_2DTD_RECORDS[26])
+    assert _diagnose(record) == "ignored_threat"
+
+
+def test_an_allowed_mate_stays_king_safety():
+    record = _record_after("3q2k1/5ppp/8/8/8/8/1P3PPP/R5K1 w - - 0 20", "f4", ["Qb6+", "Kh1", "Qxb2"],
+                           motifs=[{"motif": "back_rank_mate", "move": "Qd1+", "detail": "mate on the back rank"}])
+    assert _diagnose(record) == "king_safety"
+
+
+def test_a_check_later_in_the_line_created_by_the_move_is_an_allowed_forcing_sequence():
+    # #9's motivating case, YbjNb8wD: 16. Re3? leaves rank 1, so ...Bxd2 Qxd2 ...Qxa1 is now check.
+    record = _record_after("r4rk1/ppp2ppp/5n2/8/1bPq4/1P1P1BPb/P2N1P1P/R2QR1K1 w - - 2 16", "Re3",
+                           ["Bxd2", "Qxd2", "Qxa1+"])
+    assert _diagnose(record) == "allows_forcing_sequence"
+
+
 def test_pawn_push_to_avoid_tension_is_not_missed_fork():
     from app.review import MoveRecord, suggest_error_categories, _infer_lesson_objective, _recommended_diagnosis
     r = MoveRecord(
