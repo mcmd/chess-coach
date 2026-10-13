@@ -173,6 +173,64 @@ def _contradictory_diagnosis_text(record, explanation: str) -> bool:
     return False
 
 
+GRADING_TOOLS = ("evaluate_student_answer", "evaluate_threat_answer", "evaluate_explanation")
+_MOVE_VERDICTS = {
+    "best": "{m} is the best move",
+    "excellent_alternative": "{m} is an excellent alternative, nearly as good as the best move",
+    "reasonable_but_imprecise": "{m} is reasonable but not the most precise move",
+    "inaccurate": "{m} is inaccurate",
+    "wrong": "{m} is a mistake here",
+}
+_THREAT_VERDICTS = {
+    "correct_threat": "{m} is the real threat",
+    "real_but_secondary_threat": "{m} is a real idea but not the main threat",
+    "not_a_real_threat": "{m} is not a real threat here",
+    "not_a_legal_opponent_move": "{m} is not a legal move for the opponent here",
+}
+
+
+def grading_next_step(tool: str, result: dict) -> str | None:
+    """The verdict to say first and the one thing to do next, for one grading result.
+
+    Live runs: the coach often skipped telling the student the verdict (baseline cgxiksj3:
+    S4, S11, S16, S18), and once read a correct THREAT answer as permission to reveal the
+    withheld move (e054prsf S2). Used for the coach's own tool calls and for router pre-grading."""
+    if not isinstance(result, dict) or result.get("error") \
+            or result.get("verdict") == "stale_or_fabricated_student_input":
+        return None
+    verdict = result.get("verdict")
+    if tool == "evaluate_explanation":
+        guidance = result.get("guidance") or "respond to the explanation grade."
+        if result.get("key_reason_named") is True:
+            return "Say first: their reason is right. Then: " + guidance
+        if result.get("key_reason_named") is False and not result.get("student_passed"):
+            return ("Say first what is right in their reason and that one key point is still missing. "
+                    "Then: " + guidance)
+        return guidance
+    if tool == "evaluate_threat_answer":
+        said = _THREAT_VERDICTS.get(verdict, "").format(m=result.get("student_threat") or "that")
+        if verdict == "correct_threat":
+            step = "ask which move the student would play; the better move stays withheld."
+        elif result.get("reveal_allowed"):
+            step = "reveal the real threat from the result; the better move stays withheld."
+        else:
+            step = "give the next hint toward the threat only; do not reveal it."
+        return (f"Say first: {said}. Then: " if said else "Then: ") + step
+    if verdict == "needs_commitment":
+        return "Ask which ONE of the candidate moves the student chooses; do not grade either."
+    if verdict == "illegal":
+        said = "that move is not legal here"
+    else:
+        said = _MOVE_VERDICTS.get(verdict, "").format(m=result.get("student_move") or "that move")
+    if verdict in ("best", "excellent_alternative"):
+        step = "ask WHY it works."
+    elif result.get("reveal_allowed"):
+        step = "reveal the better move and its verified line, and ask why it works."
+    else:
+        step = "give the next hint only; do not reveal the better move."
+    return (f"Say first: {said}. Then: " if said else "Then: ") + step
+
+
 def _backend_diagnosis_sentence(record) -> str:
     primitives = getattr(record, "explanation_primitives", None) or {}
     sentence = primitives.get("diagnosis_sentence")
@@ -362,6 +420,17 @@ class CoachTools:
             return {"error": "Engine returned no lines for this position."}
 
         best_move, best_cp, best_pv = ranked[0]
+        # On an agenda moment the reference is the moment's verified (deep, digest-taught) best
+        # move, not a fresh search: in lost positions several moves tie in win% and the search
+        # named the played 31. Kh1 "best" while grading 31. Kh2 best (runs cgxiksj3, t0zauzig).
+        record = self._agenda_record_for_fen(fen)
+        agenda_move = played_move = None
+        if record is not None and getattr(record, "best_move_san", None) and getattr(record, "best_line", None):
+            try:
+                agenda_move = board.parse_san(record.best_move_san)
+                played_move = board.parse_san(record.san) if record.san else None
+            except ValueError:
+                agenda_move = played_move = None
         student_cp = None
         student_rank = None
         for idx, (mv, cp, _) in enumerate(ranked):
@@ -388,6 +457,11 @@ class CoachTools:
             verdict = "inaccurate"
         else:
             verdict = "wrong"
+        if agenda_move is not None:
+            if move == agenda_move:
+                verdict = "best"
+            elif move == played_move and record.quality in ("blunder", "mistake", "inaccuracy"):
+                verdict = "inaccurate" if record.quality == "inaccuracy" else "wrong"
 
         # In tablebase range, category truth beats centipawns: a "slow" move
         # that keeps the proven result is correct; one that downgrades it is wrong.
@@ -433,15 +507,16 @@ class CoachTools:
                 result["human_popularity"] = f"~{prob:.0%} of similar-rated players choose this move"
 
         if reveal:
-            pv_san, temp = [], board.copy(stack=False)
-            for m in best_pv[:8]:
-                pv_san.append(temp.san(m))
-                temp.push(m)
-            best_san = board.san(best_move)
+            if agenda_move is not None:
+                best_san, best_line_san = board.san(agenda_move), list(record.best_line[:8])
+            else:
+                best_san, best_line_san, temp = board.san(best_move), [], board.copy(stack=False)
+                for m in best_pv[:8]:
+                    best_line_san.append(temp.san(m))
+                    temp.push(m)
             result["best_move"] = best_san
             result["best_move_label"] = _move_label(board, best_san)
-            result["best_line"] = " ".join(pv_san)
-            record = self._agenda_record_for_fen(fen)
+            result["best_line"] = " ".join(best_line_san)
             if record and getattr(record, "explanation_primitives", None):
                 result["moment_move_label"] = record.move_label
                 if record.best_move_label:
@@ -456,7 +531,7 @@ class CoachTools:
                                        "diagnosis_sentence when logging to the dossier.")
         else:
             result["note"] = "Answer withheld by backend. Give ONE hint and ask the student to try once more."
-            result["hint_facts"] = self._hint_facts(board, best_move)
+            result["hint_facts"] = self._hint_facts(board, agenda_move or best_move)
         self._record_active_drill_outcome(fen, result)
         self._persist_lesson_progress(fen, "awaiting_diagnosis" if reveal else "awaiting_answer")
         return result

@@ -22,6 +22,7 @@ from app.memory import (load_dossier, load_lesson_metadata, save_lesson_metadata
 from app.notation import legal_san_mentions, san_mentions
 from app.planner import _CLOSE_RE, TeachingPlan, _normalize_text, plan_free_text_turn
 from app.router import GRADING_LABELS, describe_moment, resolve_explanation, resolve_move, resolve_threat
+from app.tools import grading_next_step
 from app.rating import current_rating_enrichment, rating_offer_note
 from app.review import adopt_review_pov, review_game, attach_board_tokens
 from app.self_assessment import start_self_assessment, self_assessment_open_note
@@ -320,33 +321,9 @@ class CommandProcessor:
         event["action"] = "pregraded:" + ",".join(e["tool"] for e in graded)
         return ("\n[Backend: the student's message was already graded by the backend for this turn. "
                 "Results: " + json.dumps(graded, ensure_ascii=False, default=str) + ". Next step: "
-                + self._pregrade_next_step(graded[-1]) + " Do not call any grading tool this turn; the "
-                "student's next message is graded next turn. A withheld answer stays withheld unless a "
-                "result above reveals that same item.]")
-
-    @staticmethod
-    def _pregrade_next_step(entry: dict) -> str:
-        """The one thing the coach should do after the backend's grading (router run e054prsf:
-        a correct THREAT answer, read as permission, led the coach to reveal the withheld move)."""
-        tool, result = entry["tool"], entry["result"]
-        verdict = result.get("verdict")
-        if tool == "evaluate_explanation":
-            return result.get("guidance") or "respond to the explanation grade."
-        if tool == "evaluate_threat_answer":
-            if verdict == "correct_threat":
-                return ("confirm the threat, then ask which move the student would play; the better move "
-                        "stays withheld.")
-            if result.get("reveal_allowed"):
-                return "state the verdict and reveal the real threat from the result; the better move stays withheld."
-            return "state the verdict and give the next hint toward the threat only; do not reveal it."
-        if verdict == "best":
-            return "confirm the move is best, then ask WHY it works."
-        if verdict == "needs_commitment":
-            return "ask which ONE of the candidate moves the student chooses; do not grade either."
-        if result.get("reveal_allowed"):
-            return ("state the verdict, then reveal the better move and its verified line from the digest, "
-                    "and ask why it works.")
-        return "state the verdict and give the next hint only; do not reveal the better move."
+                + (grading_next_step(graded[-1]["tool"], graded[-1]["result"]) or "respond to the grading.")
+                + " Do not call any grading tool this turn; the student's next message is graded next turn. "
+                "A withheld answer stays withheld unless a result above reveals that same item.]")
 
     def _sparring_bare_move(self, text: str):
         """While sparring, a message that is only a move is played like /move; an

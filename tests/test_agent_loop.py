@@ -481,6 +481,22 @@ class _ScriptedModels:
         return self.responses.pop(0)
 
 
+def test_grading_result_tells_the_coach_to_state_the_verdict_first(stub_config):
+    # Baseline run cgxiksj3 (router off): S4, S11, S16 and S18 were graded but the coach never told
+    # the student the verdict. The router's note named the next step and the router run stated them.
+    from tests.test_tools import _answer_engines, START
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), _answer_engines(), stub_config)
+    call = SimpleNamespace(name="evaluate_student_answer", args={"fen": START, "student_move_san": "e4"})
+    chat = FakeChat([SimpleNamespace(candidates=[], function_calls=[call]), _text_response("ok")])
+
+    run_agent_turn(chat, tools, "I would play e4")
+
+    result = chat.sent[1][0].function_response.response["result"]
+    assert result["next_step"].startswith("Say first: e4 is the best move.")
+    assert "WHY" in result["next_step"]
+
+
 def _gemini_response(*parts):
     from google.genai import types
     return types.GenerateContentResponse(candidates=[types.Candidate(

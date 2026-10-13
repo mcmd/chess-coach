@@ -12,6 +12,7 @@ from rich.markdown import Markdown
 
 from app.memory import load_dossier
 from app.notation import ambiguous_piece_references, san_mention_spans
+from app.tools import GRADING_TOOLS, grading_next_step
 from app.trace import fmt_args, trace
 from app.ui import console
 
@@ -163,7 +164,10 @@ def run_agent_turn(chat, coach_tools, message) -> None:
             else:
                 result = {"error": f"Tool {fn_call.name} not found."}
             _record_tool_candidate_fens(coach_tools.state, fn_call.name, args_dict, result)
-            if fn_call.name in ("evaluate_student_answer", "evaluate_threat_answer", "evaluate_explanation"):
+            if fn_call.name in GRADING_TOOLS:
+                step = grading_next_step(fn_call.name, result)
+                if step:
+                    result = {**result, "next_step": step + (" " + result["next_step"] if result.get("next_step") else "")}
                 turn_grading_results.append({"tool": fn_call.name, "args": args_dict, "result": result})
             trace(f"tool result: {fn_call.name} in {time.monotonic() - started:.1f}s -> {_summarize_result(result)}")
 

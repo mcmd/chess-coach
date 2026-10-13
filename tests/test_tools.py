@@ -661,6 +661,26 @@ def test_explanation_given_earlier_in_the_same_moment_is_genuine(stub_config):
     assert tools.evaluate_explanation(START, reason)["verdict"] == "stale_or_fabricated_student_input"
 
 
+def test_agenda_moment_is_graded_against_its_verified_best_move(stub_config):
+    # Runs cgxiksj3 and t0zauzig, move 31: both king moves lose at depth, so a fresh depth-16
+    # search named the played Kh1 "best_move" while grading Kh2 "best". The agenda's verified
+    # best move (Kh2) is the reference; the played mistake grades by the moment's own label.
+    from app.review import GameReview, MoveRecord
+    from tests.test_review import _MOVE31_RUN13
+    tools, state = make_tools(stub_config)
+    rec = MoveRecord(eval_before_cp=0, eval_after_cp=-445, **_MOVE31_RUN13)
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+
+    state.latest_user_text = "Kh2"
+    best = tools.evaluate_student_answer(rec.fen_before, "Kh2")
+    assert best["verdict"] == "best" and best["best_move"] == "Kh2"
+    assert best["best_line"].split()[:3] == ["Kh2", "Qh5+", "Kg3"]
+
+    state.socratic_attempts.clear()
+    state.latest_user_text = "Kh1"
+    assert tools.evaluate_student_answer(rec.fen_before, "Kh1")["verdict"] == "wrong"
+
+
 def test_described_moves_resolve_to_the_named_piece_not_a_pawn():
     from app.notation import legal_san_mentions
     session_b = chess.Board("3r2k1/p2r1pp1/2p1q2p/Q1P1p3/1P2P3/P3BP2/7P/R3R1K1 w - - 1 23")
