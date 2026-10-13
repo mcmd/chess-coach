@@ -119,6 +119,7 @@ class MoveRecord:
     board_token: str = None  # pre-minted diagram token for the position before the move
     best_line_motifs: list = field(default_factory=list)  # tactics the student MISSED
     deep_eval_before_cp: int = None  # white POV: best play from fen_before at agenda depth (vs the scan eval)
+    engine_only_refutation: str = None  # the better move loses only to a deep engine line (practical framing)
     suggested_categories: list = field(default_factory=list)
     position_facts: str = None  # backend-verified positional facts for the position before the move
     lesson_objective: str = None
@@ -384,17 +385,53 @@ def _wdl_risk_profile(win: float, draw: float, loss: float) -> tuple:
 
 # A scan/deep disagreement this large changes how the position should be described.
 DEEP_EVAL_DISAGREEMENT_CP = 150
+# "Practical depth": roughly what a strong club player calculates; refutations that appear only
+# well beyond it are engine-only for coaching purposes.
+PRACTICAL_DEPTH = 10
 
 
 def _deep_eval_note(r: MoveRecord) -> str:
-    """The fast scan eval can contradict the agenda's deep analysis of best play (live eval
-    2026-10-13: scan +0.00 before 31. Kh1, but the depth-20 best line wins White's queen, and
-    the coach called the position level). Say so in the moment header."""
+    """What the moment header says beyond the scan eval. An engine-only refutation of the better
+    move gets the practical framing; otherwise a large scan/deep disagreement is stated as a fact."""
+    if r.engine_only_refutation:
+        return " " + r.engine_only_refutation
     deep = r.deep_eval_before_cp
     if deep is None or abs(deep - r.eval_before_cp) < DEEP_EVAL_DISAGREEMENT_CP:
         return ""
-    return (f" Deep check: with best play the eval before the move is {deep / 100.0:+.2f}, not "
-            f"{r.eval_before_cp / 100.0:+.2f}; describe the position from the deep eval.")
+    return (f" Deep check: with best play the eval before the move is {deep / 100.0:+.2f} "
+            f"(the scan said {r.eval_before_cp / 100.0:+.2f}).")
+
+
+def _practical_refutation(r: MoveRecord, engines, board_before: chess.Board, board_after: chess.Board,
+                          deep_best_white_cp) -> str | None:
+    """The better move loses only to a long engine line while the played move loses at once.
+
+    Move 31 of 2dtDqQgR (measured 2026-10-13): after 31. Kh2 Stockfish gives -1.95 at depth 8 but
+    -7.16 at depth 20 (...Qh5+, ...Qg6+, ...Rb6!); after 31. Kh1 it is -7.63 at every depth. Told
+    only the deep eval, the coach called the position lost; told only the scan, balanced. Both were
+    wrong for a student: the lesson is the practical difference."""
+    if deep_best_white_cp is None or not r.best_move_san:
+        return None
+    sign = 1 if r.color == "white" else -1
+    try:
+        after_best = board_before.copy(stack=False)
+        after_best.push_san(r.best_move_san)
+        best_practical = engines.practical_eval(after_best, depth=PRACTICAL_DEPTH).white().score(mate_score=MATE_CP)
+        played_practical = engines.practical_eval(board_after, depth=PRACTICAL_DEPTH).white().score(mate_score=MATE_CP)
+    except Exception:
+        return None
+    deep_m, best_m, played_m = sign * deep_best_white_cp, sign * best_practical, sign * played_practical
+    if deep_m > -300 or best_m - deep_m < 300 or best_m - played_m < 200:
+        return None
+    line = _numbered_line(r.fen_before, r.best_line[:8]) if r.best_line else r.best_move_san
+    return (f"Practical framing: even after {r.best_move_san} the engine finds a long win for the opponent "
+            f"({line}; {deep_best_white_cp / 100.0:+.2f}), but only well beyond practical depth: at depth "
+            f"{PRACTICAL_DEPTH} {r.best_move_san} holds ({best_practical / 100.0:+.2f}) while {r.san} loses at "
+            f"once ({played_practical / 100.0:+.2f}). Teach the practical difference: {r.san} lost to a short "
+            f"forcing line, {r.best_move_san} kept the opponent's task hard. Do not call the position "
+            f"balanced, and do not call {r.best_move_san} simply losing.")
+
+
 
 
 def moment_digest_lines(i: int, r: MoveRecord) -> list:
@@ -477,12 +514,12 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
                      + ladder)
     secret = []
     if r.best_move_san:
-        secret.append(f"better was {r.best_move_san}" +
-                      (f" (line: {' '.join(r.best_line)})" if r.best_line else ""))
+        secret.append(f"better was {_numbered_line(r.fen_before, [r.best_move_san])}" +
+                      (f" (line: {_numbered_line(r.fen_before, r.best_line)})" if r.best_line else ""))
     if r.best_line_motifs:
         secret.append("what the student missed: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in r.best_line_motifs))
     if r.punishment_line:
-        secret.append(f"the punishment of {r.san} is: {' '.join(r.punishment_line)}")
+        secret.append(f"the punishment of {r.move_label} is: {_numbered_line(r.fen_after, r.punishment_line)}")
     if r.motifs:
         secret.append("motifs in the punishment: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in r.motifs))
     if r.opening_theory_brief:
@@ -1260,6 +1297,7 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
             except Exception:
                 pass
 
+        deep_best_white_cp = None
         try:
             infos = engines.top_lines(
                 board_before, multipv=3,
@@ -1268,6 +1306,12 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
             r.best_line = _select_best_line_for_record(r, board_before, infos)
             if infos and infos[0].get("score") is not None:
                 r.deep_eval_before_cp = infos[0]["score"].white().score(mate_score=MATE_CP)
+            for info in infos or []:
+                pv = info.get("pv") or []
+                if pv and r.best_line and info.get("score") is not None \
+                        and _same_san(board_before.san(pv[0]), r.best_line[0]):
+                    deep_best_white_cp = info["score"].white().score(mate_score=MATE_CP)
+                    break
             r.best_line_motifs = detect_motifs_in_line(board_before, r.best_line)
             # The deep multipv PV is more authoritative than the shallow scan eval
             # that first set best_move_san. When they disagree on the FIRST move,
@@ -1300,6 +1344,7 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
         r.position_facts = position_facts(board_before)
         _attach_lesson_primitives(r, board_before, board_after)
         _assess_practicality(r, engines, review, deep_after_white_cp)
+        r.engine_only_refutation = _practical_refutation(r, engines, board_before, board_after, deep_best_white_cp)
         # Per-move Maia data was already collected during the main scan.
         _anticipate_wrong_answer(r, engines, board_before)
         _aspirational_instinct(r, engines, review)
@@ -1546,7 +1591,8 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
         "played_move_label": r.move_label,
         "best_move": r.best_move_san,
         "best_move_label": r.best_move_label,
-        "punishment_after_played_move": " ".join(r.punishment_line[:6]) if r.punishment_line else None,
+        "punishment_after_played_move": (_numbered_line(r.fen_after, r.punishment_line[:6])
+                                         if r.punishment_line else None),
         "diagnosis_sentence": _diagnosis_sentence(r),
     }
     if r.is_capture:
@@ -1560,7 +1606,7 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
 
     simple_capture_trade = _is_simple_capture_punishment(r)
     if simple_capture_trade:
-        first = r.punishment_line[0] if r.punishment_line else "a recapture"
+        first = _numbered_line(r.fen_after, r.punishment_line[:1]) if r.punishment_line else "a recapture"
         data["why_wrong_move_fails"] = (
             f"{r.san} wins material but allows {first}, trading away the active piece "
             "instead of improving the position.")
@@ -1596,16 +1642,16 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
                 # 31. Kh2 Qh5+): never claim the better move stops it; contrast the lines.
                 data["forcing_move_not_prevented"] = True
                 data["why_wrong_move_fails"] = (
-                    f"After {r.san}, the opponent plays {san}. {r.best_move_san} also allows {san}; "
-                    f"the difference is in the verified lines: after {r.best_move_san}: "
-                    f"{' '.join(r.best_line[:6]) or r.best_move_san}; after {r.san}: "
-                    f"{' '.join(r.punishment_line[:6])}.")
+                    f"After {r.move_label}, the opponent plays {_numbered_line(r.fen_after, [san])}. "
+                    f"{r.best_move_san} also allows {san}; the difference is in the verified lines: after "
+                    f"{r.best_move_san}: {_numbered_line(r.fen_before, r.best_line[:6]) or r.best_move_san}; "
+                    f"after {r.san}: {_numbered_line(r.fen_after, r.punishment_line[:6])}.")
             else:
                 data["forcing_move_prevented"] = True
     elif not simple_capture_trade and r.best_move_san:
         data["why_best_move_works"] = (
             f"{r.best_move_san} was the engine-verified improvement; use the line "
-            f"{' '.join(r.best_line)} to explain the concrete consequence." if r.best_line
+            f"{_numbered_line(r.fen_before, r.best_line)} to explain the concrete consequence." if r.best_line
             else f"{r.best_move_san} was the engine-verified improvement.")
 
     if r.time_flag:
@@ -1708,11 +1754,11 @@ def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
 
 def _diagnosis_sentence(r: MoveRecord) -> str:
     if _is_simple_capture_punishment(r):
-        first = r.punishment_line[0] if r.punishment_line else "a recapture"
+        first = _numbered_line(r.fen_after, r.punishment_line[:1]) if r.punishment_line else "a recapture"
         return (f"Played {r.move_label} to win material, but after {first} the exchange did not solve "
                 f"the position's main priority; {r.best_move_label or r.best_move_san} kept the stronger plan.")
     if _punishment_starts_with_forcing_check(r):
-        first = r.punishment_line[0] if r.punishment_line else "a forcing check"
+        first = _numbered_line(r.fen_after, r.punishment_line[:1]) if r.punishment_line else "a forcing check"
         return (f"Played {r.move_label}, which allowed the forcing {first}; "
                 f"{r.best_move_label or r.best_move_san} was the engine-verified defence.")
     if r.lesson_objective == "improve_pieces_before_committing_pawns":
@@ -2129,6 +2175,28 @@ def attach_board_tokens(review: GameReview, state, invert: bool = False) -> None
     for record in review.agenda:
         board = chess.Board(record.fen_before)
         record.board_token = render_board_token(state, board, pov, invert)
+
+
+def _numbered_line(fen: str, sans: list) -> str:
+    """A SAN line with move numbers from `fen`, so it says whose move each is ("20... Nxb5 21. Qxb5").
+    Unnumbered, a punishment line starting with the opponent's reply was replayed from the wrong
+    side (live evals: "Nxb5 Qxb5" became the illegal "20... Qxb5"). Unparseable moves stay as given."""
+    try:
+        board = chess.Board(fen)
+    except (TypeError, ValueError):
+        return " ".join(str(s) for s in sans)
+    out = []
+    for i, san in enumerate(sans):
+        if board.turn == chess.WHITE:
+            out.append(f"{board.fullmove_number}. {san}")
+        else:
+            out.append(f"{board.fullmove_number}... {san}" if i == 0 else str(san))
+        try:
+            board.push_san(str(san))
+        except ValueError:
+            out.extend(str(s) for s in sans[i + 1:])
+            break
+    return " ".join(out)
 
 
 def _pv_to_san(board: chess.Board, pv) -> list:

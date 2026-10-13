@@ -1073,6 +1073,50 @@ def test_moment_header_shows_the_deep_eval_when_the_scan_eval_disagrees():
     assert "-8.94" not in moment_digest_lines(4, agreeing)[0] and "deep" not in moment_digest_lines(4, agreeing)[0]
 
 
+class _DepthEngines:
+    """Practical-depth scores by position, as the agenda analysis asks for them."""
+
+    def __init__(self, scores):
+        self.scores = scores   # {fen: white-POV cp at practical depth}
+
+    def practical_eval(self, board, depth=10, time_cap=1.0):
+        return chess.engine.PovScore(chess.engine.Cp(self.scores[board.fen()]), chess.WHITE)
+
+
+def test_engine_only_refutation_of_the_better_move_is_reported_as_practical():
+    # Move 31, measured 2026-10-13: after 31. Kh2 Stockfish says -1.95 at depth 8 and -7.16 at
+    # depth 20 (the win needs ...Qh5+, ...Qg6+, ...Rb6!); after 31. Kh1 it is -7.63 at every depth.
+    from app.review import MoveRecord, _practical_refutation
+    r = MoveRecord(eval_before_cp=0, eval_after_cp=-445, **_MOVE31_RUN13)
+    before = chess.Board(r.fen_before)
+    after_best = before.copy(stack=False)
+    after_best.push_san("Kh2")
+    engines = _DepthEngines({after_best.fen(): -195, r.fen_after: -763})
+
+    note = _practical_refutation(r, engines, before, chess.Board(r.fen_after), deep_best_white_cp=-716)
+    assert note and "Kh2" in note and "Kh1" in note
+    assert _practical_refutation(r, engines, before, chess.Board(r.fen_after), deep_best_white_cp=-150) is None
+
+
+def test_lines_shown_to_the_coach_say_whose_move_it_is():
+    # Runs par4cj6m and t0zauzig: the punishment line "Nxb5 Qxb5 e4 ..." starts with BLACK's
+    # recapture after 20. Nxb5; read from the position before the move it became the illegal
+    # "20... Qxb5", which the coach taught and passed to analyze_position.
+    from app.review import MoveRecord, _diagnosis_sentence, moment_digest_lines
+    before = chess.Board("r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20")
+    after = before.copy(stack=False)
+    after.push_san("Nxb5")
+    r = MoveRecord(ply=38, number=20, color="white", san="Nxb5", uci="c3b5", fen_before=before.fen(),
+                   fen_after=after.fen(), eval_before_cp=280, eval_after_cp=62, drop_pct=18.0,
+                   quality="inaccuracy", is_capture=True, best_move_san="Ne4",
+                   best_line=["Ne4", "Qd7", "h3", "Nf6"], punishment_line=["Nxb5", "Qxb5", "e4", "Rfe1"])
+
+    assert "20... Nxb5" in _diagnosis_sentence(r)
+    digest = "\n".join(moment_digest_lines(1, r))
+    assert "20... Nxb5 21. Qxb5 e4 22. Rfe1" in digest
+    assert "20. Ne4 Qd7 21. h3 Nf6" in digest
+
+
 def test_pawn_push_to_avoid_tension_is_not_missed_fork():
     from app.review import MoveRecord, suggest_error_categories, _infer_lesson_objective, _recommended_diagnosis
     r = MoveRecord(

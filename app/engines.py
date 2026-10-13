@@ -118,6 +118,14 @@ class EngineManager:
         infos = self.stockfish.analyse(board, limit, multipv=multipv)
         return infos if isinstance(infos, list) else [infos]
 
+    def practical_eval(self, board: chess.Board, depth: int = 10, time_cap: float = 1.0):
+        """Evaluation at roughly human calculation depth, from a cleared hash table (a new game).
+        The shared hash otherwise carries deep refutations into shallow searches: right after the
+        depth-20 agenda search, 31. Kh2 scored -7.46 at depth 10 instead of about -2 (2026-10-13)."""
+        trace(f"stockfish practical_eval(depth={depth}, fresh hash)")
+        info = self.stockfish.analyse(board, chess.engine.Limit(depth=depth, time=time_cap), game=object())
+        return info["score"]
+
     def threat_probe(self, board: chess.Board, multipv: int = 2) -> list:
         """What does the opponent threaten if the side to move 'passes'?
 
