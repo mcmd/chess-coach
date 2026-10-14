@@ -380,8 +380,13 @@ def _report(run_dir: Path, execution: dict, review_status: str, review: dict | N
     (run_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+# The reviewer checks unsettled chess claims with verify_chess.py at depth 30, which takes minutes per
+# position: run 5kf7rqwj's reviewer was cut off at 1800 s after two such checks.
+REVIEWER_TIMEOUT_S = 3600
+
+
 async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
-                   load_timeout=600, turn_timeout=300, reviewer_timeout=600,
+                   load_timeout=600, turn_timeout=300, reviewer_timeout=REVIEWER_TIMEOUT_S,
                    agent_fn=None, tool_fn=None, config_overrides=None) -> dict:
     """Run a fresh real session and separate harness agents; return artifact paths.
 
@@ -504,6 +509,25 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
         manifest["finished_at"] = execution["finished_at"]
         _save_json(run_dir / "manifest.json", manifest)
         _conversation(run_dir)
+    return await review_run(run_dir, root=root, agent_fn=spawn, reviewer_timeout=reviewer_timeout)
+
+
+async def review_run(run_dir, *, root=None, agent_fn=None, reviewer_timeout=REVIEWER_TIMEOUT_S) -> dict:
+    """Pass 2 on a frozen run directory: the deterministic checker, then a fresh reviewer agent.
+
+    `run_eval` calls this after the session. Call it directly to re-review a run whose review
+    failed (e.g. timed out); the player's evidence is untouched and each attempt is counted."""
+    spawn = agent_fn or globals().get("agent")
+    if not callable(spawn):
+        raise RuntimeError("review_run requires the omp Eval agent interface; load it in the harness")
+    root = Path(root or Path.cwd()).resolve()
+    run_dir = Path(run_dir).resolve()
+    python = root / ".venv/bin/python"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    execution = json.loads((run_dir / "execution.json").read_text(encoding="utf-8"))
+    roles = manifest["roles"]
+    manifest["review_attempts"] = attempt = manifest.get("review_attempts", 0) + 1
+    (run_dir / "review-error.json").unlink(missing_ok=True)
     checker = await asyncio.create_subprocess_exec(
         str(python), str(root / "scripts/check_live_eval.py"), str(run_dir),
         cwd=root, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -551,7 +575,8 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
             "with verdicts PASS/FAIL/BLOCKED/NOT OBSERVED, quality observations, limitations, and your actual "
             "model ID if exposed (otherwise 'unavailable').",
             root, roles["reviewer"]["agent"],
-            label=f"LiveCoachReviewer-{run_dir.name}", schema=reviewer_schema,
+            label=f"LiveCoachReviewer-{run_dir.name}" + (f"-r{attempt}" if attempt > 1 else ""),
+            schema=reviewer_schema,
         )
         _save_json(run_dir / "manifest.json", manifest)
         review = await _await_agent(reviewer_handle, reviewer_timeout)
