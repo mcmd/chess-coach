@@ -187,6 +187,55 @@ class GameReview:
     def agenda(self):
         return [self.records[p] for p in self.agenda_plies]
 
+    def ending(self) -> str | None:
+        """How the game ended, from the final position and the PGN headers. Live eval 5kf7rqwj:
+        2dtDqQgR was drawn by repetition right after 31. Kh1, and the coach, not told so, credited
+        the draw to the recommended 31. Kh2."""
+        if not self.records:
+            return None
+        last = self.records[-1]
+        board = chess.Board(last.fen_after)
+        result = self.headers.get("Result", "*")
+        label = last.move_label
+        key = lambda fen: " ".join(fen.split()[:4])  # noqa: E731  position identity for repetition
+        repeats = ([key(self.records[0].fen_before)] + [key(r.fen_after) for r in self.records]).count(
+            key(last.fen_after))
+        if board.is_checkmate():
+            text = f"{last.color.capitalize()} delivered checkmate with {label}"
+        elif board.is_stalemate():
+            text = f"a draw by stalemate after {label}"
+        elif board.is_insufficient_material():
+            text = f"a draw by insufficient material after {label}"
+        elif result == "1/2-1/2" and repeats >= 3:
+            ordinal = {3: "third", 4: "fourth", 5: "fifth"}.get(repeats, f"{repeats}th")
+            text = (f"a draw by repetition right after {label}: the position after it occurred for the "
+                    f"{ordinal} time")
+        elif result == "1/2-1/2" and board.halfmove_clock >= 100:
+            text = f"a draw by the fifty-move rule after {label}"
+        elif "time" in self.headers.get("Termination", "").lower():
+            text = f"on time after {label} (result {result})"
+        elif result in ("1-0", "0-1"):
+            text = f"{'Black' if result == '1-0' else 'White'} resigned after {label}"
+        elif result == "1/2-1/2":
+            text = f"a draw after {label}, by agreement or claim (no board rule applies)"
+        else:
+            text = f"no result yet after {label} (result {result})"
+        if result == "1/2-1/2" and self.student_color:
+            student_cp = last.eval_after_cp if self.student_color == "white" else -last.eval_after_cp
+            if student_cp <= -200:
+                text += (f" — a good result for the student, who was objectively worse "
+                         f"({student_cp / 100:+.2f} at the end)")
+        return "The game ended in " + text if not text[0].isupper() else "The game ended: " + text
+
+    def continuation_after(self, r) -> str:
+        """What actually happened after `r` in the game, so the coach never credits later events
+        or the result to a move that was not played."""
+        if r.ply >= len(self.records) - 1:
+            return f"This was the final move of the game. {self.ending()}."
+        nxt = self.records[r.ply + 1]
+        who = "the opponent" if self.student_color and nxt.color != self.student_color else nxt.color.capitalize()
+        return f"In the game, {who} replied {nxt.move_label}."
+
     def annotated_movetext(self) -> str:
         parts = []
         for r in self.records:
@@ -205,6 +254,9 @@ class GameReview:
             f"Black: {h.get('Black', '?')} ({h.get('BlackElo', '?')}) | "
             f"Result: {h.get('Result', '?')}"
         )
+        if self.ending():
+            lines.append(f"{self.ending()}. Never attribute the result to any other cause, or to a move "
+                         "that was not played.")
         if self.opening_deviation:
             d = self.opening_deviation
             line = (f"Opening report: {self.opening_name or 'known theory'}"
@@ -319,7 +371,7 @@ class GameReview:
 
         lines.append("CRITICAL MOMENTS — the lesson agenda. Work through them ONE AT A TIME, in order.")
         for i, r in enumerate(self.agenda, 1):
-            lines.extend(moment_digest_lines(i, r))
+            lines.extend(moment_digest_lines(i, r, continuation=self.continuation_after(r)))
         lines.append("")
         lines.append("Coaching protocol: for each moment, set the scene at the FEN BEFORE the move, "
                      "ask the Initial question EXACTLY as the first prompt, "
@@ -436,7 +488,7 @@ def _practical_refutation(r: MoveRecord, engines, board_before: chess.Board, boa
 
 
 
-def moment_digest_lines(i: int, r: MoveRecord) -> list:
+def moment_digest_lines(i: int, r: MoveRecord, continuation: str = None) -> list:
     """The digest block for one agenda moment — shared by single-game reviews
     and batch training reports so the coaching protocol sees identical data."""
     lines = []
@@ -454,6 +506,9 @@ def moment_digest_lines(i: int, r: MoveRecord) -> list:
         else:
             orient += f"; the opponent has just played {r.number}. {r.prev_move_san}"
     lines.append(orient + " (state this when setting the scene).")
+    if continuation:
+        lines.append(f"  What happened next in the actual game (the student played {r.move_label}): "
+                     f"{continuation}")
     lines.append(f"  FEN before the move: {r.fen_before}")
     if r.board_token:
         lines.append(f"  Board diagram token for this position: {r.board_token} "
@@ -1777,7 +1832,46 @@ def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
             "text": data["human_temptation"], "key": False,
             "squares": [m.group(1)] if m else [], "keywords": ["material", "won"],
         })
+    if r.best_move_san:
+        reasons.extend(_basic_move_reasons(board_before, r.best_move_san))
     return reasons
+
+
+def _basic_move_reasons(board: chess.Board, best_san: str) -> list:
+    """Plain board facts about the better move that a student may name as reasons (never key).
+    Run s2hy697w S11: "it moves my rook to safety, and offers a rook trade" was true (the g2 pawn
+    attacked the f1 rook; Rfe1 faces the e8 rook) but nothing let the grader credit it."""
+    try:
+        move = board.parse_san(best_san)
+    except ValueError:
+        return []
+    piece = board.piece_at(move.from_square)
+    if piece is None:
+        return []
+    name, origin = chess.piece_name(piece.piece_type), chess.square_name(move.from_square)
+    out = []
+    attackers = sorted(board.attackers(not board.turn, move.from_square))
+    if attackers:
+        attacker = attackers[0]
+        out.append({
+            "text": (f"{best_san} moves the {name} on {origin} out of the attack by the "
+                     f"{chess.piece_name(board.piece_at(attacker).piece_type)} on {chess.square_name(attacker)}"),
+            "key": False, "squares": [origin, chess.square_name(attacker)],
+            "keywords": ["safety", "safe", "escape", "away", "save", "saves", "threatened", "danger", "attacked"],
+        })
+    after = board.copy(stack=False)
+    after.push(move)
+    opposed = [sq for sq in after.attacks(move.to_square)
+               if after.piece_at(sq) and after.piece_at(sq).color != piece.color
+               and after.piece_at(sq).piece_type == piece.piece_type]
+    if opposed and piece.piece_type != chess.KING:
+        out.append({
+            "text": f"{best_san} offers a trade of {name}s with the {name} on {chess.square_name(opposed[0])}",
+            "key": False, "squares": [chess.square_name(opposed[0])],
+            "keywords": ["trade", "trades", "exchange", "exchanges", "swap", "challenge", "challenges",
+                         "oppose", "opposes", "contest"],
+        })
+    return out
 
 
 def _diagnosis_sentence(r: MoveRecord) -> str:

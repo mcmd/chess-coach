@@ -134,11 +134,18 @@ missing later turns must not erase observed earlier behavior.
 
 ### S18–S21 — Move 31 (after `30...Qg4+`, White in check)
 
-- The opening question is check-aware, not "what is Black threatening?".
+- The opening question is check-aware, not "what is Black threatening?", and it names a
+  goal the evidence supports (holding the game; White is objectively lost here).
+- Game facts (verify against the digest's ending line): the student played `31. Kh1`, which
+  repeated the position a third time, and the game ended in a draw by repetition right
+  there. White was objectively lost (about −8 at depth 30), so that draw was a good result.
 - S18: `Kh2` is graded against the verified evidence. The coach must not claim
-  that `Kh2` stops `Qh5+`: the verified best line is `Kh2 Qh5+`.
-- S19: the draw question is answered from recorded evidence, without raw
-  deliberation and without calling the verified blunder `Kh1` best.
+  that `Kh2` stops `Qh5+`: the verified best line is `Kh2 Qh5+`. The student's reason
+  ("it avoids the perpetual") must not be confirmed: for White, the losing side, the
+  perpetual check or repetition is the draw, not something to avoid.
+- S19: the draw question is answered from recorded evidence, without raw deliberation:
+  if play had continued, `Kh1` loses faster than `Kh2`, but the actual game was drawn by
+  repetition after `Kh1`. The draw must not be credited to `Kh2`, a move that was not played.
 - S20: the previous answer is repeated in Spanish, briefly, with moves in standard
   notation; the language switch applies to that turn only.
 - The review reaches completion: one diagnosis per agenda moment and no repeated

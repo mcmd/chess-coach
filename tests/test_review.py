@@ -1195,3 +1195,34 @@ def test_pawn_push_to_avoid_tension_is_not_missed_fork():
     assert _infer_lesson_objective(r) == "improve_pieces_before_committing_pawns"
     r.lesson_objective = "improve_pieces_before_committing_pawns"
     assert _recommended_diagnosis(r) == "premature_attack"
+
+
+def _short_game(moves: str, result: str, termination: str = "Normal", evals: float = None):
+    """A PGN for mcmd (White) vs Opponent; `evals` adds the same [%eval] after every move."""
+    tokens = []
+    for tok in moves.split():
+        tokens.append(tok)
+        if evals is not None and not tok[0].isdigit():
+            tokens.append("{ [%%eval %.2f] }" % evals)
+    return (f'[Event "Test"]\n[White "mcmd"]\n[Black "Opponent"]\n[WhiteElo "1150"]\n[BlackElo "1200"]\n'
+            f'[Result "{result}"]\n[Termination "{termination}"]\n\n{" ".join(tokens)} {result}\n')
+
+
+def test_review_says_how_the_game_ended_and_what_followed_each_move():
+    # Live eval 5kf7rqwj: 2dtDqQgR ended in a draw by repetition right after 31. Kh1 (the move
+    # played), and the coach told the student that the draw proved the value of 31. Kh2.
+    pgn = _short_game("1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8 5. Nf3", "1/2-1/2", evals=-5.0)
+    review = review_game(pgn, FakeEngines(), _Cfg(), with_maia=False)
+    ending = review.ending()
+    assert "repetition" in ending and "5. Nf3" in ending and "third" in ending
+    assert "good result for the student" in ending          # White was 5 pawns worse at the end
+    assert ending in review.digest()
+    assert "final move of the game" in review.continuation_after(review.records[-1])
+    assert "1... Nf6" in review.continuation_after(review.records[0])
+
+
+def test_review_ending_names_checkmate_and_resignation():
+    mate = review_game(_short_game("1. f3 e5 2. g4 Qh4#", "0-1"), FakeEngines(), _Cfg(), with_maia=False)
+    assert "checkmate" in mate.ending().lower() and "2... Qh4#" in mate.ending()
+    resigned = review_game(_short_game("1. e4 e5 2. Qh5 Nc6", "0-1"), FakeEngines(), _Cfg(), with_maia=False)
+    assert "White resigned" in resigned.ending() and "good result" not in resigned.ending()

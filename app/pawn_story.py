@@ -140,6 +140,8 @@ def analyze_pawn_structure_evolution(review, color: str = None) -> dict:
     events = []
     previous_shield = None
     previous_snapshot = None
+    last_file_change = {}   # file -> (move label, status before that change)
+    reversal_note = {}      # id(event) -> "the move whose change this undoes"
 
     for record in review.records:
         before = chess.Board(record.fen_before)
@@ -155,7 +157,7 @@ def analyze_pawn_structure_evolution(review, color: str = None) -> dict:
                 move=record.move_label,
                 event="passed_pawn_created",
                 facts=facts,
-                safe_summary=(f"{side.title()} created a {kind} on {pawn}. It is an asset, but it needs "
+                safe_summary=(f"{side.title()} created an {kind} on {pawn}. It is an asset, but it needs "
                               "piece support because no friendly pawn on an adjacent file can defend it."
                               if facts["is_isolated"] else
                               f"{side.title()} created a passed pawn on {pawn}."),
@@ -167,13 +169,18 @@ def analyze_pawn_structure_evolution(review, color: str = None) -> dict:
             if previous_snapshot and previous_snapshot["file_statuses"][f] != after_snap["file_statuses"][f]
         }
         for f, status in changed_files.items():
-            events.append(PawnStructureEvent(
+            event = PawnStructureEvent(
                 ply=record.ply,
                 move=record.move_label,
                 event="file_status_changed",
                 facts={"file": f, "status": status},
                 safe_summary=f"The {f}-file is now {status.replace('_', ' ')}.",
-            ))
+            )
+            earlier = last_file_change.get(f)
+            if earlier and earlier[1] == status:
+                reversal_note[id(event)] = earlier[0]
+            last_file_change[f] = (record.move_label, previous_snapshot["file_statuses"][f])
+            events.append(event)
 
         shield = king_shield_facts(after, chess_color)
         if previous_shield and shield != previous_shield and (
@@ -203,6 +210,13 @@ def analyze_pawn_structure_evolution(review, color: str = None) -> dict:
     return {
         "color": side,
         "events": [e.to_dict() for e in events],
+        # Router run 5kf7rqwj S23: the coach compressed the events and skipped 16. dxe4, which
+        # blocked the e-file that 15...dxe4 had opened. The story is told from this list.
+        "chronology": [f"{e.move}: {e.safe_summary}"
+                       + (f" (this undoes the change at {reversal_note[id(e)]})" if id(e) in reversal_note else "")
+                       for e in events],
+        "narration_rule": ("Tell the story in this order, using the chronology. Do not skip a step that "
+                           "undoes an earlier one (a file that opens and then closes again)."),
         "final_pawn_snapshot": final_snapshot,
         "final_king_shield": final_shield,
         "safe_language": safe_language(events, final_snapshot, final_shield),

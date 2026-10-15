@@ -621,7 +621,13 @@ def test_generic_engine_reason_is_taught_not_probed(stub_config):
     result = tools.evaluate_explanation(rec.fen_before, answer)
 
     assert "probe_question" not in result
-    assert result["gradable"] is False and "teach the verified line" in result["guidance"]
+    assert result["gradable"] is False and "teach the verified line" in result["guidance"].lower()
+    # Run s2hy697w S11: both reasons are true on the board (the g2 pawn attacked the f1 rook;
+    # Rfe1 faces the e8 rook), but the coach answered "Yes, exactly" while the key point, the
+    # forcing line Kxg2 allows, was missing. The grader credits the true parts and says so.
+    assert any("out of the attack by the pawn on g2" in c for c in result["credited"])
+    assert any("trade" in c and "e8" in c for c in result["credited"])
+    assert "do not say 'exactly'" in result["guidance"].lower()
     logged = tools.submit_diagnosis(rec.fen_before, "ignored_threat",
                                     "Played 24. Kxg2 instead of 24. Rfe1.", "Scan forcing replies first.")
     assert logged.get("success") is True
@@ -799,6 +805,25 @@ def test_evaluate_explanation_no_key_reason_is_not_gradable(stub_config):
     state.review = _review_with_reasons([_TACTIC_REASONS[1]])  # only the secondary (key=False)
     result = tools.evaluate_explanation(START, "anything")
     assert result["gradable"] is False
+
+
+def test_unverified_reason_is_not_confirmed_when_no_key_reason_exists(stub_config):
+    # Router run 5kf7rqwj S18: "Kh2, because it avoids the perpetual" (for White, who was lost,
+    # the perpetual was the draw) met the old "if the explanation is sound, affirm it" guidance,
+    # and the coach affirmed it. Only verified facts may be confirmed.
+    from app.review import GameReview, MoveRecord, _explanation_primitives
+    from tests.test_review import _GAME_2DTD_RECORDS
+    tools, state = make_tools(stub_config)
+    rec = MoveRecord(eval_before_cp=0, eval_after_cp=0, **_GAME_2DTD_RECORDS[31])
+    rec.explanation_primitives = _explanation_primitives(
+        rec, chess.Board(rec.fen_before), chess.Board(rec.fen_after))
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+    state.latest_user_text = "Kh2, because it avoids the perpetual."
+
+    result = tools.evaluate_explanation(rec.fen_before, state.latest_user_text)
+
+    assert result["gradable"] is False and result["credited"] == []
+    assert "do not confirm" in result["guidance"].lower() and "if the explanation is sound" not in result["guidance"]
 
 
 def test_evaluate_explanation_unknown_fen_errors(stub_config):

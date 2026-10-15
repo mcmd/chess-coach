@@ -857,21 +857,6 @@ class CoachTools:
             return provenance_error
         reasons = (getattr(record, "explanation_primitives", None) or {}).get("reasons") or []
         key_reasons = [r for r in reasons if r.get("key")]
-        if not key_reasons:
-            return {"gradable": False,
-                    "guidance": "No single load-bearing reason is pinned for this moment; if the "
-                                "explanation is sound, affirm it and proceed to submit_diagnosis."}
-        if key_reasons[0].get("generic"):
-            # The only verified point is "the engine prefers this move" plus its line: there
-            # is no concrete target to probe, so a probe would invent one (#31).
-            self.state.socratic_attempts[f"explain-complete:{fen}"] = True
-            self._persist_lesson_progress(fen, "awaiting_diagnosis")
-            return {"gradable": False,
-                    "guidance": ("No concrete load-bearing reason is verified for this move beyond the "
-                                 "engine line. Credit what the student's explanation gets right (only "
-                                 "where verified data supports it), teach the verified line in plain "
-                                 "words, then proceed to submit_diagnosis. Do not probe.")}
-
         # Squares inside move notation ("Rd4") name the move, not the reason: mask piece
         # moves, pawn captures and castling before matching (bare squares like "g4" stay).
         explanation = _MOVE_TOKEN_RE.sub(" ", student_explanation or "")
@@ -895,6 +880,27 @@ class CoachTools:
                 return True
             return (bool(set(reason.get("squares", [])) & squares_in)
                     or any(k in words_in for k in meaningful_keywords))
+
+        if not key_reasons or key_reasons[0].get("generic"):
+            # No concrete load-bearing reason to probe: none pinned, or only "the engine prefers
+            # this move" plus its line (#31; a probe would invent a target). What the student said
+            # that is a verified board fact is credited by name, and nothing else is confirmed: run
+            # s2hy697w S11 answered "Yes, exactly" to true but secondary reasons, and router run
+            # 5kf7rqwj S18 affirmed "avoids the perpetual" under the old "if sound, affirm it".
+            if key_reasons:
+                self.state.socratic_attempts[f"explain-complete:{fen}"] = True
+                self._persist_lesson_progress(fen, "awaiting_diagnosis")
+            credited = [r["text"] for r in reasons if not r.get("key") and named(r)]
+            return {"gradable": False, "credited": credited,
+                    "guidance": (("No concrete load-bearing reason is verified for this move beyond the "
+                                  "engine line. " if key_reasons else
+                                  "No single load-bearing reason is pinned for this moment. ")
+                                 + (f"True in the student's words (verified): {'; '.join(credited)}. Credit "
+                                    "exactly these. " if credited else
+                                    "Nothing in the student's words is verified; do not confirm it. ")
+                                 + "Do not say 'exactly' or 'that's it', and do not confirm any other claim "
+                                   "in their words. Teach the verified line in plain words, then proceed to "
+                                   "submit_diagnosis. Do not probe.")}
 
         key = key_reasons[0]
         key_named = named(key)
@@ -1404,9 +1410,10 @@ class CoachTools:
         Call this whenever the student asks how the pawn structure evolved.
 
         The result includes square-level events, file-status labels, king-shield
-        facts, and language guardrails. Do not use structural terms like "open
-        file", "collapsed", "isolated", "passed", or "pinned" unless this tool
-        returned them.
+        facts, and language guardrails. Tell the story from `chronology`, in order,
+        without skipping a step that undoes an earlier one. Do not use structural
+        terms like "open file", "collapsed", "isolated", "passed", or "pinned" unless
+        this tool returned them.
 
         Args:
             color: Optional "white" or "black". Defaults to the student's side.
