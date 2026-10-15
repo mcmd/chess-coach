@@ -51,10 +51,11 @@ def _extract_function_calls(response):
 
 # #38: one call thought for 341 s (62,914 thinking tokens) while every other call used under
 # 2,000. Each call has a time limit (prompts.create_chat_session); a call that hits it is
-# retried once at this thinking level, without the limit: when the API itself is slow (live
-# eval 2026-10-13, >89 s twice for the first turn), a limited retry turns a slow answer into an
-# error. A failed call leaves nothing in the chat history.
+# retried once at this thinking level with twice the limit. The same limit gave up while the
+# API was merely slow (run zyijwnhs); no limit hung for 8 minutes during an API stall (run
+# 92lqnauv). 90 s + 180 s still fits the 300 s turn. A failed call leaves nothing in history.
 TIMEOUT_RETRY_THINKING_LEVEL = "medium"
+TIMEOUT_RETRY_LIMIT_FACTOR = 2
 
 
 def _is_timeout(exc) -> bool:
@@ -77,11 +78,13 @@ def _send_with_spinner(chat, payload):
             base = getattr(chat, "coach_config", None)
             if base is None or not _is_timeout(exc):
                 raise
+            limit_ms = (base.http_options.timeout if base.http_options and base.http_options.timeout else None)
+            retry_limit = limit_ms * TIMEOUT_RETRY_LIMIT_FACTOR if limit_ms else None
             trace(f"model call timed out ({type(exc).__name__}); retrying once at "
-                  f"thinking_level={TIMEOUT_RETRY_THINKING_LEVEL} without a time limit")
+                  f"thinking_level={TIMEOUT_RETRY_THINKING_LEVEL} with a {retry_limit}-ms limit")
             retry = base.model_copy(update={
                 "thinking_config": types.ThinkingConfig(thinking_level=TIMEOUT_RETRY_THINKING_LEVEL),
-                "http_options": None})
+                "http_options": types.HttpOptions(timeout=retry_limit) if retry_limit else None})
             return chat.send_message(payload, config=retry)
 
 

@@ -518,11 +518,11 @@ def test_a_correct_move_given_with_a_reason_gets_the_reason_graded_not_asked_aga
     assert "evaluate_explanation" not in routed and "WHY" in routed
 
 
-def test_a_timed_out_model_call_is_retried_once_at_medium_thinking_without_a_limit():
+def test_a_timed_out_model_call_is_retried_once_at_medium_thinking_with_a_longer_limit():
     # #38: one /review call thought for 341 s (62,914 thinking tokens). A call that hits the
-    # per-call time limit is retried once with thinking_level=medium. The retry has no limit:
-    # when the API itself is slow (live eval 2026-10-13: the first turn took >89 s twice), a
-    # limited retry turned a slow answer into an error.
+    # per-call time limit is retried once with thinking_level=medium and twice the limit: the
+    # same limit gave up while the API was merely slow (run zyijwnhs), no limit hung for 8
+    # minutes during an API stall (run 92lqnauv). 90 s + 180 s still fits a 300 s turn.
     import httpx
     from google.genai import types
     from app.agent_loop import _send_with_spinner
@@ -545,7 +545,7 @@ def test_a_timed_out_model_call_is_retried_once_at_medium_thinking_without_a_lim
     retry = chat.configs[1]
     assert retry.thinking_config.thinking_level.lower() == "medium"
     assert retry.system_instruction == "coach" and retry.temperature == 0.2
-    assert retry.http_options is None or retry.http_options.timeout is None
+    assert retry.http_options.timeout == 180000
 
 
 def _gemini_response(*parts):

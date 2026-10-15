@@ -189,7 +189,7 @@ Tip: run with `--trace` to watch exactly which tools the coach calls for each an
 
    Optional, off by default: `"router_model": "gemini-3.8-flash"` (thinking level `"router_thinking_level"`, default `"low"`) makes a fast model classify each of your messages during a review, so the backend grades your move, threat or explanation itself and the coach model only writes the reply. The backend grades only text you actually wrote and moves that are legal in the current moment; anything else, a router failure, or a router reply slower than 10 seconds falls back to the normal flow (run with `--trace` to see each routing decision).
 
-   `"model_call_timeout_s"` (default 90) limits each coach-model call; a call that hits it (e.g. a runaway thinking budget) is retried once at medium thinking, without a limit, so a slow API still gets an answer.
+   `"model_call_timeout_s"` (default 90) limits each coach-model call; a call that hits it (e.g. a runaway thinking budget) is retried once at medium thinking with twice the limit, so a slow API still gets an answer and a stalled one ends in an error instead of an endless wait.
 3. Install and run:
    ```bash
    python -m venv .venv
