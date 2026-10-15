@@ -207,7 +207,9 @@ runs Stockfish from `config.json` at depth 30 from a cleared hash (time cap 600 
 only a safety net) and Maia3. Do not lower the depth: shallow searches missed the
 31. Kh2 refutation, which appears only at depth 16+. A result with
 `"complete": false` stopped short of the requested depth and is inconclusive.
-Cite the command with the reported depth and nodes.
+Cite the command with the reported depth and nodes. A claim about what happens
+after a line (a mate threat, a trapped piece) is checked at the end of that line
+with `--line`, not at the starting position.
 
 Give a fresh reviewer agent the frozen evidence, deterministic results, and
 `tests/2dtDqQgR_review.md`, using the configured reviewer model. It can also read
