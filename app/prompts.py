@@ -199,7 +199,12 @@ def create_chat_session(client, config, tools, history):
         tools=tools.get_tool_list(),
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         # Per-call time limit (#38); agent_loop retries a timed-out call once at medium thinking.
-        http_options=types.HttpOptions(timeout=int(config.model_call_timeout_s * 1000)),
+        # Temporary overloads (503 "high demand", seen for minutes on 2026-10-15) are retried by
+        # the SDK with backoff; a daily quota (429) is not retried.
+        http_options=types.HttpOptions(
+            timeout=int(config.model_call_timeout_s * 1000),
+            retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2.0, max_delay=10.0,
+                                                 http_status_codes=[500, 502, 503])),
     )
     chat = client.chats.create(model=config.gemini_model, config=genai_config, history=history)
     chat.coach_config = genai_config   # the base for per-call overrides (they replace the whole config)

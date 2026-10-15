@@ -548,6 +548,32 @@ def test_a_timed_out_model_call_is_retried_once_at_medium_thinking_with_a_longer
     assert retry.http_options.timeout == 180000
 
 
+def test_coach_calls_retry_a_temporary_overload_with_backoff(stub_config):
+    # 2026-10-15: Pro answered 503 "currently experiencing high demand" for minutes at a time;
+    # one 503 failed the student's whole turn. Overloads are retried briefly by the SDK; a daily
+    # quota (429) is not, and timeouts keep their own medium-thinking retry with the same options.
+    from types import SimpleNamespace
+    from app.prompts import create_chat_session
+    from app.agent_loop import _send_with_spinner
+    import httpx
+    created = {}
+    client = SimpleNamespace(chats=SimpleNamespace(
+        create=lambda model, config, history: created.setdefault("chat", SimpleNamespace(config=config))))
+    chat = create_chat_session(client, stub_config, SimpleNamespace(get_tool_list=lambda: []), [])
+    retry = chat.coach_config.http_options.retry_options
+    assert 503 in retry.http_status_codes and 429 not in retry.http_status_codes and retry.attempts >= 2
+
+    sent = []
+    def send_message(payload, config=None):
+        sent.append(config)
+        if len(sent) == 1:
+            raise httpx.ReadTimeout("slow")
+        return "reply"
+    chat.send_message = send_message
+    assert _send_with_spinner(chat, "hi") == "reply"
+    assert sent[1].http_options.retry_options == retry
+
+
 def _gemini_response(*parts):
     from google.genai import types
     return types.GenerateContentResponse(candidates=[types.Candidate(

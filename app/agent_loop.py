@@ -84,7 +84,8 @@ def _send_with_spinner(chat, payload):
                   f"thinking_level={TIMEOUT_RETRY_THINKING_LEVEL} with a {retry_limit}-ms limit")
             retry = base.model_copy(update={
                 "thinking_config": types.ThinkingConfig(thinking_level=TIMEOUT_RETRY_THINKING_LEVEL),
-                "http_options": types.HttpOptions(timeout=retry_limit) if retry_limit else None})
+                "http_options": (base.http_options.model_copy(update={"timeout": retry_limit})
+                                 if base.http_options else None)})
             return chat.send_message(payload, config=retry)
 
 
