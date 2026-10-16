@@ -252,9 +252,25 @@ def test_grading_integrity_guard_blocks_affirming_fabricated_answer():
     output = _run_grading_integrity_guard("Yes, Nf6 is exactly what Black wants to do.", state)
 
     assert "Nf6 is exactly" not in output
-    assert "not actually in your latest message" in output
+    assert output == "What is your opponent threatening here?"
     assert state.grading_integrity_events
     assert state.grading_integrity_events[0]["type"] == "stale_grading_response_blocked"
+
+
+def test_a_move_the_student_never_named_is_asked_for_and_the_threat_verdict_said_once():
+    # Run xpweac5a S14: the router graded the student's threat (Qxg4+), the coach then graded 26. Rd4 the
+    # student never wrote; the reply said "Qxg4+ is the real threat." twice plus a notice about grading.
+    state = SessionState()
+    fen = "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26"
+    state._turn_grading_results = [
+        {"tool": "evaluate_threat_answer", "args": {"fen": fen, "threat_move_san": "Qxg4+"},
+         "result": {"verdict": "correct_threat", "student_threat": "Qxg4+"}},
+        {"tool": "evaluate_student_answer", "args": {"fen": fen, "student_move_san": "Rd4"},
+         "result": {"verdict": "stale_or_fabricated_student_input", "error": "does not match"}},
+    ]
+    output = _state_unreported_feedback(_run_grading_integrity_guard("Rd4 is best!", state), state)
+    assert output.count("Qxg4+") == 1 and output.endswith("Which move would you play here?")
+    assert "Rd4" not in output
 
 
 def test_a_passed_explanation_is_taught_before_the_lesson_moves_on():

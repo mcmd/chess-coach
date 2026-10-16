@@ -769,7 +769,8 @@ def _state_unreported_feedback(output_text: str, state) -> str:
         if correction and not (("perpetual" in lower or "repetition" in lower) and "draw" in lower):
             missing.append(correction[0].upper() + correction[1:])
         sentence = feedback_sentence(item.get("tool"), result)
-        if not sentence or _feedback_spoken(output_text, item) or sentence in missing:
+        # The integrity guard may already have stated it (xpweac5a: "Qxg4+ is the real threat." twice).
+        if not sentence or _feedback_spoken(output_text, item) or sentence in missing or sentence in output_text:
             continue
         missing.append(sentence)
         _event_append(state, "grader_verdict_events", {
@@ -812,13 +813,13 @@ def _run_grading_integrity_guard(output_text: str, state) -> str:
     verified = [feedback_sentence(item.get("tool"), item.get("result") or {}) for item in results
                 if (item.get("result") or {}).get("verdict") != "stale_or_fabricated_student_input"
                 and not (item.get("result") or {}).get("error")]
-    if all(item.get("tool") == "evaluate_explanation" for item in stale):
-        ask = "Why does that move work? Tell me in your own words what it does."
-    else:
-        ask = ("I tried to grade a move or threat that was not actually in your latest message, so I "
-               "will not treat it as verified. Please restate the candidate move or threat you want me to "
-               "check, or ask me to explain the position directly.")
-    return " ".join([s for s in verified if s] + [ask])
+    # Run xpweac5a S14: the student named the threat, the coach graded a move they never wrote, and the
+    # notice talked about grading. Ask for what the student has not given yet (Quality-SOL §9.6).
+    asks = {"evaluate_explanation": "Why does that move work? Tell me in your own words what it does.",
+            "evaluate_student_answer": "Which move would you play here?",
+            "evaluate_threat_answer": "What is your opponent threatening here?"}
+    ask = list(dict.fromkeys(asks.get(item.get("tool"), asks["evaluate_student_answer"]) for item in stale))
+    return " ".join([s for s in verified if s] + ask)
 
 
 def _move_mentioned_near_label(text: str, move: str, label_pattern: str) -> bool:
