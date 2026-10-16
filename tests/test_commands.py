@@ -697,6 +697,32 @@ def test_wrap_up_takeaway_covers_every_reviewed_theme(stub_config):
     assert state.teaching_ledger["last_takeaway"]["theme_id"] == "ignored_threat:middlegame"
 
 
+def test_wrap_up_takeaway_leaves_out_a_moment_the_student_skipped(stub_config):
+    # Run bgvvfacf: the student skipped 17. d5, yet the takeaway said its theme was reviewed.
+    from app.review import GameReview, MoveRecord, ReviewTheme
+
+    proc, state, _ = make_processor(stub_config)
+    board, records = chess.Board(), []
+    for ply, uci in enumerate(["e2e4", "e7e5", "g1f3", "b8c6"]):
+        before = board.fen()
+        board.push_uci(uci)
+        records.append(MoveRecord(ply=ply, number=ply // 2 + 1, color="white" if ply % 2 == 0 else "black",
+                                  san=uci, uci=uci, fen_before=before, fen_after=board.fen(), eval_before_cp=0,
+                                  eval_after_cp=-100, drop_pct=12.0, quality="inaccuracy"))
+    state.current_game_id = "game-1"
+    state.review = GameReview(headers={}, records=records, student_color="white", agenda_plies=[0, 2], themes=[
+        ReviewTheme(id="premature_attack:opening", label="premature attack", plies=[0], confidence="low",
+                    safe_summary="a single premature attack moment in the opening: 1. e4."),
+        ReviewTheme(id="bad_trade:opening", label="bad trade", plies=[2], confidence="low",
+                    safe_summary="a single bad trade moment in the opening: 2. Nf3."),
+    ])
+    state.diagnostics = [{"fen": records[2].fen_before, "error_category": "bad_trade"}]
+
+    proc.process("wrap up")
+    text = state.teaching_ledger["last_takeaway"]["text"]
+    assert "2. Nf3" in text and "1. e4" not in text
+
+
 def test_p0_8_lesson_complete_ack_closes_without_new_quiz(stub_config):
     from app.review import GameReview, MoveRecord, ReviewTheme
 

@@ -1,6 +1,6 @@
 # Reviewer rubric: Lichess 2dtDqQgR
 
-Scenario ID: `lichess-2dtDqQgR-full-v1`.
+Scenario ID: `lichess-2dtDqQgR-full-v2`.
 Role: pass-2 reviewer. Do not give this file to the simulated student or coach.
 
 ## Inputs and boundaries
@@ -82,6 +82,11 @@ missing later turns must not erase observed earlier behavior.
 - The self-assessment question comes before the agenda; the answer is acknowledged
   without changing agenda order. A rating-adjustment offer is allowed; the run's
   Elo must remain unchanged.
+- The agenda must not include 31. Kh1 (it drew by threefold repetition). With the
+  2026-10-16 code it holds 17. d5, 20. Nxb5, 24. Kxg2 and 26. Qxa7.
+- S1a (if used, when the coach opens with move 17): the skip request is a control action,
+  not a chess answer. The coach does not grade the words, may briefly show the better
+  move, and moves on to move 20 without inventing a reason the student gave.
 
 ### S2–S4 — Move 20 (after `19...Rfe8`)
 
@@ -134,24 +139,30 @@ missing later turns must not erase observed earlier behavior.
   claiming rooks defend squares but not pawns, is a FAIL. If S16a was used, the
   probe must have asked about what covers g4.
 - One diagnosis for move 26, logged once.
+- S17a (if used): going back to the skipped move 17 after the last moment is acceptable. The
+  student's second skip is a control action: the coach does not grade it, logs no diagnosis for
+  move 17, and closes the review.
 
-### S18–S21 — Move 31 (after `30...Qg4+`, White in check)
+### S18–S21 — Move 31 asked about after the agenda (the game's final move)
 
-- The opening question is check-aware, not "what is Black threatening?", and it names a
-  goal the evidence supports (holding the game; White is objectively lost here).
-- Game facts (verify against the digest's ending line): the student played `31. Kh1`, which
-  repeated the position a third time, and the game ended in a draw by repetition right
-  there. White was objectively lost (about −8 at depth 30), so that draw was a good result.
-- S18: `Kh2` is graded against the verified evidence. The coach must not claim
-  that `Kh2` stops `Qh5+`: the verified best line is `Kh2 Qh5+`. The student's reason
-  ("it avoids the perpetual") must not be confirmed: for White, the losing side, the
-  perpetual check or repetition is the draw, not something to avoid.
-- S19: the draw question is answered from recorded evidence, without raw deliberation:
-  if play had continued, `Kh1` loses faster than `Kh2`, but the actual game was drawn by
-  repetition after `Kh1`. The draw must not be credited to `Kh2`, a move that was not played.
+- Game facts (verify with `verify_chess.py --pgn <run>/game.pgn --before '31.'`, never a
+  bare FEN): the game ended `27. Kh1 Qh3+ 28. Kg1 Qg4+ 29. Kh1 Qf3+ 30. Kg1 Qg4+ 31. Kh1`,
+  and 31. Kh1 repeated the position a third time, so the game was drawn right there.
+  With the game's history, Stockfish depth 30 scores 31. Kh1 0.00 and 31. Kh2 −8.88: without
+  the repetition, White was lost. 31. Kh1 was the best result available, not a mistake.
+- S18: the coach must say that 31. Kh1 drew by threefold repetition and that Kh2 would have
+  kept a lost position going. It must correct "to avoid the perpetual": for White, the worse
+  side, a perpetual check or repetition is the draw to welcome. A FAIL: calling 31. Kh1 a
+  mistake, blunder or "ignored threat"; saying Kh2 was better or "loses slower"; saying Black
+  could have avoided the draw; quoting moves that were not played as the game's repetition.
+- S19: the coach confirms Kh1 was the right practical choice, from the same evidence.
+- No diagnosis is logged for move 31, and the closing takeaway does not list 31. Kh1 as a
+  mistake.
 - S20: the previous answer is repeated in Spanish, briefly, with moves in standard
   notation; the language switch applies to that turn only.
-- The review reaches completion: one diagnosis per agenda moment and no repeated
+- S21: the finish request is handled without grading it as an answer; if the review had
+  already finished, the coach says so.
+- The review reaches completion: one diagnosis per agenda moment it taught and no repeated
   "okay" needed to advance.
 
 ### S22–S29 — After the review

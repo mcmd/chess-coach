@@ -47,6 +47,14 @@ app/config.py        config.json + profiles + CLI args
   `GameReview.eval_source` records `"pgn"` vs `"engine"`; slides read off the
   fallback are flagged in the batch digest. Bump `batch.SCAN_VERSION` if scan-level
   eval/record fields change incompatibly.
+- **Exact draw rules outrank every evaluation.** A move that reaches threefold or
+  fivefold repetition or the fifty/seventy-five-move rule gets `eval_after_cp = 0` and
+  `MoveRecord.draw_rule`; the replaced eval is kept in `eval_without_draw_rule_cp`
+  (2dtDqQgR's 31. Kh1 repeated the position a third time, but Lichess's [%eval] of the
+  final position made it a "blunder"). Engine calls for game positions carry the game's
+  history (`engines.history_key`, `GameReview.board_before`, `CoachTools._game_board`):
+  a bare FEN cannot see a repetition, and the `quick_eval` cache never mixes two
+  histories of one FEN.
 - **Socratic withholding is backend-enforced**: `evaluate_student_answer` counts
   attempts per FEN and only includes the engine answer when `reveal_allowed`.
 - **Verified-line moves must be named by exact SAN.** If a tool or digest line says

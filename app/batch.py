@@ -33,7 +33,9 @@ from app.review import (EngineUnavailable, GameReview, MoveRecord, review_game, 
 # v3: MoveRecord.prev_move_san (opponent's move into fen_before, for orientation).
 # v4: scan prefers the PGN's [%eval] for the win% stream (eval values/drops change);
 #     scans record eval_source.
-SCAN_VERSION = 4
+# v5: a move that reaches a draw by rule (threefold repetition etc.) scores 0 and records
+#     MoveRecord.draw_rule; engine evals carry the game's history (no false repetition blunders).
+SCAN_VERSION = 5
 
 # A cluster is only a "pattern" with enough evidence to be a fact, not noise.
 MIN_PATTERN_MOMENTS = 3

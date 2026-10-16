@@ -205,9 +205,11 @@ def run_agent_turn(chat, coach_tools, message) -> None:
                 figures = getattr(coach_tools.state, "coaching_rating_figures", None)
                 if figures is None:
                     figures = coach_tools.state.coaching_rating_figures = set()
-                for m in human.get("top_human_moves") or []:
-                    if m.get("probability") is not None:
-                        figures.update((math.floor(m["probability"] * 100), math.ceil(m["probability"] * 100)))
+                shares = [m.get("probability") for m in human.get("top_human_moves") or []]
+                shares += list((human.get("win_draw_loss_for_side_to_move") or {}).values())
+                for p in shares:
+                    if p is not None:
+                        figures.update((math.floor(p * 100), math.ceil(p * 100)))
             if fn_call.name in GRADING_TOOLS:
                 step = grading_next_step(fn_call.name, result)
                 if step:
@@ -796,11 +798,18 @@ def _run_grading_integrity_guard(output_text: str, state) -> str:
             "game_id": getattr(state, "current_game_id", None),
         })
     trace("grading-integrity guard: blocked response after stale/fabricated grading input")
-    return (
-        "I need to correct the flow: I tried to grade a move or threat that was not actually in your "
-        "latest message, so I will not treat it as verified. Please restate the candidate move or "
-        "threat you want me to check, or ask me to explain the position directly."
-    )
+    # Run yj9c4m7e S15: Rd4 was graded best, then the model invented the student's explanation;
+    # the old notice asked the student to restate the move it had just accepted.
+    verified = [feedback_sentence(item.get("tool"), item.get("result") or {}) for item in results
+                if (item.get("result") or {}).get("verdict") != "stale_or_fabricated_student_input"
+                and not (item.get("result") or {}).get("error")]
+    if all(item.get("tool") == "evaluate_explanation" for item in stale):
+        ask = "Why does that move work? Tell me in your own words what it does."
+    else:
+        ask = ("I tried to grade a move or threat that was not actually in your latest message, so I "
+               "will not treat it as verified. Please restate the candidate move or threat you want me to "
+               "check, or ask me to explain the position directly.")
+    return " ".join([s for s in verified if s] + [ask])
 
 
 def _move_mentioned_near_label(text: str, move: str, label_pattern: str) -> bool:
@@ -910,7 +919,9 @@ def _label_rating_cohort(output_text: str, state) -> str:
         return output_text
     sentences = re.split(r"(?<=[.!?])(\s+)", output_text)
     for i, sentence in enumerate(sentences):
-        quoted = {int(n) for n in re.findall(r"(\d{1,3})\s?%", sentence)}
+        # Whole numbers, decimals included: run 61tm0k1p's "63.5%" was read as "5%" and matched an agenda figure.
+        quoted = {f for n in re.findall(r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s?%", sentence)
+                  for f in (math.floor(float(n)), math.ceil(float(n)))}
         if quoted & figures and _YOUR_LEVEL_RE.search(sentence):
             sentences[i] = _YOUR_LEVEL_RE.sub(lambda m: f"{m.group(1)} your rating in this game (~{game_elo})",
                                               sentence)

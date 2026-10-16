@@ -11,6 +11,29 @@ class EngineStartError(RuntimeError):
     """Raised when a required engine cannot be started."""
 
 
+def history_key(board: chess.Board):
+    """The part of `board`'s game history that can matter for a repetition: the position before the
+    last irreversible move (capture or pawn move) and the moves since, as a hashable cache key. None
+    when there are no such moves on the stack. Earlier positions can never recur."""
+    plies = min(board.halfmove_clock, len(board.move_stack))
+    if not plies:
+        return None
+    root = board.copy()
+    moves = [root.pop().uci() for _ in range(plies)]
+    return root.fen(), tuple(reversed(moves))
+
+
+def replay_history(history, fen: str) -> chess.Board:
+    """The board for `fen` rebuilt from `history_key` output, with those moves on its stack."""
+    root_fen, moves = history
+    board = chess.Board(root_fen)
+    for uci in moves:
+        board.push_uci(uci)
+    if board.fen() != fen:
+        raise ValueError(f"history does not lead to {fen}")
+    return board
+
+
 class EngineManager:
     """Owns all engine processes AND all engine policy (limits, multipv, caching).
 
@@ -25,6 +48,7 @@ class EngineManager:
     def __init__(self, config):
         self.config = config
         self.stockfish = None
+        self.stockfish_options = {}  # what start() configured; reported by identity()
         self.human_models = {}      # tier ("deep"/"scan") -> HumanModel (maia3)
         self.maia_error = None      # user-facing load-warning summary (None if a model loaded)
 
@@ -32,7 +56,8 @@ class EngineManager:
         try:
             self.stockfish = chess.engine.SimpleEngine.popen_uci(self.config.stockfish_path)
             threads = max(1, min(8, os.cpu_count() or 4))
-            self.stockfish.configure({"Threads": threads, "Hash": 512})
+            self.stockfish_options = {"Threads": threads, "Hash": 512}
+            self.stockfish.configure(self.stockfish_options)
         except Exception as e:
             # popen may have succeeded before configure() failed — don't leak that
             # live process when the caller bails on EngineStartError.
@@ -98,12 +123,23 @@ class EngineManager:
         """Back-compat truthiness: is any human-move model available?"""
         return self._resolve_tier("deep")
 
+    def identity(self) -> dict:
+        """Engine names and configured options, for measurement artifacts (corpus scores)."""
+        sf = self.stockfish
+        return {"stockfish": sf.id.get("name") if sf else None,
+                "stockfish_options": dict(self.stockfish_options),
+                "human_models": {tier: model.name for tier, model in self.human_models.items()},
+                "maia_history_plies": getattr(self.config, "maia_history_plies", 12)}
+
     # --- STOCKFISH ---
 
     @lru_cache(maxsize=4000)
-    def quick_eval(self, fen: str, time_limit: float = QUICK_EVAL_TIME):
-        """Cached shallow evaluation. Returns (PovScore, best_move_uci | None)."""
-        board = chess.Board(fen)
+    def quick_eval(self, fen: str, time_limit: float = QUICK_EVAL_TIME, history: tuple = None):
+        """Cached shallow evaluation. Returns (PovScore, best_move_uci | None).
+        `history` is `history_key(board)` for a game position: the engine then sees the moves that
+        could repeat, so a repetition scores as a draw, and the cache never mixes two histories of
+        one FEN. None means the history is unknown (a bare FEN)."""
+        board = replay_history(history, fen) if history else chess.Board(fen)
         info = self.stockfish.analyse(board, chess.engine.Limit(time=time_limit))
         pv = info.get("pv") or []
         score, best = info["score"], (pv[0].uci() if pv else None)
@@ -111,13 +147,16 @@ class EngineManager:
         return score, best
 
     def top_lines(self, board: chess.Board, multipv: int = 3, depth: int = 18,
-                  time_cap: float = None, fresh_hash: bool = False):
+                  time_cap: float = None, fresh_hash: bool = False, root_moves: list = None):
         """Multipv analysis with a wall-clock safety cap. Returns a list of InfoDicts.
-        `fresh_hash` searches as a new game, so earlier searches cannot colour the result."""
+        `fresh_hash` searches as a new game, so earlier searches cannot colour the result.
+        `root_moves` restricts the search to those first moves; searching a candidate from the position
+        before it (with its move stack) is how a repetition the candidate creates is scored as a draw."""
         trace(f"stockfish top_lines(depth={depth}, multipv={multipv}, cap={time_cap or self.DEEP_TIME_CAP}s)")
         limit = chess.engine.Limit(depth=depth, time=time_cap or self.DEEP_TIME_CAP)
         infos = self.stockfish.analyse(board, limit, multipv=multipv,
-                                       **({"game": object()} if fresh_hash else {}))
+                                       **({"game": object()} if fresh_hash else {}),
+                                       **({"root_moves": root_moves} if root_moves else {}))
         return infos if isinstance(infos, list) else [infos]
 
     def best_restricted(self, board: chess.Board, moves: list, depth: int = 18, time_cap: float = None):

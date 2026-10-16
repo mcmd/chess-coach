@@ -18,6 +18,7 @@ import chess.pgn
 
 from app.concepts import get_game_phase
 from app.config import DEFAULT_USER_ELO
+from app.engines import history_key
 from app.human_danger import empty_human_danger, human_danger_mass_for_record
 from app.motifs import detect_motifs_in_line
 from app import trace as tracing
@@ -131,6 +132,11 @@ class MoveRecord:
     explanation_primitives: dict = field(default_factory=dict)
     human_danger: dict = field(default_factory=dict)  # provisional internal P0-1b ranking signal
     agenda_score: dict = field(default_factory=dict)  # non-narrated criticality components
+    # Exact draw rule reached by this move (threefold/fivefold repetition, fifty/seventy-five-move rule).
+    # Rules beat engine and imported evals: 2dtDqQgR's 31. Kh1 repeated the position a third time, yet
+    # Lichess's [%eval] of the final position (-4.45) made it a "blunder" taught as a mistake.
+    draw_rule: str = None
+    eval_without_draw_rule_cp: int = None  # white POV: the eval the draw rule replaced (play on, no claim)
 
     @property
     def move_label(self) -> str:
@@ -183,6 +189,14 @@ class GameReview:
     def record_at(self, ply: int):
         return self.records[ply] if 0 <= ply < len(self.records) else None
 
+    def board_before(self, ply: int) -> chess.Board:
+        """The position before `ply` with the game's moves on its stack, so engine searches see
+        repetitions (a bare `chess.Board(record.fen_before)` cannot)."""
+        board = chess.Board(self.records[0].fen_before)
+        for record in self.records[:ply]:
+            board.push_uci(record.uci)
+        return board
+
     @property
     def agenda(self):
         return [self.records[p] for p in self.agenda_plies]
@@ -221,8 +235,13 @@ class GameReview:
         else:
             text = f"no result yet after {label} (result {result})"
         if result == "1/2-1/2" and self.student_color:
-            student_cp = last.eval_after_cp if self.student_color == "white" else -last.eval_after_cp
-            if student_cp <= -200:
+            final_cp = last.eval_without_draw_rule_cp if last.draw_rule else last.eval_after_cp
+            student_cp = final_cp if self.student_color == "white" else -final_cp
+            if student_cp <= -200 and last.draw_rule:
+                # Run e_adq2d7 S18: "-4.45 at the end" was retold as the value of the drawn position.
+                text += (" — a good result for the student, whose position would have been lost if play had "
+                         "gone on without the repetition")
+            elif student_cp <= -200:
                 text += (f" — a good result for the student, who was objectively worse "
                          f"({student_cp / 100:+.2f} at the end)")
         return "The game ended in " + text if not text[0].isupper() else "The game ended: " + text
@@ -614,6 +633,20 @@ def _terminal_eval_cp(board: chess.Board):
     return None
 
 
+def _draw_rule(board: chess.Board) -> str | None:
+    """The draw rule the position on `board` satisfies, from its move stack. A claimable draw
+    (threefold, fifty moves) is worth 0 to both sides: whichever side prefers the draw takes it."""
+    if board.is_fivefold_repetition():
+        return "fivefold_repetition"
+    if board.is_seventyfive_moves():
+        return "seventy_five_move_rule"
+    if board.is_repetition(3):
+        return "threefold_repetition"
+    if board.is_fifty_moves():
+        return "fifty_move_rule"
+    return None
+
+
 def _header_elo(headers, key, fallback):
     try:
         return int(headers.get(key, ""))
@@ -829,6 +862,10 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         if node_eval is not None:
             eval_after_cp = node_eval.white().score(mate_score=MATE_CP)
             pgn_eval_moves += 1
+        draw_rule = _draw_rule(board)
+        eval_without_draw_rule_cp = None
+        if draw_rule:  # an exact rule fact outranks any evaluation, imported or local
+            eval_without_draw_rule_cp, eval_after_cp = eval_after_cp, 0
 
         before_m = eval_before_cp if mover_white else -eval_before_cp
         after_m = eval_after_cp if mover_white else -eval_after_cp
@@ -903,7 +940,8 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
             brilliancy_note=brilliancy, error_typicality=typicality,
             best_move_human_prob=best_move_human_prob,
             phase=phase, human_win_prob=human_win_prob,
-            human_draw_prob=human_draw_prob, human_loss_prob=human_loss_prob,
+            human_draw_prob=human_draw_prob, human_loss_prob=human_loss_prob, draw_rule=draw_rule,
+            eval_without_draw_rule_cp=eval_without_draw_rule_cp,
         ))
         prev_eval_cp, prev_best_uci = eval_after_cp, next_best
         prev_move_san = san  # next iteration's "opponent's last move"
@@ -964,7 +1002,7 @@ def _eval_with_best(engines, board: chess.Board, eval_time: float = 0.5):
     for _ in range(2):  # one retry — a transient hiccup recovers; a dead engine won't
         try:
             with tracing.suspended():  # bulk scan: one trace line would become hundreds
-                score, best_uci = engines.quick_eval(board.fen(), eval_time)
+                score, best_uci = engines.quick_eval(board.fen(), eval_time, history_key(board))
             return score.white().score(mate_score=MATE_CP), best_uci
         except Exception as e:
             last_err = e
@@ -1347,14 +1385,28 @@ def _engine_setting(engines, name: str, default):
     return getattr(getattr(engines, "config", None), name, default)
 
 
+def _record_board(r: MoveRecord) -> chess.Board:
+    """The position before `r` with its game history when the record carries it (batch reviews mix
+    games, so their records are replayed one by one); a bare FEN when it does not."""
+    board = chess.Board()
+    try:
+        for uci in r.history_uci or []:
+            board.push_uci(uci)
+    except ValueError:
+        return chess.Board(r.fen_before)
+    return board if r.history_uci and board.fen() == r.fen_before else chess.Board(r.fen_before)
+
+
 def _enrich_agenda(review: GameReview, engines, online: bool = True):
     for ply in review.agenda_plies:
         r = review.records[ply]
         r.is_agenda = True
         tracing.trace(f"review: deep-analyzing agenda moment {r.move_label} "
                       f"({r.quality}, -{r.drop_pct} win%)")
-        board_before = chess.Board(r.fen_before)
-        board_after = chess.Board(r.fen_after)
+        # With the game's moves on the stack, so the searches see repetitions.
+        board_before = review.board_before(ply) if isinstance(review, GameReview) else _record_board(r)
+        board_after = board_before.copy()
+        board_after.push_uci(r.uci)
         if online:
             try:
                 _tablebase_verify(r)

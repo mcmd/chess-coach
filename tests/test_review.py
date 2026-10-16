@@ -304,9 +304,9 @@ def test_review_eval_time_is_passed_to_engine():
     calls = []
 
     class TimingFakeEngines(FakeEngines):
-        def quick_eval(self, fen, time_limit=0.3):
+        def quick_eval(self, fen, time_limit=0.3, history=None):
             calls.append(time_limit)
-            return super().quick_eval(fen, time_limit)
+            return super().quick_eval(fen, time_limit, history)
 
     class Cfg(_Cfg):
         review_eval_time = 0.8
@@ -1223,6 +1223,33 @@ def test_review_says_how_the_game_ended_and_what_followed_each_move():
     assert ending in review.digest()
     assert "final move of the game" in review.continuation_after(review.records[-1])
     assert "1... Nf6" in review.continuation_after(review.records[0])
+
+
+def test_a_move_that_repeats_the_position_a_third_time_is_a_draw_not_a_mistake():
+    # 2dtDqQgR: 31. Kh1 repeated the position a third time and the game was drawn, but Lichess's
+    # [%eval] of the final position (-4.45) made it a blunder the coach taught as a mistake.
+    def game(moves, final_eval):
+        tokens = moves.split()
+        body = []
+        for i, tok in enumerate(tokens):
+            body.append(tok)
+            if not tok[0].isdigit():
+                body.append("{ [%%eval %.2f] }" % (final_eval if i == len(tokens) - 1 else 0.0))
+        return (f'[Event "Test"]\n[White "mcmd"]\n[Black "Opponent"]\n[Result "1/2-1/2"]\n\n'
+                f'{" ".join(body)} 1/2-1/2\n')
+
+    third = review_game(game("1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8 5. Nf3", -5.0),
+                        FakeEngines(), _Cfg(), with_maia=False)
+    last = third.records[-1]
+    assert last.draw_rule == "threefold_repetition" and last.eval_after_cp == 0
+    assert last.quality not in ("inaccuracy", "mistake", "blunder") and last.ply not in third.agenda_plies
+    # The value had play gone on, without a figure the coach retold as the drawn position's (e_adq2d7).
+    assert "lost if play had gone on without the repetition" in third.ending() and "-5.00" not in third.ending()
+
+    # Negative control: the same final eval after only a second occurrence is a real collapse.
+    second = review_game(game("1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3", -5.0), FakeEngines(), _Cfg(), with_maia=False)
+    assert second.records[-1].draw_rule is None and second.records[-1].quality == "blunder"
+    assert second.records[-1].ply in second.agenda_plies
 
 
 def test_review_ending_names_checkmate_and_resignation():

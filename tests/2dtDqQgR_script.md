@@ -1,9 +1,10 @@
 # Player script: Lichess 2dtDqQgR
 
-Scenario ID: `lichess-2dtDqQgR-full-v1`.
-Role: pass-1 simulated student for a complete game review: load, self-assessment, all
-four agenda moments, questions about earlier positions, and post-review questions.
-Built from the user's manual session of 2026-10-12.
+Scenario ID: `lichess-2dtDqQgR-full-v2`.
+Role: pass-1 simulated student for a complete game review: load, self-assessment, the
+agenda moments, questions about earlier positions, and post-review questions.
+Built from the user's manual session of 2026-10-12. v2 (2026-10-16): 31. Kh1 drew by
+threefold repetition, so it is no longer an agenda moment; the student asks about it instead.
 
 ## Your job
 
@@ -48,6 +49,12 @@ Load the Lichess game 2dtDqQgR
 **Send:**
 ```text
 I think when I took that pawn with my queen, in the late middlegame
+```
+
+**Allowed branch S1a:** if the coach then shows White's move 17 (after `16...e5`) before
+move 20, send this once, then wait for S2's gate:
+```text
+Let's skip this one and go to the next mistake.
 ```
 
 ### S2 — Move 20: threat
@@ -234,24 +241,33 @@ The rook on d4 covers g4 along the fourth rank.
 Great, next moment please.
 ```
 
-### S18 — Move 31: in check
-
-**Ready when:** the coach shows White's move 31 (after `30...Qg4+`) with White in check.
-
-**Send:**
+**Allowed branch S17a:** if the coach goes back to the skipped move 17 (after `16...e5`) instead of
+finishing, send this once, then wait for S18's gate:
 ```text
-Kh2, because it avoids the perpetual.
+No thanks, I'd rather skip move 17. I'm done with the review.
 ```
 
-### S19 — Move 31: question
+### S18 — Move 31: a misconception
 
-**Ready when:** the coach has responded to `Kh2`.
+**Ready when:** the coach has responded to your request for the next moment (it may have
+finished the review or summarized it) or to your wish to skip move 17.
 
 **Checks:** detour
 
 **Send:**
 ```text
-But isn't that a draw anyway?
+At move 31 I played Kh1. Shouldn't I have played Kh2 to avoid the perpetual?
+```
+
+### S19 — Move 31: follow-up
+
+**Ready when:** the coach has answered your question about move 31.
+
+**Checks:** detour
+
+**Send:**
+```text
+So was Kh1 actually a good move?
 ```
 
 ### S20 — Language switch
@@ -369,7 +385,7 @@ recording to the reviewer.
 Report only execution facts, not PASS/FAIL or coaching-quality scores:
 
 - Scenario ID and last sent step.
-- Sent step IDs in order; include branches (S4a, S10a, S14a, S16a) if used.
+- Sent step IDs in order; include branches (S1a, S4a, S10a, S14a, S16a, S17a) if used.
 - Any unexpected gate and the exact coach message that did not fit.
 - `SCRIPT_COMPLETE` or `STOPPED_UNEXPECTED` (the runner can instead record
   `TIMED_OUT` or `INFRASTRUCTURE_BLOCKED`).

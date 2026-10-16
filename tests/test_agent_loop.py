@@ -212,6 +212,12 @@ def test_game_rating_percentages_are_not_called_your_level():
     state.coaching_rating_figures = {28}
     assert _label_rating_cohort("About 28% of players at your level play it.", state) == \
         "About 28% of players at your level play it."
+    # Router run 61tm0k1p: "63.5% … 17.3% … 19.2%" was read as 5%, 3% and 2%, which matched small agenda
+    # figures, so a coaching-rating figure was relabelled "~1142".
+    rec.maia_top = [{"move": "a3", "probability": 0.05}, {"move": "h3", "probability": 0.03}]
+    state.coaching_rating_figures = set()
+    decimals = "At your level, this position ends in a draw about 63.5% of the time and is lost 19.2%."
+    assert _label_rating_cohort(decimals, state) == decimals
 
 
 def test_position_named_before_the_opponent_s_last_move_is_corrected():
@@ -249,6 +255,22 @@ def test_grading_integrity_guard_blocks_affirming_fabricated_answer():
     assert "not actually in your latest message" in output
     assert state.grading_integrity_events
     assert state.grading_integrity_events[0]["type"] == "stale_grading_response_blocked"
+
+
+def test_invented_explanation_is_blocked_without_hiding_the_verdict_just_given():
+    # Run yj9c4m7e S15: Rd4 was graded best, then the model graded an explanation the student never
+    # wrote; the notice told the student to restate the move it had just accepted.
+    state = SessionState()
+    fen = "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26"
+    state._turn_grading_results = [
+        {"tool": "evaluate_student_answer", "args": {"fen": fen, "student_move_san": "Rd4"},
+         "result": {"verdict": "best", "student_move": "Rd4"}},
+        {"tool": "evaluate_explanation", "args": {"fen": fen, "student_explanation": "it defends g4"},
+         "result": {"verdict": "stale_or_fabricated_student_input", "error": "does not match"}},
+    ]
+    output = _run_grading_integrity_guard("Exactly, Rd4 defends g4!", state)
+    assert "Rd4" in output and "best" in output and "Why does that move work?" in output
+    assert "defends g4" not in output and "restate" not in output
 
 
 def test_rejected_grading_attempt_superseded_by_an_accepted_one_does_not_block():

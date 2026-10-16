@@ -411,6 +411,183 @@ def validate_corpus_manifest(manifest_path) -> dict:
     }
 
 
+# --- Corpus scoring (Quality-SOL Q0): one command, one dated artifact --------
+
+_SCORE_FAMILIES = ("student_color", "eval_source", "agenda_must_include", "agenda_must_exclude",
+                   "diagnosis_by_ply", "key_reason_tokens_by_ply", "together_plies", "separate_plies",
+                   "slide_count", "min_themes")
+
+
+def fixture_counts(spec: dict, failures: list) -> dict:
+    """Per assertion family: [passed, total]. A list/dict family counts each entry; a scalar counts one.
+    Failure strings start with their family name (see check_review)."""
+    counts = {}
+    for family, value in spec.items():
+        total = len(value) if isinstance(value, (list, dict)) else 1
+        failed = sum(1 for failure in failures if failure.split(":", 1)[0] == family)
+        counts[family] = [total - failed, total]
+    return counts
+
+
+def moment_trace(review, spec: dict, failures: list, agenda_size: int = 4) -> list:
+    """For each labelled required moment, the first selection stage it fails and why:
+    eligible -> ranked -> selected -> enriched -> reason_supported -> diagnosis_supported."""
+    from app.review import _agenda_candidate_records
+
+    pool = _agenda_candidate_records(review.records, review.student_color)
+    pool = sorted(pool, key=lambda r: ((getattr(r, "agenda_score", None) or {}).get("total", r.drop_pct),
+                                       r.drop_pct, -r.ply), reverse=True)
+    ranks = {r.ply: i + 1 for i, r in enumerate(pool)}
+    failed = {(f.split(":", 1)[0], f.split()[2]) for f in failures if f.split()[1:2] == ["ply"]}
+    traces = []
+    for ply in spec.get("agenda_must_include", []):
+        record = review.record_at(ply)
+        stages = {}
+
+        def stop(stage, detail):
+            stages[stage] = {"ok": False, "detail": detail}
+
+        if record is None:
+            stop("eligible", f"the game has no ply {ply}")
+        elif review.student_color and record.color != review.student_color:
+            stop("eligible", f"ply {ply} is {record.color}'s move, not the student's")
+        elif ply not in ranks:
+            stop("eligible", f"win% drop {record.drop_pct} is below the agenda threshold of 10 "
+                             f"(quality {record.quality})")
+        else:
+            score = (getattr(record, "agenda_score", None) or {}).get("total")
+            stages["eligible"] = {"ok": True, "detail": f"win% drop {record.drop_pct}"}
+            stages["ranked"] = {"ok": True, "detail": f"rank {ranks[ply]} of {len(pool)} (score {score})"}
+            if ply not in review.agenda_plies:
+                stop("selected", f"rank {ranks[ply]} of {len(pool)}; the agenda holds {agenda_size}")
+            else:
+                stages["selected"] = {"ok": True, "detail": "in the agenda"}
+                primitives = getattr(record, "explanation_primitives", None) or {}
+                if not primitives.get("reasons"):
+                    stop("enriched", "no explanation primitives")
+                else:
+                    stages["enriched"] = {"ok": True, "detail": f"{len(primitives['reasons'])} reasons"}
+                    for stage, family in (("reason_supported", "key_reason_tokens_by_ply"),
+                                          ("diagnosis_supported", "diagnosis_by_ply")):
+                        if str(ply) not in spec.get(family, {}):
+                            stages[stage] = {"ok": None, "detail": "not labelled"}
+                        elif (family, str(ply)) in failed:
+                            stages[stage] = {"ok": False, "detail": next(
+                                f for f in failures if f.startswith(f"{family}: ply {ply} "))}
+                        else:
+                            stages[stage] = {"ok": True, "detail": "matches the label"}
+        traces.append({"ply": ply, "move": record.move_label if record else None, "stages": stages,
+                       "first_failure": next((s for s, v in stages.items() if v["ok"] is False), None)})
+    return traces
+
+
+def _source_revision() -> dict:
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True).stdout
+
+    dirty = {}
+    for line in git("status", "--porcelain").splitlines():  # "XY path": never strip the status columns
+        name = line[3:].strip()
+        if (ROOT / name).is_file():
+            dirty[name] = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+    return {"commit": git("rev-parse", "HEAD").strip(), "branch": git("rev-parse", "--abbrev-ref", "HEAD").strip(),
+            "dirty_files": dirty}
+
+
+def score_corpus(manifest_path, output_path) -> dict:
+    """Score the production review pipeline against the approved corpus with the real engines and save
+    a dated artifact atomically. Makes no model calls and never reads or writes a player's dossier."""
+    import os
+    import time
+    from datetime import datetime, timezone
+
+    from dotenv import load_dotenv
+
+    from app.config import load_config
+    from app.engines import EngineManager
+    from app.review import review_game
+
+    manifest_path = Path(manifest_path)
+    validation = validate_corpus_manifest(manifest_path)
+    if not validation["ready"]:
+        raise SystemExit("manifest not ready: " + json.dumps(
+            {k: validation[k] for k in ("source_errors", "label_errors", "approved")}))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    load_dotenv(ROOT / ".env")
+    os.environ.setdefault("GEMINI_API_KEY", "unused-by-corpus-scoring")  # load_config requires one
+    saved_argv = sys.argv
+    try:
+        sys.argv = [saved_argv[0]]
+        config = load_config()
+    finally:
+        sys.argv = saved_argv
+    config.usernames = {}  # the student is named per fixture below, never from the user's config
+    started = time.monotonic()
+    engines = EngineManager(config)
+    engines.start()
+    fixtures, totals = [], {}
+    try:
+        identity = engines.identity()
+        for fixture in manifest["fixtures"]:
+            if fixture.get("review_status") != "approved":
+                continue
+            spec = fixture.get("expected") or {}
+            entry = {"id": fixture["id"], "student": fixture["student_name"]}
+            t0 = time.monotonic()
+            try:
+                config.player_name = fixture["student_name"]
+                pgn = (manifest_path.parent / fixture["pgn"]).read_text(encoding="utf-8", errors="replace")
+                review = review_game(pgn, engines, config)
+                failures = check_review(review, spec)
+                counts = fixture_counts(spec, failures)
+                for family, (passed, total) in counts.items():
+                    acc = totals.setdefault(family, [0, 0])
+                    acc[0] += passed
+                    acc[1] += total
+                entry.update(status="complete_agreement" if not failures else "label_disagreement",
+                             agenda_plies=review.agenda_plies, failures=failures, counts=counts,
+                             moments=moment_trace(review, spec, failures))
+            except Exception as exc:  # recorded as an execution failure, never as a label disagreement
+                entry.update(status="execution_failed", error=f"{type(exc).__name__}: {exc}")
+            entry["seconds"] = round(time.monotonic() - t0, 1)
+            fixtures.append(entry)
+            print(f"{entry['id']}: {entry['status']} ({entry['seconds']}s)", flush=True)
+    finally:
+        engines.quit()
+
+    statuses = {}
+    for entry in fixtures:
+        statuses.setdefault(entry["status"], []).append(entry["id"])
+    summary = {"games_fully_matching": f"{len(statuses.get('complete_agreement', []))}/{len(fixtures)}"}
+    summary.update({family: f"{totals[family][0]}/{totals[family][1]}"
+                    for family in _SCORE_FAMILIES if family in totals})
+    artifact = {
+        "kind": "corpus_score", "schema_version": 1,
+        "scored_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": _source_revision(),
+        "manifest": {"path": str(manifest_path.relative_to(ROOT) if manifest_path.is_absolute() else manifest_path),
+                     "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                     "fixtures": {f["id"]: f["sha256"] for f in manifest["fixtures"]}},
+        "engines": identity,
+        "settings": {name: getattr(config, name, None) for name in (
+            "review_eval_time", "agenda_best_depth", "agenda_best_time", "agenda_punishment_depth",
+            "agenda_punishment_time", "threat_depth", "threat_time", "practicality_depth",
+            "practicality_time", "use_online_databases", "user_elo")},
+        "runtime_s": round(time.monotonic() - started, 1),
+        "summary": summary,
+        "statuses": statuses,
+        "fixtures": fixtures,
+    }
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output_path.with_suffix(output_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(artifact, indent=1), encoding="utf-8")
+    os.replace(tmp, output_path)
+    return artifact
+
+
 # --- CLI: run the real pipeline on a PGN and print the theme clustering ------
 
 def _main(argv) -> int:
@@ -421,9 +598,25 @@ def _main(argv) -> int:
         report = validate_corpus_manifest(argv[1])
         print(json.dumps(report, indent=2))
         return 0 if report["ready"] else 1
+    if argv and argv[0] == "corpus":
+        import argparse
+        import os
+        parser = argparse.ArgumentParser(prog="eval_coaching.py corpus",
+                                         description="Score the review pipeline against the approved corpus.")
+        parser.add_argument("--manifest", default=str(ROOT / "tests/fixtures/coaching/manifest.json"))
+        parser.add_argument("--output", required=True, help="artifact path, e.g. "
+                            "design/testing/corpus-scores/<date>_<commit>.json")
+        args = parser.parse_args(argv[1:])
+        manifest, output = Path(args.manifest).resolve(), Path(args.output).resolve()
+        os.chdir(ROOT)  # load_config reads the repository's config.json
+        artifact = score_corpus(manifest, output)
+        print(json.dumps(artifact["summary"], indent=1))
+        print(f"saved {output}")
+        return 1 if artifact["statuses"].get("execution_failed") else 0
     if not argv:
         print("usage: eval_coaching.py <pgn-path> [spec.json]\n"
-              "       eval_coaching.py --check-corpus <manifest.json>")
+              "       eval_coaching.py --check-corpus <manifest.json>\n"
+              "       eval_coaching.py corpus --output <artifact.json> [--manifest <manifest.json>]")
         return 2
     from app.config import load_config
     from app.engines import EngineManager

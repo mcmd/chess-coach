@@ -1181,3 +1181,67 @@ def test_wrong_threat_includes_verified_comparison(stub_config):
     assert comparison["your_named_threat_gain_for_opponent"] == "+0.00"
     assert "not the verified main threat" in comparison["secondary_threat_guidance"]
     assert "NEVER invent a geometric reason" in comparison["note"]
+
+
+def test_a_repetition_draw_is_seen_from_game_positions_and_cannot_be_logged_as_a_mistake(stub_config):
+    # 2dtDqQgR: 31. Kh1 repeated the position a third time. Engine lines from a bare FEN cannot know.
+    from app.review import review_game
+    from tests.test_review import _Cfg
+    pgn = ('[White "mcmd"]\n[Black "Opponent"]\n[Result "1/2-1/2"]\n\n'
+           "1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8 5. Nf3 1/2-1/2\n")
+    engines = FakeEngines()
+    tools, state = make_tools(stub_config, engines)
+    state.review = review_game(pgn, FakeEngines(), _Cfg(), with_maia=False)
+    final_fen = state.review.records[-1].fen_after
+    engines.maia_data[final_fen] = {"g8f6": 1.0}            # Maia's view of play going on: "sharp"
+    engines.maia_wdl[final_fen] = (0.45, 0.15, 0.40)
+    before_last = state.review.records[-1].fen_before
+
+    in_game = tools.analyze_position(before_last, moves_to_apply=["Nf3"])
+    assert "threefold repetition" in in_game["draw_rule"] and "claimable" in in_game["draw_rule"]
+    # Run h2z7j1nd S27: the final position itself (after the repeating move) was analysed without history.
+    final = tools.analyze_position(final_fen)
+    assert "threefold repetition" in final["draw_rule"]
+    assert final["human_tendency_at_student_elo"]["risk_profile"] == "drawn by rule"
+    logged = tools.submit_diagnosis(fen=before_last, error_category="ignored_threat",
+                                    error_explanation="Played 5. Nf3.", preventative_habit="Check threats.")
+    assert "not a mistake" in logged["error"] and not state.diagnostics
+    state.review = None  # the same FEN, no longer a position of a reviewed game
+    assert "draw_rule" not in tools.analyze_position(before_last, moves_to_apply=["Nf3"])
+
+
+def test_game_positions_come_from_the_game_and_an_invented_one_is_refused(stub_config):
+    # Run pr40jw2f: with 31. Kh1 off the agenda the coach had no FEN for it, made one up (two black
+    # queens) and reported a 97% loss chance for a position that never occurred.
+    from app.review import review_game
+    from tests.test_review import _Cfg
+    pgn = ('[White "mcmd"]\n[Black "Opponent"]\n[Result "1/2-1/2"]\n\n'
+           "1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8 5. Nf3 1/2-1/2\n")
+    tools, state = make_tools(stub_config)
+    state.review = review_game(pgn, FakeEngines(), _Cfg(), with_maia=False)
+
+    final = tools.get_game_position(5, "white")
+    assert final["fen_before"] == state.review.records[-1].fen_before
+    assert "not a mistake" in final["draw_rule"] and "repetition" in final["game_ending"]
+    assert "correction" not in final  # level if play had gone on: nothing to correct
+    state.review.records[-1].eval_without_draw_rule_cp = -500  # 2dtDqQgR: White lost had play gone on
+    assert "draw to welcome" in tools.get_game_position(5, "white")["correction"]
+    assert "error" in tools.get_game_position(9, "white")
+
+    invented = "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 8 5"  # move 5, White to move
+    refused = tools.analyze_position(invented)
+    assert refused["game_fen"] == final["fen_before"] and "Never construct a FEN" in refused["error"]
+    assert "error" not in tools.analyze_position(final["fen_before"])
+    assert "error" not in tools.analyze_position("4k3/8/8/8/8/8/8/4K2R w K - 0 40")  # not a game move
+
+
+def test_a_search_cut_short_by_its_time_limit_says_its_numbers_are_rough(stub_config):
+    # Run e_adq2d7 S27: a 4-second search stopped at depth 14 gave 31. Kh2 -4.59 and the coach quoted it
+    # as exact; at depth 30 it is -8.76.
+    engines = FakeEngines()
+    tools, _ = make_tools(stub_config, engines)
+    full = tools.analyze_position(START)
+    assert "search_note" not in full and full["top_stockfish_lines"][0]["depth_reached"] == 18
+    engines.depth_reached[START] = 14
+    cut = tools.analyze_position(START)
+    assert "depth 14 of 18" in cut["search_note"] and "do not quote these numbers" in cut["search_note"]

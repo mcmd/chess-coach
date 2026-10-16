@@ -216,7 +216,9 @@ def analyze_pawn_structure_evolution(review, color: str = None) -> dict:
                        + (f" (this undoes the change at {reversal_note[id(e)]})" if id(e) in reversal_note else "")
                        for e in events],
         "narration_rule": ("Tell the story in this order, using the chronology. Do not skip a step that "
-                           "undoes an earlier one (a file that opens and then closes again)."),
+                           "undoes an earlier one (a file that opens and then closes again). Quote each "
+                           "move label exactly as written: '15... dxe4' is Black's move, never 'move 15 (dxe4)' "
+                           "in a story about White (run pr40jw2f)."),
         "final_pawn_snapshot": final_snapshot,
         "final_king_shield": final_shield,
         "safe_language": safe_language(events, final_snapshot, final_shield),
