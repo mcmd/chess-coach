@@ -1223,6 +1223,9 @@ def test_game_positions_come_from_the_game_and_an_invented_one_is_refused(stub_c
     final = tools.get_game_position(5, "white")
     assert final["fen_before"] == state.review.records[-1].fen_before
     assert "not a mistake" in final["draw_rule"] and "repetition" in final["game_ending"]
+    assert "correction" not in final  # level if play had gone on: nothing to correct
+    state.review.records[-1].eval_without_draw_rule_cp = -500  # 2dtDqQgR: White lost had play gone on
+    assert "draw to welcome" in tools.get_game_position(5, "white")["correction"]
     assert "error" in tools.get_game_position(9, "white")
 
     invented = "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 8 5"  # move 5, White to move

@@ -1572,6 +1572,14 @@ class CoachTools:
         if record.draw_rule:
             result["draw_rule"] = (f"{record.move_label} reached a draw by rule "
                                    f"({record.draw_rule.replace('_', ' ')}): it is not a mistake.")
+            played_on = record.eval_without_draw_rule_cp
+            mover_cp = (played_on if record.color == "white" else -played_on) if played_on is not None else None
+            if mover_cp is not None and mover_cp <= -200:
+                # Run 61tm0k1p S18: "to avoid the perpetual" went uncorrected (the explanation grader that
+                # corrects it only runs on agenda moments).
+                result["correction"] = (f"For {record.color.capitalize()}, who would have been worse if play had "
+                                        "gone on, a perpetual check or repetition is the draw to welcome, not "
+                                        "something to avoid. Say so if the student wanted to avoid it.")
         if record is review.records[-1]:
             result["game_ending"] = review.ending()
         return result
