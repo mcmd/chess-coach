@@ -410,7 +410,8 @@ async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
     root_config = json.loads((root / "config.json").read_text(encoding="utf-8"))
     profiles = (root / root_config.get("profiles_dir", "profiles")).resolve()
     config = json.loads((profiles / source_profile / "config.json").read_text(encoding="utf-8"))
-    # Per-run settings (e.g. {"router_model": "gemini-3.8-flash"}); the source profile is not changed.
+    # Per-run settings (e.g. {"router_model": None} for a coach-only baseline; the router is on by
+    # default); the source profile is not changed.
     config.update(config_overrides or {})
     if config.get("user_elo", 1200) != 1200 or config.get("language", "English") != "English":
         raise ValueError("This scenario requires English and Elo 1200; source profile was not changed")

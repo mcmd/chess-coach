@@ -135,4 +135,6 @@ def stub_config(tmp_path):
         cli_history_file=str(tmp_path / "cli_history.txt"),
         lesson_file=str(tmp_path / "lesson_state.json"),
         player_name="mcmd",
+        # The coach-only flow; router behaviour has its own tests (test_router.py, test_commands.py).
+        router_model=None,
     )

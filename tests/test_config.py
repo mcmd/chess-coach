@@ -51,3 +51,17 @@ def test_valid_profile_name_rejects_path_escapes():
     assert not _valid_profile_name("..")
     assert not _valid_profile_name("../outside")
     assert not _valid_profile_name("")
+
+
+def test_router_is_on_by_default_and_can_be_turned_off(tmp_path, monkeypatch):
+    # Default since 2026-10-15 (decisive pair ec0yrv9l/sacvi7je: same quality, 17% fewer Pro calls).
+    # An explicit null, "" or "off" turns it off, which the live eval's baseline arm needs.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr("sys.argv", ["coach.py"])
+    for value, expected in (("absent", "gemini-3.8-flash"), (None, None), ("", None), ("off", None),
+                            ("gemini-x", "gemini-x")):
+        settings = {"stockfish_path": "stockfish"} if value == "absent" else \
+            {"stockfish_path": "stockfish", "router_model": value}
+        (tmp_path / "config.json").write_text(json.dumps(settings), encoding="utf-8")
+        assert load_config().router_model == expected, value

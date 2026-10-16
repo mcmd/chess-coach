@@ -25,8 +25,9 @@ Defaults: source profile `mcmd`, startup deadline 90 seconds, loading deadline
 reviewer runs depth-30 engine checks, minutes each).
 These are keyword arguments (`source_profile`, `startup_timeout`, `load_timeout`,
 `turn_timeout`, `reviewer_timeout`); `root` can supply an explicit repository path.
-`config_overrides` sets per-run profile settings without changing the source profile
-(e.g. `{"router_model": "gemini-3.8-flash"}` for a router run); the manifest records it.
+`config_overrides` sets per-run profile settings without changing the source profile; the
+router is on by default, so a baseline (coach-only) run passes `{"router_model": None}`.
+The manifest records the overrides.
 `await review_run(run_dir, agent_fn=agent)` re-runs pass 2 (checker and a fresh reviewer)
 on a frozen run directory whose review failed; the player's evidence is not touched.
 

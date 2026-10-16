@@ -13,6 +13,7 @@
     "trace": false,
     "use_online_databases": true,
     "maia3_offline": false,
+    "router_model": "gemini-3.8-flash",
     "engine": {
         "review_eval_time": 1.0,
         "agenda_best_depth": 20,

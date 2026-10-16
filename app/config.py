@@ -8,6 +8,7 @@ from dataclasses import dataclass
 # (Was inconsistent: load_config defaulted 1100 while every other call site used
 # getattr(config, "user_elo", 1200). Plan P0-4a.)
 DEFAULT_USER_ELO = 1200
+DEFAULT_ROUTER_MODEL = "gemini-3.8-flash"
 
 @dataclass
 class AppConfig:
@@ -52,9 +53,10 @@ class AppConfig:
     spar_temperature: float = 1.0     # sparring sampling sharpness over Maia's top moves:
                                       # 1.0 = proportional to human likelihood (default, most
                                       # human-realistic); <1 sharper (0 = always top move); >1 flatter
-    # Message router (opt-in). When set, a Flash model classifies each student message
-    # and the backend grades moves/threats/explanations itself; None = off (today's flow).
-    router_model: str | None = None
+    # Message router (on by default since 2026-10-15). A Flash model classifies each student message
+    # and the backend grades moves/threats/explanations itself. Decisive live pair ec0yrv9l/sacvi7je:
+    # same quality, 17% fewer Pro calls, about 3.6 s more per turn. None = off (the coach-only flow).
+    router_model: str | None = DEFAULT_ROUTER_MODEL
     router_thinking_level: str = "low"  # low: same routing as medium on the routing eval, no 8-18 s tail
     model_call_timeout_s: float = 90.0  # per coach-model call; a timed-out call is retried once (#38)
 
@@ -160,6 +162,10 @@ Examples:
         os.remove(HISTORY_FILE)
         print(f"Memory wiped: {HISTORY_FILE} has been cleared.")
 
+    def _router_setting(settings):
+        value = settings.get("router_model", DEFAULT_ROUTER_MODEL)
+        return None if value in (None, "", "off") else value
+
     with open(CONFIG_FILE, "r") as f:
         app_config = json.load(f)
     engine_config = app_config.get("engine", {})
@@ -200,7 +206,7 @@ Examples:
         maia3_offline=bool(app_config.get("maia3_offline", False)),
         maia_history_plies=int(engine_value("maia_history_plies", 12)),
         spar_temperature=float(app_config.get("spar_temperature", 1.0)),
-        router_model=app_config.get("router_model") or None,
+        router_model=_router_setting(app_config),
         router_thinking_level=str(app_config.get("router_thinking_level", "low")),
         model_call_timeout_s=float(app_config.get("model_call_timeout_s", 90.0)),
         review_eval_time=float(engine_value("review_eval_time", 1.0)),
