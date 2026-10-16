@@ -579,6 +579,17 @@ def test_a_timed_out_model_call_is_retried_once_at_medium_thinking_with_a_longer
     assert retry.http_options.timeout == 180000
 
 
+def test_a_server_side_cancel_at_the_time_limit_counts_as_a_timeout():
+    # Run di701mir (2026-10-15) died at S2: when the call's own time limit expires the server can
+    # answer 499 CANCELLED instead of 504, so the medium-thinking retry was skipped.
+    from google.genai import errors
+    from app.agent_loop import _is_timeout
+    cancelled = errors.ClientError(499, {"error": {"code": 499, "message": "The operation was cancelled.",
+                                                   "status": "CANCELLED"}})
+    quota = errors.ClientError(429, {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+    assert _is_timeout(cancelled) and not _is_timeout(quota)
+
+
 def test_coach_calls_retry_a_temporary_overload_with_backoff(stub_config):
     # 2026-10-15: Pro answered 503 "currently experiencing high demand" for minutes at a time;
     # one 503 failed the student's whole turn. Overloads are retried briefly by the SDK; a daily
