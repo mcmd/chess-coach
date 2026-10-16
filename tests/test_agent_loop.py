@@ -175,6 +175,23 @@ def test_reported_verdict_is_left_alone():
     assert state.grader_verdict_events == []
 
 
+def test_game_rating_percentages_are_not_called_your_level():
+    # Run 7_553nes: "about 28% of players at your level" quoted a digest figure judged at the
+    # student's game-time rating (~1142), not the coaching level (~1200), despite the rating note.
+    from app.agent_loop import _label_rating_cohort
+    from app.review import GameReview, MoveRecord
+    rec = MoveRecord(ply=38, number=20, color="white", san="Nxb5", uci="c3b5", fen_before=chess.STARTING_FEN,
+                     fen_after=chess.STARTING_FEN, eval_before_cp=0, eval_after_cp=0, drop_pct=20,
+                     quality="mistake", maia_played_prob=0.28, maia_elo=1142)
+    state = SessionState()
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0],
+                              white_elo=1142, conversation_elo=1200)
+    labelled = _label_rating_cohort("About 28% of players at your level play 20. Nxb5. Most try it.", state)
+    assert "at your rating in this game (~1142)" in labelled and "Most try it." in labelled
+    other = "Players at your level play Qh6 about 32% of the time."
+    assert _label_rating_cohort(other, state) == other
+
+
 def test_grading_integrity_guard_blocks_affirming_fabricated_answer():
     state = SessionState()
     state._turn_grading_results = [

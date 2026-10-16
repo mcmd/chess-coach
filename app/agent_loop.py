@@ -859,6 +859,37 @@ def _run_deliberation_lint(output_text: str, state) -> None:
         trace("deliberation lint: claimed verification without tool call")
 
 
+_YOUR_LEVEL_RE = re.compile(r"\b(at|around|near) your level\b", re.IGNORECASE)
+
+
+def _label_rating_cohort(output_text: str, state) -> str:
+    """A percentage the digest judged at the student's game-time rating is not called "your level"
+    when that differs from the coaching level (run 7_553nes: "about 28% of players at your level"
+    for a ~1142 figure while the coaching level is ~1200, despite the digest's rating note)."""
+    review = getattr(state, "review", None)
+    if not review or not review.student_color or not review.conversation_elo:
+        return output_text
+    game_elo = review.white_elo if review.student_color == "white" else review.black_elo
+    if not game_elo or abs(game_elo - review.conversation_elo) <= 50:
+        return output_text
+    figures = set()
+    for r in review.records:
+        if r.color != review.student_color:
+            continue
+        values = [r.maia_played_prob, r.best_move_human_prob, r.human_win_prob, r.human_draw_prob,
+                  r.human_loss_prob] + [m.get("probability") for m in (r.maia_top or [])]
+        figures.update(round(v * 100) for v in values if v)
+    if not figures:
+        return output_text
+    sentences = re.split(r"(?<=[.!?])(\s+)", output_text)
+    for i, sentence in enumerate(sentences):
+        quoted = {int(n) for n in re.findall(r"(\d{1,3})\s?%", sentence)}
+        if any(abs(q - f) <= 1 for q in quoted for f in figures) and _YOUR_LEVEL_RE.search(sentence):
+            sentences[i] = _YOUR_LEVEL_RE.sub(lambda m: f"{m.group(1)} your rating in this game (~{game_elo})",
+                                              sentence)
+    return "".join(sentences)
+
+
 def _render(full_text: str, state, config=None) -> None:
     if not full_text:
         console.print("\n[bold red]Error: Received no text response from the model.[/bold red]")
@@ -871,6 +902,7 @@ def _render(full_text: str, state, config=None) -> None:
     output_text = _run_claim_gate(output_text, state, config)
     _run_ambiguous_piece_lint(output_text, state)
     output_text = _state_unreported_feedback(output_text, state)
+    output_text = _label_rating_cohort(output_text, state)
     _run_verdict_contradiction_lint(output_text, state)
     _run_deliberation_lint(output_text, state)
     output_text = normalize_move_styling(output_text)
