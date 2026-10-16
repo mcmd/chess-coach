@@ -409,6 +409,20 @@ def test_human_tendency_summary_says_whether_most_players_agree(stub_config):
     assert summary["in_words"] == "Most players rated about 1150 choose e4 (73%)."
 
 
+def test_analyze_position_says_whether_moving_a_piece_is_forced(stub_config):
+    # Run kjofd3ug S6: "moving the queen is absolutely forced", asserted with nothing behind it.
+    board = chess.Board("r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20")
+    board.push_san("Ne4")
+    fen = board.fen()
+    engines = FakeEngines(multipv={fen: [("d6d7", -460), ("d6h6", -480), ("d6g6", -500)]})
+    engines.restricted[fen] = ("c7e6", -900)       # best reply that leaves the queen: 4.4 pawns worse
+    forced = make_tools(stub_config, engines)[0].analyze_position(fen)["forced_check"]
+    assert "queen on d6 is practically forced" in forced and "Ne6" in forced and "4.4 pawns" in forced
+    engines.restricted[fen] = ("c7e6", -500)       # within half a pawn
+    choice = make_tools(stub_config, engines)[0].analyze_position(fen)["forced_check"]
+    assert "preference, not forced" in choice
+
+
 def test_submit_diagnosis_accepts_allows_forcing_sequence(stub_config):
     from app.tools import ERROR_TAXONOMY
     tools, state = make_tools(stub_config)

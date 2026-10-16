@@ -190,6 +190,32 @@ _THREAT_VERDICTS = {
 }
 
 
+def feedback_sentence(tool: str, result: dict) -> str | None:
+    """The backend's own student-facing wording of one grading result (run kjofd3ug: the coach
+    graded, logged the diagnosis and moved on without saying the verdict)."""
+    if not isinstance(result, dict) or result.get("error") \
+            or result.get("verdict") == "stale_or_fabricated_student_input":
+        return None
+    if tool == "evaluate_explanation":
+        if result.get("key_reason_named") is True:
+            return "Your reason is right."
+        if result.get("credited"):
+            return "What you said is true: " + "; ".join(result["credited"]) + "."
+        return None
+    verdict = result.get("verdict")
+    if tool == "evaluate_threat_answer":
+        text, subject = _THREAT_VERDICTS.get(verdict, ""), result.get("student_threat")
+    elif verdict == "illegal":
+        text, subject = "{m} is not legal here", result.get("student_move")
+    else:
+        text, subject = _MOVE_VERDICTS.get(verdict, ""), result.get("student_move")
+    if not text:
+        return None
+    sentence = text.format(m=subject or "that move")
+    # A sentence opening with a move keeps it as written: "e4 is the best move", never "E4".
+    return (sentence if subject else sentence[0].upper() + sentence[1:]) + "."
+
+
 def grading_next_step(tool: str, result: dict, can_grade_explanation: bool = True) -> str | None:
     """The verdict to say first and the one thing to do next, for one grading result.
 
@@ -335,6 +361,7 @@ class CoachTools:
             top_lines.append({"rank": i + 1, "evaluation": _score_to_str(info["score"]),
                               "expected_engine_line": " ".join(pv_san)})
 
+        forced_check = self._forced_piece_check(board, infos, min(safe_depth, 18))
         features = extract_board_features(board)
         threats = self.engines.threat_probe(board)
         motifs = detect_motifs_in_line(board, best_pv_san) if best_pv_san else []
@@ -366,7 +393,44 @@ class CoachTools:
             "board_token_after_moves": token_after,
             "mathematically_legal_moves": ", ".join(board.san(m) for m in board.legal_moves),
             "positional_and_safety_features": features,
+            # Run kjofd3ug S6: "moving the queen is absolutely forced" with nothing behind it. Use
+            # this sentence whenever the student asks whether a move is forced.
+            **({"forced_check": forced_check} if forced_check else {}),
         }
+
+    def _forced_piece_check(self, board: chess.Board, infos: list, depth: int) -> str | None:
+        """When every top engine line moves the same piece, say whether moving it is forced: the
+        best reply that does NOT move it, against the best overall (side to move's view)."""
+        firsts = [info["pv"][0] for info in infos if info.get("pv")]
+        if len(firsts) < 2 or len({m.from_square for m in firsts}) != 1:
+            return None
+        square = firsts[0].from_square
+        piece = board.piece_at(square)
+        if piece is None:
+            return None
+        name = f"{chess.piece_name(piece.piece_type)} on {chess.square_name(square)}"
+        others = [m for m in board.legal_moves if m.from_square != square]
+        if not others:
+            return f"Only the {name} can move, so moving it is forced."
+        try:
+            restricted = self.engines.best_restricted(board, others, depth=depth)
+        except Exception:
+            return None
+        if restricted is None:
+            return None
+        score, move = restricted
+        best_cp = infos[0]["score"].pov(board.turn).score(mate_score=100000)
+        other_cp = score.pov(board.turn).score(mate_score=100000)
+        gap, other = (best_cp - other_cp) / 100, board.san(move)
+        if gap >= 3:
+            return (f"Moving the {name} is practically forced: the best reply that does not move it, {other}, "
+                    f"is {gap:.1f} pawns worse. Which square it goes to is a choice ({board.san(firsts[0])} is "
+                    "the engine's best).")
+        if gap < 1:
+            return (f"Moving the {name} is the engine's preference, not forced: {other}, which does not move "
+                    f"it, is only {gap:.1f} pawns worse.")
+        return (f"Moving the {name} is clearly best but not forced: the best reply that does not move it, "
+                f"{other}, is {gap:.1f} pawns worse.")
 
     def evaluate_student_answer(self, fen: str, student_move_san: str) -> dict:
         """

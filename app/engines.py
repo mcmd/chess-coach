@@ -120,6 +120,17 @@ class EngineManager:
                                        **({"game": object()} if fresh_hash else {}))
         return infos if isinstance(infos, list) else [infos]
 
+    def best_restricted(self, board: chess.Board, moves: list, depth: int = 18, time_cap: float = None):
+        """Best move and score among `moves` only (root_moves search). Used to tell whether a
+        reply is forced: the best move that does NOT do X versus the best overall."""
+        trace(f"stockfish best_restricted(depth={depth}, {len(moves)} root moves)")
+        if not moves:
+            return None
+        info = self.stockfish.analyse(board, chess.engine.Limit(depth=depth, time=time_cap or self.DEEP_TIME_CAP),
+                                      root_moves=moves)
+        pv = info.get("pv") or []
+        return (info["score"], pv[0]) if pv else None
+
     def practical_eval(self, board: chess.Board, depth: int = 10, time_cap: float = 1.0):
         """Evaluation at roughly human calculation depth, from a cleared hash table (a new game).
         The shared hash otherwise carries deep refutations into shallow searches: right after the

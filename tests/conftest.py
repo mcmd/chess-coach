@@ -24,6 +24,7 @@ class FakeEngines:
         self.maia_wdl = maia_wdl or {}        # fen -> (win, draw, loss) fractions (maia3-style)
         self.maia_by_elo = maia_by_elo or {}  # (fen, elo_self) -> probs
         self.threats_data = threats or {}     # fen -> threat_probe result list
+        self.restricted = {}                  # fen -> (uci, cp mover POV): best_restricted result
         self.stockfish = object()  # truthy: "engine available"
         self.maia = bool(self.maia_data) or bool(self.maia_by_elo)
         self.maia_error = None
@@ -51,6 +52,13 @@ class FakeEngines:
                 infos.append({"score": chess.engine.PovScore(chess.engine.Cp(20 - 10 * i), board.turn),
                               "pv": [m]})
         return infos
+
+    def best_restricted(self, board, moves, depth=18, time_cap=None):
+        entry = self.restricted.get(board.fen())
+        if not entry:
+            return None
+        uci, cp = entry
+        return chess.engine.PovScore(chess.engine.Cp(cp), board.turn), chess.Move.from_uci(uci)
 
     def threat_probe(self, board, multipv=2):
         return self.threats_data.get(board.fen(), [])

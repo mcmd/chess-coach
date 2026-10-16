@@ -7,7 +7,7 @@ import chess
 from app.agent_loop import (run_agent_turn, find_illegal_moves, apply_claim_gate,
                             candidate_boards, _record_tool_candidate_fens,
                             _run_claim_gate, _run_ambiguous_piece_lint,
-                            _run_grader_verdict_lint,
+                            _state_unreported_feedback,
                             _run_grading_integrity_guard,
                             _run_verdict_contradiction_lint,
                             _run_deliberation_lint)
@@ -150,29 +150,28 @@ def test_claim_gate_observability_is_capped():
     assert state.claim_gate_events[-1]["before_excerpt"].endswith("54.")
 
 
-def test_grader_verdict_lint_flags_unreported_verdict():
+def test_unreported_verdict_is_recorded_and_stated():
     state = SessionState()
     state._turn_grading_results = [
         {"tool": "evaluate_threat_answer", "args": {"threat_move_san": "Qg6"},
-         "result": {"verdict": "not_a_real_threat", "reveal_allowed": True}}
+         "result": {"verdict": "not_a_real_threat", "student_threat": "Qg6", "reveal_allowed": True}}
     ]
 
-    _run_grader_verdict_lint("Let's move on to the next critical moment.", state)
+    shown = _state_unreported_feedback("Let's move on to the next critical moment.", state)
 
-    assert state.grader_verdict_events
+    assert shown.startswith("Qg6 is not a real threat here.")
     assert state.grader_verdict_events[0]["type"] == "grader_verdict_unreported"
     assert state.grader_verdict_events[0]["verdict"] == "not_a_real_threat"
 
 
-def test_grader_verdict_lint_accepts_reported_verdict():
+def test_reported_verdict_is_left_alone():
     state = SessionState()
     state._turn_grading_results = [
         {"tool": "evaluate_student_answer", "args": {"student_move_san": "Rd4"},
          "result": {"verdict": "best", "reveal_allowed": True}}
     ]
 
-    _run_grader_verdict_lint("Yes, Rd4 is the best move here.", state)
-
+    assert _state_unreported_feedback("Yes, Rd4 is the best move here.", state) == "Yes, Rd4 is the best move here."
     assert state.grader_verdict_events == []
 
 
@@ -516,6 +515,38 @@ def test_a_correct_move_given_with_a_reason_gets_the_reason_graded_not_asked_aga
     routed = grading_next_step("evaluate_student_answer", {"verdict": "best", "student_move": "e4"},
                                can_grade_explanation=False)
     assert "evaluate_explanation" not in routed and "WHY" in routed
+
+
+def test_a_verdict_the_final_reply_skips_is_stated_by_the_backend(stub_config, capsys):
+    # Run kjofd3ug S4: the coach graded Ne4 best, graded the reason, logged the diagnosis and
+    # then replied only "Our next moment is move 24" (text beside tool calls is not shown), so
+    # the student never heard the verdict. The backend now states what the reply leaves out.
+    from tests.test_tools import _answer_engines, START
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), _answer_engines(), stub_config)
+    call = SimpleNamespace(name="evaluate_student_answer", args={"fen": START, "student_move_san": "e4"})
+    chat = FakeChat([SimpleNamespace(candidates=[], function_calls=[call]),
+                     _text_response("Our next moment is move 24.")])
+
+    run_agent_turn(chat, tools, "I would play e4")
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "e4 is the best move." in out and "next moment is move 24" in out
+    assert out.index("best move") < out.index("next moment")
+
+
+def test_unspoken_explanation_credit_is_stated_but_a_spoken_one_is_not_repeated():
+    # Run kjofd3ug S11: the grader credited "moves my rook to safety" and the trade offer, the
+    # coach logged the diagnosis and showed move 26 with no feedback at all.
+    from app.agent_loop import _state_unreported_feedback
+    credited = ["Rfe1 moves the rook on f1 out of the attack by the pawn on g2"]
+    state = SessionState()
+    state._turn_grading_results = [{"tool": "evaluate_explanation", "args": {},
+                                    "result": {"gradable": False, "credited": credited}}]
+    shown = _state_unreported_feedback("Now for move 26.", state)
+    assert shown.startswith("What you said is true: Rfe1 moves the rook on f1 out of the attack")
+    spoken = "You're right that Rfe1 moves the rook out of the attack by the g2 pawn. Now for move 26."
+    assert _state_unreported_feedback(spoken, state) == spoken
 
 
 def test_a_timed_out_model_call_is_retried_once_at_medium_thinking_with_a_longer_limit():

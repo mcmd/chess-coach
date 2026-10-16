@@ -12,7 +12,7 @@ from rich.markdown import Markdown
 
 from app.memory import load_dossier
 from app.notation import ambiguous_piece_references, san_mention_spans
-from app.tools import GRADING_TOOLS, grading_next_step
+from app.tools import GRADING_TOOLS, feedback_sentence, grading_next_step
 from app.trace import fmt_args, trace
 from app.ui import console
 
@@ -201,6 +201,14 @@ def run_agent_turn(chat, coach_tools, message) -> None:
                 if step:
                     result = {**result, "next_step": step + (" " + result["next_step"] if result.get("next_step") else "")}
                 turn_grading_results.append({"tool": fn_call.name, "args": args_dict, "result": result})
+            elif fn_call.name == "submit_diagnosis" and isinstance(result, dict) and result.get("success"):
+                # Run kjofd3ug S4/S11: after grading and logging, the final reply presented the next
+                # moment without the feedback (text written beside tool calls is not shown).
+                feedback = [s for item in turn_grading_results
+                            if (s := feedback_sentence(item["tool"], item["result"]))]
+                if feedback:
+                    result = {**result, "next_step": ("Before presenting the next moment, tell the student "
+                                                      "this turn's feedback first: " + " ".join(feedback))}
             trace(f"tool result: {fn_call.name} in {time.monotonic() - started:.1f}s -> {_summarize_result(result)}")
 
             tool_parts.append(types.Part.from_function_response(name=fn_call.name, response={"result": result}))
@@ -710,22 +718,37 @@ def _verdict_acknowledged(text: str, verdict: str) -> bool:
     return any(token in lower for token in _VERDICT_ACK_TOKENS.get(verdict, (str(verdict).lower(),)))
 
 
-def _run_grader_verdict_lint(output_text: str, state) -> None:
+_EXPLANATION_ACK_TOKENS = ("right", "correct", "exactly", "yes", "good", "well done", "spot on", "true")
+
+
+def _feedback_spoken(text: str, item: dict) -> bool:
+    result = item.get("result") or {}
+    lower = (text or "").lower()
+    if item.get("tool") != "evaluate_explanation":
+        return _verdict_acknowledged(text, result.get("verdict"))
+    if result.get("key_reason_named") is True:
+        return any(token in lower for token in _EXPLANATION_ACK_TOKENS)
+    words_in = set(re.findall(r"[a-z]{5,}", lower))
+    return any(len(set(re.findall(r"[a-z]{5,}", c.lower())) & words_in) >= 2
+               for c in result.get("credited") or [])
+
+
+def _state_unreported_feedback(output_text: str, state) -> str:
+    """A grading verdict or verified explanation credit the reply leaves out is stated by the
+    backend first, in its own verified words (run kjofd3ug S4 and S11: graded, logged, moved on)."""
+    missing = []
     for item in getattr(state, "_turn_grading_results", []) or []:
-        result = item.get("result") or {}
-        verdict = result.get("verdict")
-        if not verdict or result.get("error"):
+        sentence = feedback_sentence(item.get("tool"), item.get("result") or {})
+        if not sentence or _feedback_spoken(output_text, item) or sentence in missing:
             continue
-        if _verdict_acknowledged(output_text, verdict):
-            continue
+        missing.append(sentence)
         _event_append(state, "grader_verdict_events", {
-            "type": "grader_verdict_unreported",
-            "tool": item.get("tool"),
-            "verdict": verdict,
-            "args": dict(item.get("args") or {}),
-            "game_id": getattr(state, "current_game_id", None),
+            "type": "grader_verdict_unreported", "tool": item.get("tool"),
+            "verdict": (item.get("result") or {}).get("verdict"), "args": dict(item.get("args") or {}),
+            "game_id": getattr(state, "current_game_id", None), "stated_by_backend": sentence,
         })
-        trace(f"grader-verdict lint: verdict {verdict} from {item.get('tool')} was not acknowledged")
+        trace(f"grader-verdict check: {item.get('tool')} feedback was missing; stated by the backend")
+    return (" ".join(missing) + "\n\n" + output_text) if missing else output_text
 
 
 def _run_grading_integrity_guard(output_text: str, state) -> str:
@@ -838,7 +861,7 @@ def _render(full_text: str, state, config=None) -> None:
     output_text = _run_grading_integrity_guard(output_text, state)
     output_text = _run_claim_gate(output_text, state, config)
     _run_ambiguous_piece_lint(output_text, state)
-    _run_grader_verdict_lint(output_text, state)
+    output_text = _state_unreported_feedback(output_text, state)
     _run_verdict_contradiction_lint(output_text, state)
     _run_deliberation_lint(output_text, state)
     output_text = normalize_move_styling(output_text)
