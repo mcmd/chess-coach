@@ -330,7 +330,8 @@ class Recorder:
             # the recorded student-visible replies (reviewers of runs zgnvh1if and ehuw4sca read them as leaks).
             from rich.console import Console
             from app import trace as trace_module
-            self.patch(trace_module, "console", Console(file=self.console.file, width=self.console.width))
+            self.hooks.append((trace_module, "console", trace_module.console))  # restored with the patches
+            trace_module.console = Console(file=self.console.file, width=self.console.width)
             self.patch(coach, "cli_prompt", self.prompt)
             original_config = coach.load_config
 

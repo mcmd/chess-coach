@@ -154,6 +154,7 @@ def test_real_main_records_sdk_tools_diagrams_and_rendered_surface(
         return response([{"text": f"<think>{hidden}</think>\nA real diagram follows. {token}\n[[BOARD_unknown]]"}])
 
     endpoint.replies.append(final_reply)
+    stub_config.trace = True  # as run_live_eval launches it (--trace)
     monkeypatch.setattr("sys.stdin", io.StringIO("/help\nWhat should I inspect?\n"))
     path = tmp_path / "events.jsonl"
     # Drain the actual pipe concurrently: complete tool declarations can exceed
@@ -190,6 +191,8 @@ def test_real_main_records_sdk_tools_diagrams_and_rendered_surface(
     assert "invented board token(s) scrubbed" in rendered
     assert "diagram unavailable" in rendered and "BOARD_" not in rendered
     assert "♟" in rendered or "♙" in rendered
+    # Trace lines go to the terminal only: the recorded reply is what a student sees with trace off.
+    assert "· trace |" in surface.file.getvalue() and not any("· trace" in r["text"] for r in replies)
     raw = [e["data"]["response"] for e in recorded if e["kind"] == "model_response"]
     assert raw[0]["candidates"][0]["content"]["parts"][0]["text"] == hidden
     assert raw[0]["usage_metadata"]["total_token_count"] == 76
