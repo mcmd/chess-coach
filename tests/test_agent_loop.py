@@ -468,6 +468,48 @@ def test_bare_squares_in_prose_are_not_move_claims():
         assert find_illegal_moves(text, [chess.Board(_MOVE4_FEN)]) == []
 
 
+def _game_review(sans):
+    from app.review import GameReview, MoveRecord
+    board, records = chess.Board(), []
+    for ply, san in enumerate(sans):
+        before = board.fen()
+        move = board.push_san(san)
+        records.append(MoveRecord(ply=ply, number=ply // 2 + 1, color="black" if ply % 2 else "white", san=san,
+                                  uci=move.uci(), fen_before=before, fen_after=board.fen(), eval_before_cp=0,
+                                  eval_after_cp=0, drop_pct=0.0, quality="ok"))
+    return GameReview(headers={}, records=records, student_color="white", agenda_plies=[])
+
+
+def test_moves_narrated_as_played_must_be_the_games_moves():
+    # Run sacvi7je: "In the game, you played 31. Kh1, and it did end in a draw by repetition after
+    # 31... Qh3+ 32. Kg1 Qg4+ 33. Kh1." Every move was legal somewhere, but the game ended with 31. Kh1.
+    from app.agent_loop import _correct_narrated_history
+    state = SessionState()
+    state.review = _game_review(["Nf3", "Nf6", "Ng1", "Ng8", "Nf3"])
+
+    beyond = "In the game, you played 3. Nf3, and it ended in a draw after 3... Nf6 4. Ng1 Ng8. Next question?"
+    assert _correct_narrated_history(beyond, state) == (
+        "In the game, you played 3. Nf3, and it ended in a draw after 3... Nf6 4. Ng1 Ng8. (Game record: the "
+        "game ended with 3. Nf3; 3... Nf6 was not played.) Next question?")
+    shifted = "Then Black answered `2... Nf6`, retreating.\nGood."
+    assert _correct_narrated_history(shifted, state) == (
+        "Then Black answered `2... Nf6`, retreating. (Game record: the game went 2... Ng8, not 2... Nf6.)\nGood.")
+    assert _correct_narrated_history("En la partida jugaste 2. Ng1 y luego 3. Ng1.", state).endswith(
+        "(Game record: the game went 3. Nf3, not 3. Ng1.)")
+    assert [e["claimed"] for e in state.history_claim_events] == ["3... Nf6", "2... Nf6", "3. Ng1"]
+
+    unchanged = [
+        "In the game you played 1. Nf3 and Black answered 1... Nf6 2. Ng1 Ng8.",
+        "In the game you played 3. Nf3; 3. e4 would have been more active.",
+        "In the game you played 2. Ng1, but 2. e4 was the principled move.",
+        "If you had played 3. e4 in the game, Black would answer 3... e5.",
+        "After 3. Nf3 Nf6 4. Ng1 the position repeats.",
+        "Black did not play 3... Nf6 in the game.",
+    ]
+    for text in unchanged:
+        assert _correct_narrated_history(text, state) == text
+
+
 def test_numbered_or_code_span_pawn_moves_are_still_checked():
     start = [chess.Board()]
     assert find_illegal_moves("Now 1. e5 grabs space.", start) == ["e5"]

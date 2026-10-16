@@ -28,6 +28,7 @@ class SessionState:
     grader_verdict_events: list[dict] = field(default_factory=list)  # shadow verdict-report observability
     verdict_contradiction_events: list[dict] = field(default_factory=list)  # shadow review-packet contradictions
     deliberation_events: list[dict] = field(default_factory=list)  # shadow raw-thought/fake-verification lint
+    history_claim_events: list[dict] = field(default_factory=list)  # moves narrated as played that the game did not play
     last_coach_reply: str = ""                   # rendered text of the coach's last reply (router context)
     pregraded: dict = field(default_factory=dict)  # "tool:fen" -> {tool, args, result}: graded by the backend this turn
     router_events: list[dict] = field(default_factory=list)  # Flash router decisions (observability)
@@ -72,6 +73,7 @@ class TimelineManager:
         self.state.grader_verdict_events.clear()
         self.state.verdict_contradiction_events.clear()
         self.state.deliberation_events.clear()
+        self.state.history_claim_events.clear()
         self.pgn_nodes = []
 
     def load_game(self, game: chess.pgn.Game):
