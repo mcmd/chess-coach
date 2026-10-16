@@ -117,6 +117,30 @@ def test_give_up_missed_by_the_rules_is_still_recorded(stub_config):
     assert state.socratic_attempts[record.fen_before] == 1
 
 
+def test_explanation_span_is_graded_alike_in_both_arms_and_its_source_is_recorded(stub_config):
+    # Quality-SOL §6.1/§9.4: the router's span and the coach's quoted span reach the same backend grading
+    # of the student's whole sentence; an unquoted router span falls back to the message, recorded.
+    message = "Hmm, it keeps the knight active. That's my reason."
+    routed, routed_state, record = _routed_lesson(stub_config, None, status="awaiting_explanation")
+    routed.router.route = Route(label="explanation", explanation="keeps the knight active",
+                                about_current_moment=True)
+    routed.process(message)
+    entry = routed_state.pregraded[f"evaluate_explanation:{record.fen_before}"]
+    assert routed_state.router_events[-1]["explanation_source"] == "router_span"
+
+    coach, coach_state, _ = _routed_lesson(stub_config, None, status="awaiting_explanation")
+    coach.router = None
+    coach.process(message)
+    coach_state.latest_user_text = message  # what coach.py passes run_agent_turn as student_text
+    direct = coach.tools.evaluate_explanation(record.fen_before, "keeps the knight active")
+    assert direct == entry["result"] and direct["graded_text"] == "Hmm, it keeps the knight active."
+    assert coach_state.socratic_attempts == routed_state.socratic_attempts
+
+    routed.router.route = Route(label="explanation", explanation="it attacks the queen", about_current_moment=True)
+    routed.process("Because it is active.")
+    assert routed_state.router_events[-1]["explanation_source"] == "whole_message_fallback"
+
+
 def test_resolvers_accept_only_quoted_legal_moves():
     board = chess.Board()
     assert resolve_move(board, "knight to f3", "I'd go knight to f3") == "Nf3"

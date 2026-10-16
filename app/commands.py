@@ -299,8 +299,10 @@ class CommandProcessor:
             if san:
                 calls.append(("evaluate_threat_answer", {"fen": fen, "threat_move_san": san}))
         else:
-            reason = resolve_explanation(route.explanation, text) or text
-            calls.append(("evaluate_explanation", {"fen": fen, "student_explanation": reason}))
+            reason = resolve_explanation(route.explanation, text)
+            # Quality-SOL §6.1: a missing or unquoted router span falls back to the whole message, recorded as such.
+            event["explanation_source"] = "router_span" if reason else "whole_message_fallback"
+            calls.append(("evaluate_explanation", {"fen": fen, "student_explanation": reason or text}))
         graded = []
         while calls:
             tool, args = calls.pop(0)

@@ -761,6 +761,26 @@ def test_explanation_given_earlier_in_the_same_moment_is_genuine(stub_config):
     assert tools.evaluate_explanation(START, reason)["verdict"] == "stale_or_fabricated_student_input"
 
 
+def test_a_trimmed_explanation_is_graded_with_the_students_whole_sentence(stub_config):
+    # Quality-SOL §6.1: a grader-extracted span ("it gains tempo") cost the student a probe although the
+    # same sentence named the key reason, and a span can drop a qualifier the coach must see.
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    state.latest_user_text = "Hmm. It gains tempo, and it stops the mate on h2. Right?"
+    result = tools.evaluate_explanation(START, "it gains tempo")
+    assert result["key_reason_named"] is True and f"explain:{START}" not in state.socratic_attempts
+    assert (result["graded_text"], result["graded_text_source"]) == (
+        "It gains tempo, and it stops the mate on h2.", "latest_message")
+
+    tools, state = make_tools(stub_config)
+    state.review = _review_with_reasons(_TACTIC_REASONS)
+    state.moment_student_texts = ["Honestly I'm not sure it stops the mate on h2."]
+    state.latest_user_text = "Back to the lesson."
+    result = tools.evaluate_explanation(START, "it stops the mate on h2")
+    assert (result["graded_text"], result["graded_text_source"]) == (
+        "Honestly I'm not sure it stops the mate on h2.", "earlier_moment_message")
+
+
 def test_agenda_moment_is_graded_against_its_verified_best_move(stub_config):
     # Runs cgxiksj3 and t0zauzig, move 31: both king moves lose at depth, so a fresh depth-16
     # search named the played Kh1 "best_move" while grading Kh2 "best". The agenda's verified

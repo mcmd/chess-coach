@@ -440,10 +440,10 @@ class Recorder:
 
             original_turn = coach.run_agent_turn
 
-            def turn(chat, coach_tools, message):
+            def turn(chat, coach_tools, message, student_text=None):
                 self.state = coach_tools.state
                 try:
-                    result = original_turn(chat, coach_tools, message)
+                    result = original_turn(chat, coach_tools, message, student_text=student_text)
                 except BaseException as exc:
                     self.error(exc)
                     raise

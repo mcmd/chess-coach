@@ -142,10 +142,11 @@ def _send_without_leaks(chat, payload, state):
     return response
 
 
-def run_agent_turn(chat, coach_tools, message) -> None:
+def run_agent_turn(chat, coach_tools, message, student_text: str = None) -> None:
     """Send `message`, execute any tool calls until the model stops asking,
-    then render the final response."""
-    coach_tools.state.latest_user_text = message
+    then render the final response. `student_text` is what the student typed: grading
+    provenance is checked against it, never against the backend notes in `message`."""
+    coach_tools.state.latest_user_text = message if student_text is None else student_text
     state = coach_tools.state
     if hasattr(coach_tools.state, "claim_gate_extra_fens"):
         coach_tools.state.claim_gate_extra_fens.clear()

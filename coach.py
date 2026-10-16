@@ -117,7 +117,7 @@ def main():
                     # The spinner lives inside the agent loop now: it covers model
                     # calls only, so tools (e.g. a full game review) can render
                     # their own progress bars without fighting Rich's single-live rule.
-                    run_agent_turn(chat, coach_tools, result.prompt)
+                    run_agent_turn(chat, coach_tools, result.prompt, student_text=user_input.strip())
                 except Exception as e:
                     console.print(f"\n[bold red]An API error occurred:[/bold red] {e}")
         except KeyboardInterrupt:

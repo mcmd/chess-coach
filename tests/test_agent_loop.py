@@ -639,6 +639,22 @@ def test_grading_result_tells_the_coach_to_state_the_verdict_first(stub_config):
     assert "WHY" in result["next_step"]
 
 
+def test_a_move_found_only_in_the_backend_notes_is_not_the_students(stub_config):
+    # Quality-SOL §9.4: provenance was checked against the whole prompt, so a move in the backend's
+    # notes (move history, router results, plan block) counted as the student's input.
+    from tests.test_tools import _answer_engines, START
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), _answer_engines(), stub_config)
+    call = SimpleNamespace(name="evaluate_student_answer", args={"fen": START, "student_move_san": "e4"})
+    chat = FakeChat([SimpleNamespace(candidates=[], function_calls=[call]), _text_response("ok")])
+
+    run_agent_turn(chat, tools, "Student request: what now?\n[Backend: the engine's line is e4 e5.]",
+                   student_text="what now?")
+
+    assert chat.sent[1][0].function_response.response["result"]["verdict"] == "stale_or_fabricated_student_input"
+    assert state.socratic_attempts == {}
+
+
 def test_a_correct_move_given_with_a_reason_gets_the_reason_graded_not_asked_again(stub_config):
     # Live eval 19enjp8m S4: "Ne4 to block their pawn's advancement, and to gain tempo by attacking
     # their queen" was graded as best, then the coach asked why anyway; the moment stayed open and
