@@ -205,9 +205,11 @@ def run_agent_turn(chat, coach_tools, message) -> None:
                 figures = getattr(coach_tools.state, "coaching_rating_figures", None)
                 if figures is None:
                     figures = coach_tools.state.coaching_rating_figures = set()
-                for m in human.get("top_human_moves") or []:
-                    if m.get("probability") is not None:
-                        figures.update((math.floor(m["probability"] * 100), math.ceil(m["probability"] * 100)))
+                shares = [m.get("probability") for m in human.get("top_human_moves") or []]
+                shares += list((human.get("win_draw_loss_for_side_to_move") or {}).values())
+                for p in shares:
+                    if p is not None:
+                        figures.update((math.floor(p * 100), math.ceil(p * 100)))
             if fn_call.name in GRADING_TOOLS:
                 step = grading_next_step(fn_call.name, result)
                 if step:
@@ -917,7 +919,9 @@ def _label_rating_cohort(output_text: str, state) -> str:
         return output_text
     sentences = re.split(r"(?<=[.!?])(\s+)", output_text)
     for i, sentence in enumerate(sentences):
-        quoted = {int(n) for n in re.findall(r"(\d{1,3})\s?%", sentence)}
+        # Whole numbers, decimals included: run 61tm0k1p's "63.5%" was read as "5%" and matched an agenda figure.
+        quoted = {f for n in re.findall(r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s?%", sentence)
+                  for f in (math.floor(float(n)), math.ceil(float(n)))}
         if quoted & figures and _YOUR_LEVEL_RE.search(sentence):
             sentences[i] = _YOUR_LEVEL_RE.sub(lambda m: f"{m.group(1)} your rating in this game (~{game_elo})",
                                               sentence)

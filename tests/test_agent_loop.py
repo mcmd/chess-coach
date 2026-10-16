@@ -212,6 +212,12 @@ def test_game_rating_percentages_are_not_called_your_level():
     state.coaching_rating_figures = {28}
     assert _label_rating_cohort("About 28% of players at your level play it.", state) == \
         "About 28% of players at your level play it."
+    # Router run 61tm0k1p: "63.5% … 17.3% … 19.2%" was read as 5%, 3% and 2%, which matched small agenda
+    # figures, so a coaching-rating figure was relabelled "~1142".
+    rec.maia_top = [{"move": "a3", "probability": 0.05}, {"move": "h3", "probability": 0.03}]
+    state.coaching_rating_figures = set()
+    decimals = "At your level, this position ends in a draw about 63.5% of the time and is lost 19.2%."
+    assert _label_rating_cohort(decimals, state) == decimals
 
 
 def test_position_named_before_the_opponent_s_last_move_is_corrected():

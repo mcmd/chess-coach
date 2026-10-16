@@ -1200,6 +1200,12 @@ class CommandProcessor:
         if not review:
             return {}
         themes = list(getattr(review, "themes", None) or [])
+        # Run bgvvfacf: the student skipped 17. d5, yet the takeaway said it was reviewed. Once moments
+        # have been diagnosed, only their themes were taught.
+        diagnosed = {d.get("fen") for d in self.state.diagnostics}
+        if diagnosed:
+            themes = [t for t in themes if any(0 <= p < len(review.records) and review.records[p].fen_before
+                                               in diagnosed for p in (getattr(t, "plies", None) or []))]
         confidence_rank = {"high": 0, "medium": 1, "low": 2}
         themes.sort(key=lambda t: (
             confidence_rank.get(getattr(t, "confidence", "low"), 2),
