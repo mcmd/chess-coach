@@ -17,7 +17,8 @@ from app.pawn_story import analyze_pawn_structure_evolution
 from app.planner import _normalize_text
 from app.rating import current_rating_enrichment, rating_offer_note
 from app.render import render_board_token
-from app.review import review_game, attach_board_tokens, cp_to_win_pct, MATE_CP, _wdl_risk_profile
+from app.review import (review_game, attach_board_tokens, cp_to_win_pct, MATE_CP, _wdl_risk_profile,
+                        _draw_rule, _record_board, GameReview)
 from app.self_assessment import start_self_assessment, self_assessment_open_note
 from app.ui import console
 
@@ -342,7 +343,7 @@ class CoachTools:
         """
         try:
             safe_depth = max(12, min(int(depth), 24))
-            board = chess.Board(fen)
+            board = self._game_board(fen)
         except (ValueError, TypeError) as e:
             return {"error": f"Invalid FEN: {e}"}
 
@@ -350,6 +351,7 @@ class CoachTools:
         token_before = render_board_token(self.state, board, pov, invert)
         token_after = None
 
+        game_history = bool(board.move_stack)  # known only for positions of the reviewed game
         if moves_to_apply:
             for move_str in moves_to_apply[:10]:
                 try:
@@ -380,13 +382,13 @@ class CoachTools:
                               "expected_engine_line": " ".join(pv_san)})
 
         forced_check = self._forced_piece_check(board, infos, min(safe_depth, 18))
+        draw_rule = _draw_rule(board)
         features = extract_board_features(board)
         threats = self.engines.threat_probe(board)
         motifs = detect_motifs_in_line(board, best_pv_san) if best_pv_san else []
 
         maia_summary = None
-        base_hist = self._history_for_fen(fen)
-        hist = (base_hist + [m.uci() for m in board.move_stack]) if base_hist is not None else None
+        hist = [m.uci() for m in board.move_stack] if game_history else None
         maia = self.engines.maia_predict(board.fen(), history_uci=hist, tier="deep")
         if maia:
             # Run sce7o0q6 S2: a share for the position after the applied moves was told as if it
@@ -429,6 +431,12 @@ class CoachTools:
             # Run kjofd3ug S6: "moving the queen is absolutely forced" with nothing behind it. Use
             # this sentence whenever the student asks whether a move is forced.
             **({"forced_check": forced_check} if forced_check else {}),
+            # Stockfish never scores a repetition at the root of its own search: 31. Kh1 in 2dtDqQgR
+            # repeated the position a third time, so the game was drawn whatever the lines say.
+            **({"draw_rule": f"{draw_rule.replace('_', ' ')}: the position reached is a draw by rule ("
+                             + ("claimable" if draw_rule in ("threefold_repetition", "fifty_move_rule")
+                                else "automatic") + "), whatever the engine lines say if play went on"}
+               if draw_rule else {}),
         }
 
     def _forced_piece_check(self, board: chess.Board, infos: list, depth: int) -> str | None:
@@ -482,7 +490,7 @@ class CoachTools:
             student_move_san: The move the student proposed, in SAN (e.g. "Nf3").
         """
         try:
-            board = chess.Board(fen)
+            board = self._game_board(fen)
         except ValueError as e:
             return {"error": f"Invalid FEN: {e}"}
         cached = self._pregraded_result("evaluate_student_answer", fen)
@@ -621,7 +629,8 @@ class CoachTools:
         }
         if tablebase_verdict:
             result["tablebase_verdict"] = tablebase_verdict
-        maia = self.engines.maia_predict(fen, history_uci=self._history_for_fen(fen), tier="deep")
+        maia = self.engines.maia_predict(fen, history_uci=[m.uci() for m in board.move_stack] or None,
+                                         tier="deep")
         if maia:
             prob = maia["raw_probs"].get(move.uci())
             if prob is not None and prob >= 0.15:
@@ -796,15 +805,19 @@ class CoachTools:
             return None
         return next((r for r in self.state.review.agenda if r.fen_before == fen), None)
 
-    def _history_for_fen(self, fen: str):
-        """Best-effort UCI move history reaching `fen`, for history-aware maia3
-        prediction. Returns None (→ positional fallback) when the line is unknown."""
-        rec = self._agenda_record_for_fen(fen)
-        if rec is not None and getattr(rec, "history_uci", None):
-            return list(rec.history_uci)
+    def _game_board(self, fen: str) -> chess.Board:
+        """The board for `fen` with the game's moves on its stack when `fen` is a position of the reviewed
+        game or the current timeline, so engine searches see repetitions; a bare FEN otherwise. FENs carry
+        move numbers, so a position that occurred several times still maps to one ply."""
+        board = chess.Board(fen)
+        review = self.state.review
+        if review is not None:
+            for ply, record in enumerate(review.records):
+                if record.fen_before == fen:
+                    return review.board_before(ply) if isinstance(review, GameReview) else _record_board(record)
         if self.state.board.move_stack and self.state.board.fen() == fen:
-            return [m.uci() for m in self.state.board.move_stack]
-        return None
+            return self.state.board.copy()
+        return board
 
     def _hint_facts(self, board: chess.Board, best_move: chess.Move) -> dict:
         """Verified facts about the withheld best move, so hints are never invented."""
@@ -1326,6 +1339,14 @@ class CoachTools:
         if category not in ERROR_TAXONOMY:
             return {"error": f"'{error_category}' is not in the taxonomy.",
                     "allowed_categories": ERROR_TAXONOMY}
+        played = next((r for r in (self.state.review.records if self.state.review else [])
+                       if r.fen_before == fen), None)
+        if played is not None and played.draw_rule:
+            # 2dtDqQgR: both decisive runs logged 31. Kh1 (a threefold repetition) as ignored_threat.
+            return {"error": (f"{played.move_label} reached a draw by rule "
+                              f"({played.draw_rule.replace('_', ' ')}); it is not a mistake and must not be "
+                              "logged as one. Tell the student the game was drawn there."),
+                    "draw_rule": played.draw_rule}
 
         if any(d.get("fen") == fen for d in self.state.diagnostics):
             return {"success": True, "message": "Diagnosis already logged for this position. Do not call this tool again."}

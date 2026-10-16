@@ -224,10 +224,10 @@ separate from the mocked pytest suite and backend-only `scripts/eval_coaching.py
 | `tests/2dtDqQgR_review.md` | Pass-2 reviewer: correctness, grounding, lesson state, coaching quality |
 | `tests/live_coach_agents.json` | Role → project agent: `live-coach-player`, `live-coach-reviewer` (`.omp/agents/*.md` set the models) |
 
-The scenario (`lichess-2dtDqQgR-full-v1`) is a complete game review: loading,
-self-assessment, all four agenda moments (threat grading, a legal but inferior
-answer, a hint, an illegal move, candidate commitment, explanations, an in-check
-moment), questions about earlier positions, and post-review questions (pawn
+The scenario (`lichess-2dtDqQgR-full-v2`) is a complete game review: loading,
+self-assessment, the agenda moments (skipping a moment, threat grading, a legal but
+inferior answer, a hint, an illegal move, candidate commitment, explanations), a
+misconception about the game's drawing final move, questions about earlier positions, and post-review questions (pawn
 structure, risk, takeaway). Script steps declare offline checks with
 `**Checks:** detour` (lesson state must not change) and `**Checks:** return N`
 (the agenda moment at move N is restored). The player does
@@ -286,7 +286,8 @@ These are developer/research tools, **not** part of the pytest suite (they load 
 | `scan_eval_slides.py` | Eval-only "within-game slide" corpus scanner (no model, no tokens). Downloads a player's analysed Lichess games (`--user <name>`, cached locally) and classifies each game's archetype (gradual slide / single cliff / chaos / clean) purely from the `[%eval]` annotations, reporting the base rate of sustained one-sided slides and dumping candidate games. Used to validate the `/review` slide detector (`app/review.py::_detect_slides`). Example: `python scripts/scan_eval_slides.py --user msnid --max 3000`. |
 | `validate_batch_slides.py` | End-to-end `/batch` validator: runs the real pipeline (Stockfish + Maia-3) on a multi-game PGN exactly as the command does, writing all output to a throwaway temp dir, then prints the cross-game slide signature, per-pattern axis tags, the relevant digest blocks, and the dossier `slide_trend` the run produces, so the batch output can be eyeballed against ground truth without touching a real profile. Example: `python scripts/validate_batch_slides.py games/your.pgn <player>`. |
 | `eval_routing.py` | Offline message-routing eval on recorded student turns (`tests/fixtures/routing/messages.json`, hand-labelled). `rules` scores today's rules; `router <model> <level>` scores the router (needs `GEMINI_API_KEY`) on its labels and on what the backend would grade. Example: `python scripts/eval_routing.py router gemini-3.8-flash low --runs 3`. |
-| `verify_chess.py` | Checks a chess claim with the local engines instead of by hand: Stockfish (from `config.json`) at depth 30 from a cleared hash, plus Maia3 human-move probabilities. Prints JSON with each search's depth, nodes, time and whether it reached the requested depth. Live-eval reviewers use it for claims the recorded evidence does not settle. Example: `python scripts/verify_chess.py --fen "<FEN>" --move Kh2 --move Kh1 --elo 1200`. |
+| `verify_chess.py` | Checks a chess claim with the local engines instead of by hand: Stockfish (from `config.json`) at depth 30 from a cleared hash, plus Maia3 human-move probabilities. Prints JSON with each search's depth, nodes, time and whether it reached the requested depth. A bare `--fen` cannot see repetitions; `--pgn game.pgn --before 31.` (or `30...` for Black) rebuilds the game position with its history, scores each `--move` from the position before it, and reports exact draw-rule facts (`rules`). Live-eval reviewers use it for claims the recorded evidence does not settle. Example: `python scripts/verify_chess.py --pgn game.pgn --before 31. --move Kh2 --move Kh1 --elo 1200`. |
+| `eval_coaching.py corpus` | Scores the production review pipeline against the approved coaching corpus (`tests/fixtures/coaching/manifest.json`) with the real engines and writes one dated JSON artifact: per-family pass counts, per-fixture failures, where each labelled moment dropped out of selection, source revision, engine identity and settings. No model calls; never touches a player's dossier. About 15 minutes; run nothing else on the engines meanwhile, as searches are time-capped. Example: `PYTHONPATH=. python scripts/eval_coaching.py corpus --output design/testing/corpus-scores/<date>_<commit>.json`. |
 | `compare_live_runs.py` | Compares live-eval runs step by step: maps each reviewer finding to the script steps it covers (reviewers group steps differently, so FAIL totals are not comparable) and prints per-step verdicts, execution status, model calls by model, slow turns and checker failures. Example: `python scripts/compare_live_runs.py profiles/live-eval-...-A profiles/live-eval-...-B`. |
 
 See `GEMINI.md` for the module map and architectural invariants.

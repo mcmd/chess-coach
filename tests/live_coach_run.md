@@ -210,7 +210,10 @@ only a safety net) and Maia3. Do not lower the depth: shallow searches missed th
 `"complete": false` stopped short of the requested depth and is inconclusive.
 Cite the command with the reported depth and nodes. A claim about what happens
 after a line (a mate threat, a trapped piece) is checked at the end of that line
-with `--line`, not at the starting position.
+with `--line`, not at the starting position. A bare `--fen` cannot see the game's
+history, so a claim that depends on it (a repetition, a draw claim, the fifty-move
+rule) is checked with `--pgn <run>/game.pgn --before '31.'` (`'30...'` for Black's
+move); each run directory holds `game.pgn`, taken from the recorded Lichess export.
 
 Give a fresh reviewer agent the frozen evidence, deterministic results, and
 `tests/2dtDqQgR_review.md`, using the configured reviewer model. It can also read

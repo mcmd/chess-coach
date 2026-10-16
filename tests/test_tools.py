@@ -1181,3 +1181,22 @@ def test_wrong_threat_includes_verified_comparison(stub_config):
     assert comparison["your_named_threat_gain_for_opponent"] == "+0.00"
     assert "not the verified main threat" in comparison["secondary_threat_guidance"]
     assert "NEVER invent a geometric reason" in comparison["note"]
+
+
+def test_a_repetition_draw_is_seen_from_game_positions_and_cannot_be_logged_as_a_mistake(stub_config):
+    # 2dtDqQgR: 31. Kh1 repeated the position a third time. Engine lines from a bare FEN cannot know.
+    from app.review import review_game
+    from tests.test_review import _Cfg
+    pgn = ('[White "mcmd"]\n[Black "Opponent"]\n[Result "1/2-1/2"]\n\n'
+           "1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8 5. Nf3 1/2-1/2\n")
+    tools, state = make_tools(stub_config)
+    state.review = review_game(pgn, FakeEngines(), _Cfg(), with_maia=False)
+    before_last = state.review.records[-1].fen_before
+
+    in_game = tools.analyze_position(before_last, moves_to_apply=["Nf3"])
+    assert "threefold repetition" in in_game["draw_rule"] and "claimable" in in_game["draw_rule"]
+    logged = tools.submit_diagnosis(fen=before_last, error_category="ignored_threat",
+                                    error_explanation="Played 5. Nf3.", preventative_habit="Check threats.")
+    assert "not a mistake" in logged["error"] and not state.diagnostics
+    state.review = None  # the same FEN, no longer a position of a reviewed game
+    assert "draw_rule" not in tools.analyze_position(before_last, moves_to_apply=["Nf3"])

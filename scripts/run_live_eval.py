@@ -327,6 +327,19 @@ def _write_reviewer_events(run_dir: Path) -> None:
                 target.write(json.dumps(_reviewer_event(json.loads(line)), ensure_ascii=False) + "\n")
 
 
+def _write_game_pgn(run_dir: Path) -> None:
+    """The reviewed game's PGN, from the recorded Lichess export response, so the reviewer can check
+    history-dependent claims (repetitions, draw claims) with verify_chess.py --pgn."""
+    with (run_dir / "events.jsonl").open(encoding="utf-8") as source:
+        for line in source:
+            event = json.loads(line) if line.strip() else {}
+            data = event.get("data") or {}
+            if (event.get("kind") == "http_response" and "/export" in str(data.get("url"))
+                    and "[Event" in str(data.get("body"))):
+                (run_dir / "game.pgn").write_text(data["body"], encoding="utf-8")
+                return
+
+
 async def _await_agent(handle, timeout: float) -> dict:
     if inspect.iscoroutinefunction(handle.wait):
         result = await asyncio.wait_for(handle.wait(), timeout)
@@ -542,6 +555,7 @@ async def review_run(run_dir, *, root=None, agent_fn=None, reviewer_timeout=REVI
     review_status = "INFRASTRUCTURE_BLOCKED"
     reviewer_handle = None
     _write_reviewer_events(run_dir)
+    _write_game_pgn(run_dir)
     try:
         reviewer_schema = {"type": "object", "properties": {
             "model_id": {"type": "string"}, "findings": {"type": "array", "items": {
@@ -575,7 +589,10 @@ async def review_run(run_dir, *, root=None, agent_fn=None, reviewer_timeout=REVI
             "Check a claim at the position it is about: a claim about what happens after a line (a mate threat, "
             "a trapped piece) is checked with --line reaching that point, not at the starting position (run "
             "5kf7rqwj's 'mating net' was marked FAIL from the starting position although the threat existed "
-            "after the quoted line). "
+            "after the quoted line). A bare --fen cannot see the game's history, so for any claim that depends "
+            "on it (a repetition, a draw claim, the fifty-move rule) use --pgn " + str(run_dir / "game.pgn")
+            + " --before '31.' (White's move 31; '30...' for Black's) instead of --fen: runs ec0yrv9l and "
+            "sacvi7je passed '31. Kh1 loses' although 31. Kh1 repeated the position a third time and drew. "
             "Mark claims NOT OBSERVED only when neither recorded evidence nor the engines settle them, and "
             "explicit execution failures "
             "BLOCKED without erasing earlier successes. Cite event IDs/turns/artifact lines. No overall pass "

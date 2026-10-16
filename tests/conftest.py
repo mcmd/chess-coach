@@ -33,7 +33,7 @@ class FakeEngines:
         self.maia_calls = 0
         self.top_line_calls = []
 
-    def quick_eval(self, fen, time_limit=0.3):
+    def quick_eval(self, fen, time_limit=0.3, history=None):
         self.quick_eval_calls += 1
         cp = self.evals.get(fen, 0)
         return chess.engine.PovScore(chess.engine.Cp(cp), chess.WHITE), self.bests.get(fen)
