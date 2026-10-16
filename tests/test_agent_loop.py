@@ -251,6 +251,22 @@ def test_grading_integrity_guard_blocks_affirming_fabricated_answer():
     assert state.grading_integrity_events[0]["type"] == "stale_grading_response_blocked"
 
 
+def test_invented_explanation_is_blocked_without_hiding_the_verdict_just_given():
+    # Run yj9c4m7e S15: Rd4 was graded best, then the model graded an explanation the student never
+    # wrote; the notice told the student to restate the move it had just accepted.
+    state = SessionState()
+    fen = "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26"
+    state._turn_grading_results = [
+        {"tool": "evaluate_student_answer", "args": {"fen": fen, "student_move_san": "Rd4"},
+         "result": {"verdict": "best", "student_move": "Rd4"}},
+        {"tool": "evaluate_explanation", "args": {"fen": fen, "student_explanation": "it defends g4"},
+         "result": {"verdict": "stale_or_fabricated_student_input", "error": "does not match"}},
+    ]
+    output = _run_grading_integrity_guard("Exactly, Rd4 defends g4!", state)
+    assert "Rd4" in output and "best" in output and "Why does that move work?" in output
+    assert "defends g4" not in output and "restate" not in output
+
+
 def test_rejected_grading_attempt_superseded_by_an_accepted_one_does_not_block():
     # Run hmrpy5ys S21: evaluate_explanation("pass") was rejected, the model then graded the
     # student's real message and logged the diagnosis, but the guard still replaced the reply.

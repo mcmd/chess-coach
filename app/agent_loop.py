@@ -796,11 +796,18 @@ def _run_grading_integrity_guard(output_text: str, state) -> str:
             "game_id": getattr(state, "current_game_id", None),
         })
     trace("grading-integrity guard: blocked response after stale/fabricated grading input")
-    return (
-        "I need to correct the flow: I tried to grade a move or threat that was not actually in your "
-        "latest message, so I will not treat it as verified. Please restate the candidate move or "
-        "threat you want me to check, or ask me to explain the position directly."
-    )
+    # Run yj9c4m7e S15: Rd4 was graded best, then the model invented the student's explanation;
+    # the old notice asked the student to restate the move it had just accepted.
+    verified = [feedback_sentence(item.get("tool"), item.get("result") or {}) for item in results
+                if (item.get("result") or {}).get("verdict") != "stale_or_fabricated_student_input"
+                and not (item.get("result") or {}).get("error")]
+    if all(item.get("tool") == "evaluate_explanation" for item in stale):
+        ask = "Why does that move work? Tell me in your own words what it does."
+    else:
+        ask = ("I tried to grade a move or threat that was not actually in your latest message, so I "
+               "will not treat it as verified. Please restate the candidate move or threat you want me to "
+               "check, or ask me to explain the position directly.")
+    return " ".join([s for s in verified if s] + [ask])
 
 
 def _move_mentioned_near_label(text: str, move: str, label_pattern: str) -> bool:
