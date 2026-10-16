@@ -206,6 +206,11 @@ def test_suggested_categories_from_motif_evidence():
     # 2dtDqQgR move 26: the better line's skewer was Black's move, not something White missed.
     theirs = {"motif": "skewer", "move": "Re4", "detail": "", "side": "black"}
     assert "missed_pin_or_skewer" not in suggest_error_categories(rec(best_line_motifs=[theirs]))
+    # A quiet punishing resource the better move refutes is an ignored threat (YbjNb8wD 8. c4 ...e4),
+    # ahead of a time flag that is only a secondary cause.
+    quiet = rec(punishment_line=["e4"], time_flag="hope_chess",
+                resource_refutation={"resource": "e4", "line": ["hxg4"], "mate_in": None, "student_cp": 400})
+    assert suggest_error_categories(quiet) == ["ignored_threat", "time_management"]
 
     r = rec(motifs=[{"motif": "back_rank_mate", "move": "Ra8#", "detail": ""}])
     assert "king_safety" in suggest_error_categories(r)
