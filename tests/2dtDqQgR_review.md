@@ -139,6 +139,9 @@ missing later turns must not erase observed earlier behavior.
   claiming rooks defend squares but not pawns, is a FAIL. If S16a was used, the
   probe must have asked about what covers g4.
 - One diagnosis for move 26, logged once.
+- S17a (if used): going back to the skipped move 17 after the last moment is acceptable. The
+  student's second skip is a control action: the coach does not grade it, logs no diagnosis for
+  move 17, and closes the review.
 
 ### S18–S21 — Move 31 asked about after the agenda (the game's final move)
 

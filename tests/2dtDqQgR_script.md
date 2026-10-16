@@ -241,10 +241,16 @@ The rook on d4 covers g4 along the fourth rank.
 Great, next moment please.
 ```
 
+**Allowed branch S17a:** if the coach goes back to the skipped move 17 (after `16...e5`) instead of
+finishing, send this once, then wait for S18's gate:
+```text
+No thanks, I'd rather skip move 17. I'm done with the review.
+```
+
 ### S18 — Move 31: a misconception
 
 **Ready when:** the coach has responded to your request for the next moment (it may have
-finished the review or summarized it).
+finished the review or summarized it) or to your wish to skip move 17.
 
 **Checks:** detour
 
@@ -379,7 +385,7 @@ recording to the reviewer.
 Report only execution facts, not PASS/FAIL or coaching-quality scores:
 
 - Scenario ID and last sent step.
-- Sent step IDs in order; include branches (S1a, S4a, S10a, S14a, S16a) if used.
+- Sent step IDs in order; include branches (S1a, S4a, S10a, S14a, S16a, S17a) if used.
 - Any unexpected gate and the exact coach message that did not fit.
 - `SCRIPT_COMPLETE` or `STOPPED_UNEXPECTED` (the runner can instead record
   `TIMED_OUT` or `INFRASTRUCTURE_BLOCKED`).
