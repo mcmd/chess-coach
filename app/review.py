@@ -237,7 +237,11 @@ class GameReview:
         if result == "1/2-1/2" and self.student_color:
             final_cp = last.eval_without_draw_rule_cp if last.draw_rule else last.eval_after_cp
             student_cp = final_cp if self.student_color == "white" else -final_cp
-            if student_cp <= -200:
+            if student_cp <= -200 and last.draw_rule:
+                # Run e_adq2d7 S18: "-4.45 at the end" was retold as the value of the drawn position.
+                text += (" — a good result for the student, whose position would have been lost if play had "
+                         "gone on without the repetition")
+            elif student_cp <= -200:
                 text += (f" — a good result for the student, who was objectively worse "
                          f"({student_cp / 100:+.2f} at the end)")
         return "The game ended in " + text if not text[0].isupper() else "The game ended: " + text

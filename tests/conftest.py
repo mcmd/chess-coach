@@ -25,6 +25,7 @@ class FakeEngines:
         self.maia_by_elo = maia_by_elo or {}  # (fen, elo_self) -> probs
         self.threats_data = threats or {}     # fen -> threat_probe result list
         self.restricted = {}                  # fen -> (uci, cp mover POV): best_restricted result
+        self.depth_reached = {}               # fen -> depth a top_lines search stops at (default: requested)
         self.stockfish = object()  # truthy: "engine available"
         self.maia = bool(self.maia_data) or bool(self.maia_by_elo)
         self.maia_error = None
@@ -42,15 +43,16 @@ class FakeEngines:
         self.top_line_calls.append({"fen": board.fen(), "multipv": multipv,
                                     "depth": depth, "time_cap": time_cap})
         entries = self.multipv.get(board.fen())
+        reached = self.depth_reached.get(board.fen(), depth)  # a real search can stop early at its time cap
         infos = []
         if entries:
             for uci, cp in entries[:multipv]:
                 infos.append({"score": chess.engine.PovScore(chess.engine.Cp(cp), board.turn),
-                              "pv": [chess.Move.from_uci(uci)]})
+                              "pv": [chess.Move.from_uci(uci)], "depth": reached})
         else:
             for i, m in enumerate(list(board.legal_moves)[:multipv]):
                 infos.append({"score": chess.engine.PovScore(chess.engine.Cp(20 - 10 * i), board.turn),
-                              "pv": [m]})
+                              "pv": [m], "depth": reached})
         return infos
 
     def best_restricted(self, board, moves, depth=18, time_cap=None):

@@ -1243,7 +1243,8 @@ def test_a_move_that_repeats_the_position_a_third_time_is_a_draw_not_a_mistake()
     last = third.records[-1]
     assert last.draw_rule == "threefold_repetition" and last.eval_after_cp == 0
     assert last.quality not in ("inaccuracy", "mistake", "blunder") and last.ply not in third.agenda_plies
-    assert "-5.00 at the end" in third.ending()  # what the position was worth had play gone on
+    # The value had play gone on, without a figure the coach retold as the drawn position's (e_adq2d7).
+    assert "lost if play had gone on without the repetition" in third.ending() and "-5.00" not in third.ending()
 
     # Negative control: the same final eval after only a second occurrence is a real collapse.
     second = review_game(game("1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3", -5.0), FakeEngines(), _Cfg(), with_maia=False)

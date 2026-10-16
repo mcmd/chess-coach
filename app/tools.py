@@ -382,7 +382,13 @@ class CoachTools:
             if i == 0:
                 best_pv_san = pv_san
             top_lines.append({"rank": i + 1, "evaluation": _score_to_str(info["score"]),
-                              "expected_engine_line": " ".join(pv_san)})
+                              "expected_engine_line": " ".join(pv_san), "depth_reached": info.get("depth")})
+        reached = min((info.get("depth") or 0) for info in infos) if infos else 0
+        # Run e_adq2d7 S27: a 4-second search stopped at depth 14 gave 31. Kh2 -4.59 and the coach quoted
+        # it; at depth 30 it is -8.76. A cut-short search's numbers are not quotable as exact.
+        search_note = (f"The search stopped at depth {reached} of {safe_depth} (time limit): its evaluations are "
+                       "rough. Say only which side is better and roughly how much (e.g. 'clearly lost'); do not "
+                       "quote these numbers." if infos and reached < safe_depth else None)
 
         forced_check = self._forced_piece_check(board, infos, min(safe_depth, 18))
         draw_rule = _draw_rule(board)
@@ -424,6 +430,7 @@ class CoachTools:
 
         return {
             "top_stockfish_lines": top_lines,
+            **({"search_note": search_note} if search_note else {}),
             "tactical_motifs_in_best_line": motifs,
             "threats_if_side_to_move_passes": threats,
             "human_tendency_at_student_elo": maia_summary,
