@@ -485,14 +485,14 @@ def _source_revision() -> dict:
     import subprocess
 
     def git(*args):
-        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True).stdout
 
     dirty = {}
-    for line in git("status", "--porcelain").splitlines():
-        path = ROOT / line[3:].strip()
-        if path.is_file():
-            dirty[line[3:].strip()] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return {"commit": git("rev-parse", "HEAD"), "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+    for line in git("status", "--porcelain").splitlines():  # "XY path": never strip the status columns
+        name = line[3:].strip()
+        if (ROOT / name).is_file():
+            dirty[name] = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+    return {"commit": git("rev-parse", "HEAD").strip(), "branch": git("rev-parse", "--abbrev-ref", "HEAD").strip(),
             "dirty_files": dirty}
 
 
