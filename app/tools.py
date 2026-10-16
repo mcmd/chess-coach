@@ -454,16 +454,20 @@ class CoachTools:
         score, move = restricted
         best_cp = infos[0]["score"].pov(board.turn).score(mate_score=100000)
         other_cp = score.pov(board.turn).score(mate_score=100000)
-        gap, other = (best_cp - other_cp) / 100, board.san(move)
+        gap, other, best = (best_cp - other_cp) / 100, board.san(move), board.san(firsts[0])
+        # Both evaluations, White's view: "3.6 pawns worse" alone was read as an absolute eval (s7writoz).
+        white = 1 if board.turn == chess.WHITE else -1
+        evals = (f" than {best} ({other} {white * other_cp / 100:+.1f}, {best} {white * best_cp / 100:+.1f}, "
+                 "White's view)")
         if gap >= 3:
             return (f"Moving the {name} is practically forced: the best reply that does not move it, {other}, "
-                    f"is {gap:.1f} pawns worse. Which square it goes to is a choice ({board.san(firsts[0])} is "
-                    "the engine's best).")
+                    f"is {gap:.1f} pawns worse{evals}. Which square it goes to is a choice ({best} is the "
+                    "engine's best).")
         if gap < 1:
             return (f"Moving the {name} is the engine's preference, not forced: {other}, which does not move "
-                    f"it, is only {gap:.1f} pawns worse.")
+                    f"it, is only {gap:.1f} pawns worse{evals}.")
         return (f"Moving the {name} is clearly best but not forced: the best reply that does not move it, "
-                f"{other}, is {gap:.1f} pawns worse.")
+                f"{other}, is {gap:.1f} pawns worse{evals}.")
 
     def evaluate_student_answer(self, fen: str, student_move_san: str) -> dict:
         """
