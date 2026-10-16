@@ -257,6 +257,19 @@ def test_grading_integrity_guard_blocks_affirming_fabricated_answer():
     assert state.grading_integrity_events[0]["type"] == "stale_grading_response_blocked"
 
 
+def test_a_passed_explanation_is_taught_before_the_lesson_moves_on():
+    # Run 9yoo2lm4: the student passed on why 24. Rfe1 works; the coach went straight to move 26.
+    point = ("After 24. Rfe1, the opponent's Qf4 fails: 24... Qf4 25. Rxe8+ Rxe8 26. Qxe8# — White mates in 2. "
+             "After 24. Kxg2, Qf4 works: 24... Qf4 25. Rfe1 Qxg4+.")
+    state = SessionState()
+    state._turn_grading_results = [{"tool": "evaluate_explanation", "args": {}, "result": {
+        "gradable": True, "key_reason_named": False, "student_passed": True, "missing_key_reason": point}}]
+    moved_on = _state_unreported_feedback("Let's move on to the final critical moment: move 26.", state)
+    assert moved_on.startswith("The key point: After 24. Rfe1") and moved_on.endswith("move 26.")
+    taught = "Here's why: after Rfe1, if Black plays Qf4 you have Rxe8+ and mate on e8. Now move 26."
+    assert _state_unreported_feedback(taught, state) == taught
+
+
 def test_invented_explanation_is_blocked_without_hiding_the_verdict_just_given():
     # Run yj9c4m7e S15: Rd4 was graded best, then the model graded an explanation the student never
     # wrote; the notice told the student to restate the move it had just accepted.

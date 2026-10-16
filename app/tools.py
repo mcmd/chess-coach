@@ -227,6 +227,9 @@ def feedback_sentence(tool: str, result: dict) -> str | None:
     if tool == "evaluate_explanation":
         if result.get("key_reason_named") is True:
             return "Your reason is right."
+        if result.get("student_passed") and result.get("missing_key_reason"):
+            # Run 9yoo2lm4: the student passed, and the coach moved on without teaching the point.
+            return "The key point: " + result["missing_key_reason"]
         if result.get("credited"):
             return "What you said is true: " + "; ".join(result["credited"]) + "."
         return None
