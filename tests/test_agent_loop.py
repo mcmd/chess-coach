@@ -551,6 +551,17 @@ def test_agent_loop_progress_callback_reaches_review(stub_config):
 
 
 # --- Leaked model reasoning (live eval 2026-10-12, run par4cj6m) -------------
+def test_reasoning_leaked_as_a_thought_paragraph_is_recognised():
+    # Run kfh79jvv: the opening reply began "s Thought: The tool has loaded the game ... Wait, ..."
+    # and showed the backend plan and the agenda to the student.
+    from app.agent_loop import _LEAKED_REASONING_RE
+    assert _LEAKED_REASONING_RE.match("s Thought: The tool has loaded the game and returned the review digest.")
+    assert _LEAKED_REASONING_RE.match("**Thought:** the student played White.")
+    assert _LEAKED_REASONING_RE.match("s Thinking Process:\n\n1. **Analyze**")
+    for reply in ("Good thought! Let's look at move 20.", "That's a thoughtful answer: Rd4 defends g4."):
+        assert not _LEAKED_REASONING_RE.match(reply)
+
+
 # Gemini began returning its reasoning as an ordinary text part ("s Thinking Process:
 # 1. ..."). One leaked reply in the chat history made every later reply leak (replays:
 # 14/14 leaked with it, 0/4 from clean history), and the drafts revealed withheld answers.

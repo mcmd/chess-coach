@@ -1192,6 +1192,14 @@ def _theme_key(r: MoveRecord) -> str:
     return r.recommended_diagnosis or r.lesson_objective or "uncategorized"
 
 
+def theme_summary(review: GameReview, cat: str, phase: str, plies: list) -> str:
+    """The verified one-line wording of a theme over `plies`."""
+    moves = ", ".join(review.records[p].move_label for p in plies)
+    label = cat.replace("_", " ")
+    return (f"{len(plies)}x {label} in the {phase}: {moves}." if len(plies) >= 2
+            else f"a single {label} moment in the {phase}: {moves}.")
+
+
 def _derive_themes(review: GameReview) -> list:
     """Cluster the enriched agenda by verified category + phase (P0-1a), mirroring
     batch.aggregate_patterns down onto a single game. The synthesis reads these and
@@ -1211,7 +1219,6 @@ def _derive_themes(review: GameReview) -> list:
     themes = []
     for (cat, phase), plies in groups.items():
         plies = sorted(plies)
-        moves = ", ".join(review.records[p].move_label for p in plies)
         label = cat.replace("_", " ")
         count = len(plies)
         themes.append(ReviewTheme(
@@ -1221,8 +1228,7 @@ def _derive_themes(review: GameReview) -> list:
             # A repeated category within one game is a real in-game pattern; a
             # singleton is a one-off (teach it, but don't generalise to a "habit").
             confidence="high" if count >= 2 else "low",
-            safe_summary=(f"{count}x {label} in the {phase}: {moves}." if count >= 2
-                          else f"a single {label} moment in the {phase}: {moves}."),
+            safe_summary=theme_summary(review, cat, phase, plies),
             avoid_language=[f"do not group these plies with moments outside cluster '{cat}:{phase}'"],
         ))
     # Largest (most repeated) clusters first — the most teachable patterns lead.

@@ -96,7 +96,9 @@ def _send_with_spinner(chat, payload):
 # 1. **Analyze ...**"). Kept in the chat history it is imitated by every later reply
 # (live eval 2026-10-12: 22/40 replies; replays leaked 14/14 with it, 0/4 without),
 # and the drafts reveal withheld answers. Such parts never reach the student or history.
-_LEAKED_REASONING_RE = re.compile(r"\A\W*(?:\w+'?s?\s+)?\**\s*thinking process\b", re.IGNORECASE)
+# Run kfh79jvv: the same leak as "s Thought: The tool has loaded the game ... Wait, ...".
+_LEAKED_REASONING_RE = re.compile(r"\A\W*(?:\w+'?s?\s+)?\**\s*(?:thinking process\b|thoughts?\s*\**\s*:)",
+                                  re.IGNORECASE)
 _LEAK_NOTICE = "_(My reply came out garbled, so I discarded it. Please send your last message again.)_"
 
 
