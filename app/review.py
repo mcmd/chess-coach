@@ -137,6 +137,9 @@ class MoveRecord:
     # Lichess's [%eval] of the final position (-4.45) made it a "blunder" taught as a mistake.
     draw_rule: str = None
     eval_without_draw_rule_cp: int = None  # white POV: the eval the draw rule replaced (play on, no claim)
+    # The opponent's quiet punishing resource (first move after the played move) refuted after the better
+    # move: {"resource", "line", "mate_in", "student_cp"} (Quality-SOL §5.6, 2dtDqQgR 24. Rfe1 Qf4 Rxe8+).
+    resource_refutation: dict = None
 
     @property
     def move_label(self) -> str:
@@ -1461,6 +1464,10 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
             deep_after_white_cp = infos[0]["score"].white().score(mate_score=MATE_CP)
         except Exception:
             pass
+        try:
+            r.resource_refutation = _refute_quiet_resource(r, engines, board_before)
+        except Exception:
+            r.resource_refutation = None
         r.suggested_categories = suggest_error_categories(r)
         r.position_facts = position_facts(board_before)
         _attach_lesson_primitives(r, board_before, board_after)
@@ -1786,10 +1793,14 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
             else:
                 data["forcing_move_prevented"] = True
     elif not simple_capture_trade and r.best_move_san:
-        data["why_best_move_works"] = (
-            f"{r.best_move_san} was the engine-verified improvement; use the line "
-            f"{_numbered_line(r.fen_before, r.best_line)} to explain the concrete consequence." if r.best_line
-            else f"{r.best_move_san} was the engine-verified improvement.")
+        contrast = _resource_contrast(r, board_before) if r.resource_refutation else None
+        if contrast:
+            data.update(contrast)
+        else:
+            data["why_best_move_works"] = (
+                f"{r.best_move_san} was the engine-verified improvement; use the line "
+                f"{_numbered_line(r.fen_before, r.best_line)} to explain the concrete consequence." if r.best_line
+                else f"{r.best_move_san} was the engine-verified improvement.")
 
     if r.lesson_objective == "check_opponent_forcing_replies":
         data["process_habit"] = ("After choosing a candidate move, ask: what forcing checks, captures, and "
@@ -1883,6 +1894,8 @@ def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
             "generic": not data.get("best_move_reason_squares"),
             "squares": squares,
             "keywords": keywords,
+            **({"kind": "resource_contrast", "resource": data["resource_refuted"]}
+               if data.get("resource_refuted") else {}),
         })
     if data.get("human_temptation"):
         m = re.search(r" on ([a-h][1-8])", data["human_temptation"])
@@ -1947,6 +1960,83 @@ def _diagnosis_sentence(r: MoveRecord) -> str:
     if r.best_move_san:
         return f"Played {r.move_label}; {r.best_move_label or r.best_move_san} was the engine-verified improvement."
     return f"Played {r.move_label} and lost ground in the position."
+
+
+def _resource_contrast(r: MoveRecord, board_before: chess.Board) -> dict | None:
+    """The move-order lesson from `r.resource_refutation`, as explanation primitives: after the better
+    move the opponent's resource fails, after the played move it works (§5.6)."""
+    ref = r.resource_refutation
+    try:
+        after_best = board_before.copy(stack=False)
+        after_best.push(after_best.parse_san(r.best_move_san))
+        refuted = _numbered_line(after_best.fen(), [ref["resource"]] + list(ref["line"]))
+        after_resource = after_best.copy(stack=False)
+        after_resource.push(after_resource.parse_san(ref["resource"]))
+        squares = []
+        for line in [ref["line"]] + list(ref.get("alternatives") or []):
+            square = _san_dest_square(after_resource, line[0]) if line else None
+            if square and square not in squares:
+                squares.append(square)
+        resource_square = _san_dest_square(after_best, ref["resource"])
+    except (ValueError, KeyError, IndexError):
+        return None
+    outcome = (f"White mates in {ref['mate_in']}" if ref.get("mate_in") and r.color == "white" else
+               f"Black mates in {ref['mate_in']}" if ref.get("mate_in") else "it loses material by force")
+    others = [_numbered_line(after_resource.fen(), line) for line in ref.get("alternatives") or []]
+    text = (f"After {r.best_move_label or r.best_move_san}, the opponent's {ref['resource']} fails: {refuted} — "
+            f"{outcome}" + (f" (also {'; '.join(others)})" if others else "") + ". After "
+            f"{r.move_label}, {ref['resource']} works: {_numbered_line(r.fen_after, r.punishment_line[:3])}. "
+            "The better move comes first so the opponent's resource no longer works.")
+    return {"why_best_move_works": text, "resource_refuted": ref["resource"],
+            "best_move_reason_squares": squares + ([resource_square] if resource_square and resource_square not in squares
+                                                    else []),
+            "best_move_keywords": ["mate", "mates", "checkmate", "mated"] if ref.get("mate_in") else []}
+
+
+def _refute_quiet_resource(r: MoveRecord, engines, board_before: chess.Board) -> dict | None:
+    """Why the better move matters when the played move's punishment begins quietly: the opponent's
+    first punishing move, played after the better move instead, and what the student's side then has.
+    2dtDqQgR 24: after 24. Kxg2 the punishment starts 24...Qf4 (no check, no capture); after 24. Rfe1,
+    24...Qf4 runs into 25. Rxe8+ Rxe8 26. Qxe8# (Stockfish depth 30: mate in 2 either way). Returns
+    None unless the resource is quiet, legal after the better move, and loses decisively there."""
+    if not r.punishment_line or not r.best_move_san:
+        return None
+    after_played = board_before.copy()
+    after_played.push_uci(r.uci)
+    try:
+        resource = after_played.parse_san(r.punishment_line[0])
+    except ValueError:
+        return None
+    if after_played.gives_check(resource) or after_played.is_capture(resource):
+        return None  # forcing first moves have their own reason path
+    board = board_before.copy()
+    board.push(board.parse_san(r.best_move_san))
+    if resource not in board.legal_moves:
+        return None
+    resource_san = board.san(resource)
+    board.push(resource)
+    if board.is_game_over():
+        return None
+    infos = engines.top_lines(board, multipv=2,
+                              depth=int(_engine_setting(engines, "agenda_punishment_depth", 18)),
+                              time_cap=float(_engine_setting(engines, "agenda_punishment_time", 4.0)))
+    if not infos or not infos[0].get("pv"):
+        return None
+    score = infos[0]["score"].pov(board.turn)
+    mate_in = score.mate() if score.is_mate() and score.mate() > 0 else None
+    student_cp = score.score(mate_score=MATE_CP)
+    before_cp = r.deep_eval_before_cp if r.deep_eval_before_cp is not None else r.eval_before_cp
+    before_m = before_cp if r.color == "white" else -before_cp
+    if not mate_in and not (student_cp >= 300 and student_cp - before_m >= 300):
+        return None
+    lines = []
+    for info in infos:
+        alt = info["score"].pov(board.turn)
+        if (info.get("pv") and (mate_in and alt.is_mate() and alt.mate() > 0
+                                or not mate_in and alt.score(mate_score=MATE_CP) >= 300)):
+            lines.append(_pv_to_san(board, info["pv"][:2 * (mate_in or 3)]))
+    return {"resource": resource_san, "line": lines[0], "alternatives": lines[1:], "mate_in": mate_in,
+            "student_cp": student_cp}
 
 
 def _first_forcing_punishment(board_after: chess.Board, punishment_line: list):

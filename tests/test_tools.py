@@ -1275,3 +1275,25 @@ def test_a_search_cut_short_by_its_time_limit_says_its_numbers_are_rough(stub_co
     engines.depth_reached[START] = 14
     cut = tools.analyze_position(START)
     assert "depth 14 of 18" in cut["search_note"] and "do not quote these numbers" in cut["search_note"]
+
+
+def test_move_24_explanations_get_full_partial_or_a_concrete_probe(stub_config):
+    # Slice B: "Qf4 fails to mate on e8" is the point of 24. Rfe1; "rook to safety" is true but partial.
+    from app.review import GameReview, MoveRecord, _explanation_primitives
+    from tests.test_review import _GAME_2DTD_RECORDS
+
+    def grade(answer):
+        tools, state = make_tools(stub_config)
+        rec = MoveRecord(eval_before_cp=184, eval_after_cp=0, **_GAME_2DTD_RECORDS[24])
+        rec.resource_refutation = {"resource": "Qf4", "line": ["Rxe8+", "Rxe8", "Qxe8#"],
+                                   "alternatives": [["Qxe8+", "Rxe8", "Rxe8#"]], "mate_in": 2, "student_cp": 99998}
+        rec.explanation_primitives = _explanation_primitives(rec, chess.Board(rec.fen_before), chess.Board(rec.fen_after))
+        state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+        state.latest_user_text = answer
+        return tools.evaluate_explanation(rec.fen_before, answer)
+
+    assert grade("If Black plays Qf4, I take on e8 with check and it's mate.")["key_reason_named"] is True
+    assert grade("My rook and queen both hit e8, so Black can't play Qf4.")["key_reason_named"] is True
+    partial = grade("it moves my rook to safety, and offers a rook trade")
+    assert partial["key_reason_named"] is False and any("out of the attack" in c for c in partial["also_named"])
+    assert partial["probe_question"] == "After 24. Rfe1, what happens if Black plays the same 24... Qf4? Look at e8."

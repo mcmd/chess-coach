@@ -1136,7 +1136,15 @@ class CoachTools:
         square_text = squares[0] if squares else "the critical square"
         reason_text = " ".join([str(key_reason.get("text") or "").lower()] + [k.lower() for k in keywords])
         moved_piece = self._best_move_piece_on(record, square_text)
-        if any(word in reason_text for word in ("defend", "guard", "protect", "cover", "control")):
+        if key_reason.get("kind") == "resource_contrast" and key_reason.get("resource"):
+            # 2dtDqQgR 24: the probe asked "what forcing threat on e8 is being stopped?", but Rfe1 creates the
+            # e8 threat; the question is what becomes of the opponent's resource after the better move.
+            opponent = "Black" if record.color == "white" else "White"
+            resource = (f"{record.number}... {key_reason['resource']}" if record.color == "white"
+                        else f"{record.number + 1}. {key_reason['resource']}")
+            question = f"After {best}, what happens if {opponent} plays the same {resource}? Look at {square_text}."
+            focus = "resource_contrast"
+        elif any(word in reason_text for word in ("defend", "guard", "protect", "cover", "control")):
             question = (f"After {best}, look at {square_text}. What piece covers it, "
                         "and along which line?")
             focus = "defense_relation"

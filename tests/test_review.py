@@ -1270,3 +1270,44 @@ def test_review_ending_names_checkmate_and_resignation():
     assert "checkmate" in mate.ending().lower() and "2... Qh4#" in mate.ending()
     resigned = review_game(_short_game("1. e4 e5 2. Qh5 Nc6", "0-1"), FakeEngines(), _Cfg(), with_maia=False)
     assert "White resigned" in resigned.ending() and "good result" not in resigned.ending()
+
+
+class _MateAfterEngines:
+    """top_lines double: a mate in 2 for the side to move at the given FEN, a quiet +0.2 elsewhere."""
+
+    def __init__(self, mate_fen, pv_san):
+        self.mate_fen, self.pv_san = mate_fen, pv_san
+        self.config = None
+
+    def top_lines(self, board, multipv=3, depth=18, time_cap=None):
+        if board.fen() == self.mate_fen:
+            walk, pv = board.copy(), []
+            for san in self.pv_san:
+                pv.append(walk.parse_san(san))
+                walk.push(pv[-1])
+            return [{"score": chess.engine.PovScore(chess.engine.Mate(2), board.turn), "pv": pv}]
+        return [{"score": chess.engine.PovScore(chess.engine.Cp(20), board.turn), "pv": [next(iter(board.legal_moves))]}]
+
+
+def test_the_better_move_is_explained_by_the_opponent_resource_it_refutes():
+    # 2dtDqQgR 24 (Quality-SOL §5.6, Stockfish depth 30): after 24. Kxg2 the punishment starts quietly with
+    # 24...Qf4; after 24. Rfe1 the same 24...Qf4 runs into 25. Rxe8+ Rxe8 26. Qxe8#.
+    from app.review import MoveRecord, _explanation_primitives, _refute_quiet_resource
+    record = MoveRecord(eval_before_cp=184, eval_after_cp=0, **_GAME_2DTD_RECORDS[24])
+    board = chess.Board(record.fen_before)
+    after = board.copy()
+    after.push_san("Rfe1")
+    after.push_san("Qf4")
+    engines = _MateAfterEngines(after.fen(), ["Rxe8+", "Rxe8", "Qxe8#"])
+
+    record.resource_refutation = _refute_quiet_resource(record, engines, board)
+    assert record.resource_refutation["resource"] == "Qf4" and record.resource_refutation["mate_in"] == 2
+    key = next(r for r in _explanation_primitives(record, board, chess.Board(record.fen_after))["reasons"]
+               if r.get("key"))
+    assert key["kind"] == "resource_contrast" and "e8" in key["squares"] and "mate" in key["keywords"]
+    assert "24... Qf4 25. Rxe8+ Rxe8 26. Qxe8#" in key["text"] and "24. Kxg2" in key["text"]
+
+    # Not a lesson: a resource the better move does not refute, or a forcing first move (own path).
+    assert _refute_quiet_resource(record, _MateAfterEngines("none", []), board) is None
+    forcing = MoveRecord(eval_before_cp=89, eval_after_cp=-446, **_GAME_2DTD_RECORDS[26])
+    assert _refute_quiet_resource(forcing, engines, chess.Board(forcing.fen_before)) is None
