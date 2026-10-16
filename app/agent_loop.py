@@ -3,6 +3,7 @@
 Extracted from coach.py. Internal <think> scratchpads are stripped before
 display — the student sees the lesson, not the model's bookkeeping.
 """
+import math
 import re
 import time
 
@@ -198,6 +199,15 @@ def run_agent_turn(chat, coach_tools, message) -> None:
             else:
                 result = {"error": f"Tool {fn_call.name} not found."}
             _record_tool_candidate_fens(coach_tools.state, fn_call.name, args_dict, result)
+            if fn_call.name == "analyze_position" and isinstance(result, dict):
+                # Maia figures at the coaching rating: never relabelled as game-rating figures.
+                human = result.get("human_tendency_at_student_elo") or {}
+                figures = getattr(coach_tools.state, "coaching_rating_figures", None)
+                if figures is None:
+                    figures = coach_tools.state.coaching_rating_figures = set()
+                for m in human.get("top_human_moves") or []:
+                    if m.get("probability") is not None:
+                        figures.update((math.floor(m["probability"] * 100), math.ceil(m["probability"] * 100)))
             if fn_call.name in GRADING_TOOLS:
                 step = grading_next_step(fn_call.name, result)
                 if step:
@@ -859,6 +869,21 @@ def _run_deliberation_lint(output_text: str, state) -> None:
         trace("deliberation lint: claimed verification without tool call")
 
 
+def _fix_position_labels(output_text: str, state) -> str:
+    """"The position before 19... Rfe8" said of an agenda position, which is the position AFTER the
+    opponent's last move (router run 39ohha2r showed the move-20 board under that label)."""
+    review = getattr(state, "review", None)
+    if not review:
+        return output_text
+    for r in review.agenda:
+        if not r.prev_move_san:
+            continue
+        label = f"{r.number - 1}... {r.prev_move_san}" if r.color == "white" else f"{r.number}. {r.prev_move_san}"
+        output_text = re.sub(r"\b(position|moment|board)(\s+just)?\s+before\s+(?=" + re.escape(label) + r")",
+                             lambda m: f"{m.group(1)}{m.group(2) or ''} after ", output_text, flags=re.IGNORECASE)
+    return output_text
+
+
 _YOUR_LEVEL_RE = re.compile(r"\b(at|around|near) your level\b", re.IGNORECASE)
 
 
@@ -872,19 +897,21 @@ def _label_rating_cohort(output_text: str, state) -> str:
     game_elo = review.white_elo if review.student_color == "white" else review.black_elo
     if not game_elo or abs(game_elo - review.conversation_elo) <= 50:
         return output_text
+    # Only the agenda moments' figures (the ones the digest prints per moment), each with its floor and
+    # ceiling for rounding, minus any figure analyze_position returned at the coaching rating: router
+    # run 39ohha2r relabelled a coaching-rating 32% that sat within a point of a non-agenda figure.
     figures = set()
-    for r in review.records:
-        if r.color != review.student_color:
-            continue
+    for r in review.agenda:
         values = [r.maia_played_prob, r.best_move_human_prob, r.human_win_prob, r.human_draw_prob,
                   r.human_loss_prob] + [m.get("probability") for m in (r.maia_top or [])]
-        figures.update(round(v * 100) for v in values if v)
+        figures.update(f for v in values if v for f in (math.floor(v * 100), math.ceil(v * 100)))
+    figures -= set(getattr(state, "coaching_rating_figures", None) or ())
     if not figures:
         return output_text
     sentences = re.split(r"(?<=[.!?])(\s+)", output_text)
     for i, sentence in enumerate(sentences):
         quoted = {int(n) for n in re.findall(r"(\d{1,3})\s?%", sentence)}
-        if any(abs(q - f) <= 1 for q in quoted for f in figures) and _YOUR_LEVEL_RE.search(sentence):
+        if quoted & figures and _YOUR_LEVEL_RE.search(sentence):
             sentences[i] = _YOUR_LEVEL_RE.sub(lambda m: f"{m.group(1)} your rating in this game (~{game_elo})",
                                               sentence)
     return "".join(sentences)
@@ -903,6 +930,7 @@ def _render(full_text: str, state, config=None) -> None:
     _run_ambiguous_piece_lint(output_text, state)
     output_text = _state_unreported_feedback(output_text, state)
     output_text = _label_rating_cohort(output_text, state)
+    output_text = _fix_position_labels(output_text, state)
     _run_verdict_contradiction_lint(output_text, state)
     _run_deliberation_lint(output_text, state)
     output_text = normalize_move_styling(output_text)

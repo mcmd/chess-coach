@@ -200,6 +200,34 @@ def test_game_rating_percentages_are_not_called_your_level():
     assert "at your rating in this game (~1142)" in labelled and "Most try it." in labelled
     other = "Players at your level play Qh6 about 32% of the time."
     assert _label_rating_cohort(other, state) == other
+    # Router run 39ohha2r: "players at your level ... Qh6 (about 32%)" was relabelled ~1142, but 32% was
+    # analyze_position's figure at the coaching rating; it only sat within a point of a digest number
+    # from a non-agenda move. Only agenda figures count, and a coaching-rating figure is never relabelled.
+    side = MoveRecord(ply=10, number=6, color="white", san="d4", uci="d2d4", fen_before=chess.STARTING_FEN,
+                      fen_after=chess.STARTING_FEN, eval_before_cp=0, eval_after_cp=0, drop_pct=0,
+                      quality="ok", maia_played_prob=0.31)
+    state.review.records = [side, rec]
+    state.review.agenda_plies = [1]
+    assert _label_rating_cohort("At your level about 32% play Qh6.", state) == "At your level about 32% play Qh6."
+    state.coaching_rating_figures = {28}
+    assert _label_rating_cohort("About 28% of players at your level play it.", state) == \
+        "About 28% of players at your level play it."
+
+
+def test_position_named_before_the_opponent_s_last_move_is_corrected():
+    # Router run 39ohha2r: "Let's go back to the position before 19... Rfe8" while showing the position
+    # after it (the agenda position, where White is to play move 20).
+    from app.agent_loop import _fix_position_labels
+    from app.review import GameReview, MoveRecord
+    rec = MoveRecord(ply=38, number=20, color="white", san="Nxb5", uci="c3b5", fen_before=chess.STARTING_FEN,
+                     fen_after=chess.STARTING_FEN, eval_before_cp=0, eval_after_cp=0, drop_pct=20,
+                     quality="mistake", prev_move_san="Rfe8")
+    state = SessionState()
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+    assert _fix_position_labels("Let's go back to the position before 19... Rfe8:", state) == \
+        "Let's go back to the position after 19... Rfe8:"
+    keep = "Before 19... Rfe8, Black's rook was on f8."
+    assert _fix_position_labels(keep, state) == keep
 
 
 def test_grading_integrity_guard_blocks_affirming_fabricated_answer():
