@@ -15,6 +15,23 @@ def test_knight_fork_detected():
     assert "rook on a8" in detail and "king on e8" in detail
 
 
+def test_a_fork_records_its_side_and_whether_the_line_wins_a_target():
+    board = chess.Board("r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1")
+    won = next(m for m in detect_motifs_in_line(board, ["Nc7+", "Kd7", "Nxa8"]) if m["motif"] == "knight_fork")
+    assert won["side"] == "white" and won["ply"] == 0 and won["material_won"] is True
+    unresolved = next(m for m in detect_motifs_in_line(board, ["Nc7+"]) if m["motif"] == "knight_fork")
+    assert unresolved["material_won"] is False  # the line ends before anything is won
+
+
+def test_motifs_deep_in_the_better_line_are_tagged_with_their_side():
+    # 2dtDqQgR move 26, better line 26. Rd4 Re4 27. f3 Re5 28. Qc7 Rbe8 29. d6 Qh6 (Stockfish depth 30):
+    # the skewer is Black's move and White's queen "fork" wins nothing (Rbe8 covers it).
+    board = chess.Board("1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26")
+    motifs = {m["motif"]: m for m in detect_motifs_in_line(board, "Rd4 Re4 f3 Re5 Qc7 Rbe8 d6 Qh6".split())}
+    assert motifs["skewer"]["side"] == "black"
+    assert motifs["queen_fork"]["side"] == "white" and motifs["queen_fork"]["material_won"] is False
+
+
 def test_pin_detected():
     board = chess.Board("4k3/8/2n5/8/8/8/8/4KB2 w - - 0 1")
     motifs = detect_motifs_in_line(board, ["Bb5"])

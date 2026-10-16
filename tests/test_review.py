@@ -199,8 +199,13 @@ def test_suggested_categories_from_motif_evidence():
         base.update(kw)
         return MoveRecord(**base)
 
-    r = rec(best_line_motifs=[{"motif": "knight_fork", "move": "Nc7+", "detail": ""}])
-    assert "missed_fork" in suggest_error_categories(r)
+    # A missed fork counts only when it is the student's and wins material later in the line (§5.3).
+    won = {"motif": "knight_fork", "move": "Nc7+", "detail": "", "side": "white", "material_won": True}
+    assert "missed_fork" in suggest_error_categories(rec(best_line_motifs=[won]))
+    assert "missed_fork" not in suggest_error_categories(rec(best_line_motifs=[{**won, "material_won": False}]))
+    # 2dtDqQgR move 26: the better line's skewer was Black's move, not something White missed.
+    theirs = {"motif": "skewer", "move": "Re4", "detail": "", "side": "black"}
+    assert "missed_pin_or_skewer" not in suggest_error_categories(rec(best_line_motifs=[theirs]))
 
     r = rec(motifs=[{"motif": "back_rank_mate", "move": "Ra8#", "detail": ""}])
     assert "king_safety" in suggest_error_categories(r)
@@ -561,6 +566,14 @@ def test_likely_wrong_answer_anticipated_with_refutation():
     assert "Nf3" in record.likely_wrong_answer
     assert "refute with" in record.likely_wrong_answer
     assert "most likely student guess" in review.digest()
+
+    # Run y6jaazmg: 26. f3 gave up the edge but stayed level (0.00 at depth 30), yet the digest said
+    # "loses 10 win%; refute with" and the coach told the student f3 loses.
+    evals[fens[4]] = 150
+    evals[guess_board.fen()] = -20
+    level = review_game(PGN, FakeEngines(evals=evals, maia={fens[4]: {"h5f7": 0.45, "g1f3": 0.25}}),
+                        _Cfg()).records[4].likely_wrong_answer
+    assert "gives up the advantage" in level and "does not lose" in level and "refute" not in level
 
 
 def test_aspirational_instinct_from_stronger_maia():

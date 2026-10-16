@@ -32,7 +32,7 @@ def _walk_ray(board: chess.Board, start: chess.Square, df: int, dr: int):
 
 def _detect_fork(board: chess.Board, move: chess.Move, mover: chess.Color):
     """After `move` was pushed: does the moved piece attack 2+ valuable targets
-    while not being profitably capturable itself?"""
+    while not being profitably capturable itself? Returns [(label, square, is_king)] or None."""
     piece = board.piece_at(move.to_square)
     if piece is None:
         return None
@@ -46,7 +46,7 @@ def _detect_fork(board: chess.Board, move: chess.Move, mover: chess.Color):
         if (target.piece_type == chess.KING
                 or PIECE_VALUES[target.piece_type] > attacker_val
                 or not defended):
-            targets.append(_piece_label(target, tsq))
+            targets.append((_piece_label(target, tsq), tsq, target.piece_type == chess.KING))
     if len(targets) < 2:
         return None
     # A "fork" the opponent can simply capture for profit is not a fork.
@@ -137,15 +137,20 @@ def _detect_removal_of_defender(board: chess.Board, move: chess.Move, mover: che
 
 def detect_motifs_in_line(board: chess.Board, moves) -> list[dict]:
     """Detect tactical motifs along a line of moves (SAN strings or Moves)
-    played from `board`. Returns [{motif, move, detail}], each kind at most once.
-    """
+    played from `board`. Returns [{motif, move, detail, side, ply}], each kind at most once.
+    `side` is the colour that played the motif's move and `ply` its offset in the line. A fork also
+    has `material_won`: whether the forking side captures one of its non-king targets later in this
+    line. Geometry alone is not a won fork (2dtDqQgR 26. Qxa7 Qxg4+ "forked" b4 and d1, winning
+    neither, and was diagnosed missed_fork)."""
     b = board.copy(stack=False)
     found, seen = [], set()
+    forks = []  # every fork occurrence; the reported one per kind is chosen at the end
+    current = {}
 
     def add(kind, san, detail):
         if kind not in seen:
             seen.add(kind)
-            found.append({"motif": kind, "move": san, "detail": detail})
+            found.append({"motif": kind, "move": san, "detail": detail, **current})
 
     prev_capture_sq = None        # square where the previous mover just captured
     zwischenzug_candidates = []   # declined recaptures awaiting confirmation
@@ -159,7 +164,12 @@ def detect_motifs_in_line(board: chess.Board, moves) -> list[dict]:
         except ValueError:
             break
         mover = b.turn
+        current = {"side": "white" if mover == chess.WHITE else "black", "ply": ply}
         is_capture = b.is_capture(move)
+        for fork in forks:
+            if (fork["side"] == current["side"] and is_capture and move.to_square in fork["targets"]
+                    and b.piece_at(move.to_square) and b.piece_at(move.to_square).piece_type == fork["targets"][move.to_square]):
+                fork["material_won"] = True
 
         # Zwischenzug: a recapture is available, but the line plays a forcing
         # in-between move first and only recaptures within the next two moves.
@@ -209,7 +219,10 @@ def detect_motifs_in_line(board: chess.Board, moves) -> list[dict]:
         if fork_targets:
             piece = b.piece_at(move.to_square)
             kind = f"{chess.piece_name(piece.piece_type)}_fork" if piece else "fork"
-            add(kind, san, f"{san} attacks {' and '.join(fork_targets)} simultaneously")
+            forks.append({"motif": kind, "move": san, **current, "material_won": False,
+                          "detail": f"{san} attacks {' and '.join(t[0] for t in fork_targets)} simultaneously",
+                          "targets": {sq: b.piece_at(sq).piece_type for _, sq, is_king in fork_targets
+                                      if not is_king}})
 
         pin_skewer = _detect_pin_skewer(b, move, mover)
         if pin_skewer:
@@ -229,4 +242,10 @@ def detect_motifs_in_line(board: chess.Board, moves) -> list[dict]:
                 add("checkmate", san, f"{san} is checkmate")
             break
 
+    # One fork per kind: the first that wins material, else the first.
+    for kind in dict.fromkeys(f["motif"] for f in forks):
+        same = [f for f in forks if f["motif"] == kind]
+        chosen = next((f for f in same if f["material_won"]), same[0])
+        found.append({k: v for k, v in chosen.items() if k != "targets"})
+    found.sort(key=lambda m: m["ply"])
     return found

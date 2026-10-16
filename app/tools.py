@@ -18,7 +18,7 @@ from app.planner import _normalize_text
 from app.rating import current_rating_enrichment, rating_offer_note
 from app.render import render_board_token
 from app.review import (review_game, attach_board_tokens, cp_to_win_pct, MATE_CP, _wdl_risk_profile,
-                        _draw_rule, _record_board, GameReview)
+                        _draw_rule, _record_board, GameReview, teaching_motifs)
 from app.self_assessment import start_self_assessment, self_assessment_open_note
 from app.ui import console
 
@@ -67,6 +67,15 @@ def _score_to_str(score: chess.engine.PovScore) -> str:
 
 
 from app.notation import legal_san_mentions as _legal_san_mentions, san_mentions as _san_mentions
+
+
+# Tactic categories an override may only choose when the student's own verified motif supports it.
+_TACTIC_CATEGORIES = {
+    "missed_fork": lambda kind: kind.endswith("fork"),
+    "missed_pin_or_skewer": lambda kind: kind in ("pin", "skewer"),
+    "missed_mate": lambda kind: kind in ("checkmate", "back_rank_mate", "smothered_mate"),
+    "missed_tactic": lambda kind: kind in ("discovered_attack", "discovered_check", "double_check", "zwischenzug"),
+}
 
 
 def _valid_diagnosis_override(reason: str, recommended: str, chosen: str) -> bool:
@@ -643,6 +652,15 @@ class CoachTools:
         }
         if tablebase_verdict:
             result["tablebase_verdict"] = tablebase_verdict
+        elif verdict in ("reasonable_but_imprecise", "inaccurate", "wrong") and abs(student_cp) < MATE_CP // 2:
+            # Slice C: 26. f3 gives up White's edge but stays level (0.00 at depth 30); the coach said it loses.
+            if student_cp >= 100:
+                result["outcome"] = "You stay better after it, by less than with the best move."
+            elif student_cp > -100:
+                result["outcome"] = ("About level after it: it gives up the advantage but does not lose. Never call "
+                                     "it a losing move.")
+            else:
+                result["outcome"] = "You are worse after it."
         maia = self.engines.maia_predict(fen, history_uci=[m.uci() for m in board.move_stack] or None,
                                          tier="deep")
         if maia:
@@ -1144,7 +1162,7 @@ class CoachTools:
             "usage": ("Use these facts only to ask the probe_question. Do not invent a "
                       "new missing detail or conceptual distinction."),
         }
-        line_motifs = [m.get("detail") for m in getattr(record, "best_line_motifs", None) or []
+        line_motifs = [m.get("detail") for m in teaching_motifs(getattr(record, "best_line_motifs", None), record.color)
                        if m.get("detail") and any(k in str(m.get("motif")) for k in keywords)]
         if line_motifs:
             facts["line_motifs"] = line_motifs
@@ -1398,6 +1416,15 @@ class CoachTools:
                         "recommended_diagnosis": recommended,
                         "chosen_category": category,
                         "lesson_objective": getattr(record, "lesson_objective", None)}
+            tactic = _TACTIC_CATEGORIES.get(category)
+            if record is not None and tactic and not any(
+                    tactic(str(m.get("motif"))) for m in teaching_motifs(record.best_line_motifs, record.color)):
+                # Run ec0yrv9l: 26. Qxa7 was logged missed_fork over the backend's ignored_threat because the
+                # better line "involves a queen fork"; that fork was White's, deep in the line, and won nothing.
+                return {"error": (f"'{category}' needs a verified {category.replace('missed_', '').replace('_', ' ')} "
+                                  "that the student missed: none is in this moment's evidence (a motif deep in an "
+                                  f"engine line or played by the opponent does not count). Use '{recommended}'."),
+                        "recommended_diagnosis": recommended, "chosen_category": category}
 
         if record:
             if _contradictory_diagnosis_text(record, error_explanation):
