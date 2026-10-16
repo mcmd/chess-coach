@@ -427,6 +427,10 @@ class CoachTools:
                 maia_summary["wdl_source"] = source
                 if guidance:
                     maia_summary["risk_guidance"] = guidance
+            if draw_rule:  # run h2z7j1nd S27: a drawn final position was called "balanced, sharp"
+                maia_summary["risk_profile"] = "drawn by rule"
+                maia_summary["risk_guidance"] = ("The game is drawn here by rule. Maia's figures describe play "
+                                                 "going on, which the side that wants the draw does not have to allow.")
 
         return {
             "top_stockfish_lines": top_lines,
@@ -825,6 +829,10 @@ class CoachTools:
             for ply, record in enumerate(review.records):
                 if record.fen_before == fen:
                     return review.board_before(ply) if isinstance(review, GameReview) else _record_board(record)
+                if record.fen_after == fen:  # run h2z7j1nd S27: the final position (after 31. Kh1) had no history
+                    after = (review.board_before(ply) if isinstance(review, GameReview) else _record_board(record))
+                    after.push_uci(record.uci)
+                    return after
         if self.state.board.move_stack and self.state.board.fen() == fen:
             return self.state.board.copy()
         return board

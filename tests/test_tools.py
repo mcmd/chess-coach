@@ -1189,12 +1189,20 @@ def test_a_repetition_draw_is_seen_from_game_positions_and_cannot_be_logged_as_a
     from tests.test_review import _Cfg
     pgn = ('[White "mcmd"]\n[Black "Opponent"]\n[Result "1/2-1/2"]\n\n'
            "1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8 5. Nf3 1/2-1/2\n")
-    tools, state = make_tools(stub_config)
+    engines = FakeEngines()
+    tools, state = make_tools(stub_config, engines)
     state.review = review_game(pgn, FakeEngines(), _Cfg(), with_maia=False)
+    final_fen = state.review.records[-1].fen_after
+    engines.maia_data[final_fen] = {"g8f6": 1.0}            # Maia's view of play going on: "sharp"
+    engines.maia_wdl[final_fen] = (0.45, 0.15, 0.40)
     before_last = state.review.records[-1].fen_before
 
     in_game = tools.analyze_position(before_last, moves_to_apply=["Nf3"])
     assert "threefold repetition" in in_game["draw_rule"] and "claimable" in in_game["draw_rule"]
+    # Run h2z7j1nd S27: the final position itself (after the repeating move) was analysed without history.
+    final = tools.analyze_position(final_fen)
+    assert "threefold repetition" in final["draw_rule"]
+    assert final["human_tendency_at_student_elo"]["risk_profile"] == "drawn by rule"
     logged = tools.submit_diagnosis(fen=before_last, error_category="ignored_threat",
                                     error_explanation="Played 5. Nf3.", preventative_habit="Check threats.")
     assert "not a mistake" in logged["error"] and not state.diagnostics
