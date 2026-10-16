@@ -1430,6 +1430,12 @@ class CoachTools:
 
         if any(d.get("fen") == fen for d in self.state.diagnostics):
             return {"success": True, "message": "Diagnosis already logged for this position. Do not call this tool again."}
+        agenda = self.state.review.agenda if self.state.review else []
+        idx = next((i for i, r in enumerate(agenda) if r.fen_before == fen), None)
+        if idx is not None and idx in ((self.state.lesson_metadata or {}).get("skipped_agenda_indices") or []):
+            # Runs xpweac5a/ehuw4sca: the untaught 17. d5 was submitted right after the student skipped it.
+            return {"error": (f"The student skipped {agenda[idx].move_label}: it is closed without a diagnosis. "
+                              "Do not log or quiz it; go on to the next moment."), "skipped": True}
 
         record = self._agenda_record_for_fen(fen)
         recommended = getattr(record, "recommended_diagnosis", None) if record else None
@@ -1576,6 +1582,13 @@ class CoachTools:
         ledger["explained_concepts"] = concepts[-24:]
 
     def _persist_lesson_progress(self, fen: str = None, status: str = "awaiting_answer") -> None:
+        meta = self.state.lesson_metadata or {}
+        skipped = meta.get("skipped_agenda_indices") or []
+        if skipped and self.state.review and fen:
+            # Grading a skipped moment means the student came back to it: it is open again.
+            back = next((i for i, r in enumerate(self.state.review.agenda) if r.fen_before == fen), None)
+            if back in skipped:
+                self.state.lesson_metadata = {**meta, "skipped_agenda_indices": [i for i in skipped if i != back]}
         if not getattr(self.config, "lesson_file", None):
             return
         # Only agenda moments drive lesson state: dossier drills, sparring, and

@@ -141,6 +141,22 @@ def test_explanation_span_is_graded_alike_in_both_arms_and_its_source_is_recorde
     assert routed_state.router_events[-1]["explanation_source"] == "whole_message_fallback"
 
 
+def test_a_skipped_moment_is_closed_without_a_diagnosis_until_the_student_comes_back(stub_config):
+    # Runs xpweac5a/ehuw4sca S1a: after "Let's skip this one", the coach submitted a diagnosis for the
+    # untaught 17. d5 and was told to ask why the move works.
+    proc, state, record = _routed_lesson(stub_config, None, status="fresh_review")
+    proc.router = None
+    state.teaching_ledger.setdefault("self_assessment", {})["status"] = "answered"  # S1 came first
+    prompt = proc.process("Let's skip this one and go to the next mistake.").prompt
+    assert f"the student skipped {record.move_label}" in prompt
+    refused = proc.tools.submit_diagnosis(record.fen_before, "ignored_threat", "Played it.", "Scan threats.")
+    assert refused.get("skipped") is True and state.diagnostics == []
+
+    state.latest_user_text = _legal_move(record)
+    proc.tools.evaluate_student_answer(record.fen_before, _legal_move(record))
+    assert not state.lesson_metadata.get("skipped_agenda_indices")
+
+
 def test_resolvers_accept_only_quoted_legal_moves():
     board = chess.Board()
     assert resolve_move(board, "knight to f3", "I'd go knight to f3") == "Nf3"
