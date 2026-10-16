@@ -21,7 +21,7 @@ The callable returns the run directory, execution/review statuses, artifact
 paths, agent IDs, requested selectors, and reported model IDs.
 
 Defaults: source profile `mcmd`, startup deadline 90 seconds, loading deadline
-600 seconds, later-turn deadline 300 seconds, reviewer deadline 3600 seconds (the
+600 seconds, later-turn deadline 300 seconds, reviewer deadline 7200 seconds (the
 reviewer runs depth-30 engine checks, minutes each).
 These are keyword arguments (`source_profile`, `startup_timeout`, `load_timeout`,
 `turn_timeout`, `reviewer_timeout`); `root` can supply an explicit repository path.

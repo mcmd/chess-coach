@@ -381,8 +381,8 @@ def _report(run_dir: Path, execution: dict, review_status: str, review: dict | N
 
 
 # The reviewer checks unsettled chess claims with verify_chess.py at depth 30, which takes minutes per
-# position: run 5kf7rqwj's reviewer was cut off at 1800 s after two such checks.
-REVIEWER_TIMEOUT_S = 3600
+# position: run 5kf7rqwj's reviewer was cut off at 1800 s after two such checks, 39ohha2r's at 3600 s.
+REVIEWER_TIMEOUT_S = 7200
 
 
 async def run_eval(*, root=None, source_profile="mcmd", startup_timeout=90,
@@ -561,7 +561,10 @@ async def review_run(run_dir, *, root=None, agent_fn=None, reviewer_timeout=REVI
             "student-visible session, not just selected successful excerpts. Do not read player-result.json or "
             "any parent's proposed grades. Ground legality in deterministic checks, other claims in actual full "
             "tool/engine/network evidence (the review digest with Maia percentages, alignment counts and WDL "
-            "risk profiles is the fetch_lichess_game_by_id tool result). Never calculate chess lines or judge "
+            "risk profiles is the fetch_lichess_game_by_id tool result; each analyze_position result holds "
+            "forced_check for whether a reply is forced and human_tendency_at_student_elo with in_words naming "
+            "the position and rating its Maia shares are for, so search those results before calling such a "
+            "claim unsupported). Never calculate chess lines or judge "
             "positions yourself: when a chess claim (evaluation, best or refuting move, line, threat, what "
             "players at a rating play) is not settled by recorded evidence, check it with the local Stockfish "
             "and Maia3 by running `" + str(Path(root) / ".venv" / "bin" / "python") + " "
