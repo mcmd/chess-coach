@@ -273,6 +273,22 @@ def test_a_move_the_student_never_named_is_asked_for_and_the_threat_verdict_said
     assert "Rd4" not in output
 
 
+def test_a_game_position_correction_is_stated_when_the_reply_does_not_welcome_the_draw():
+    # Run rxsdfgdx S18: get_game_position returned "the draw to welcome", yet the reply said "It's completely
+    # natural to want to avoid the perpetual check" and passed the old perpetual-and-draw word test.
+    correction = ("For White, who would have been worse if play had gone on, a perpetual check or repetition "
+                  "is the draw to welcome, not something to avoid.")
+    reply = "It's natural to want to avoid the perpetual, but 31. Kh1 was best and the draw a great result."
+    state = SessionState()
+    state._turn_corrections = [correction]
+    state.latest_user_text = "Shouldn't I have played Kh2 to avoid the perpetual?"
+    assert _state_unreported_feedback(reply, state) == correction + "\n\n" + reply
+    welcomed = "No: as the worse side you should welcome the perpetual. 31. Kh1 drew."
+    assert _state_unreported_feedback(welcomed, state) == welcomed
+    state.latest_user_text = "Was 31. Kh1 a good move?"
+    assert _state_unreported_feedback(reply, state) == reply
+
+
 def test_a_passed_explanation_is_taught_before_the_lesson_moves_on():
     # Run 9yoo2lm4: the student passed on why 24. Rfe1 works; the coach went straight to move 26.
     point = ("After 24. Rfe1, the opponent's Qf4 fails: 24... Qf4 25. Rxe8+ Rxe8 26. Qxe8# — White mates in 2. "

@@ -1650,7 +1650,8 @@ class CoachTools:
                 # corrects it only runs on agenda moments).
                 result["correction"] = (f"For {record.color.capitalize()}, who would have been worse if play had "
                                         "gone on, a perpetual check or repetition is the draw to welcome, not "
-                                        "something to avoid. Say so if the student wanted to avoid it.")
+                                        "something to avoid.")
+                result["correction_when"] = "the student wanted to avoid the perpetual or the repetition: say so"
         if record is review.records[-1]:
             result["game_ending"] = review.ending()
         return result

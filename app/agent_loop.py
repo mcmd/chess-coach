@@ -13,7 +13,8 @@ from rich.markdown import Markdown
 
 from app.memory import load_dossier
 from app.notation import ambiguous_piece_references, san_mention_spans
-from app.tools import GRADING_TOOLS, feedback_sentence, grading_next_step
+from app.planner import _normalize_text
+from app.tools import _DRAW_AVOIDANCE_RE, GRADING_TOOLS, feedback_sentence, grading_next_step
 from app.trace import fmt_args, trace
 from app.ui import console
 
@@ -152,6 +153,7 @@ def run_agent_turn(chat, coach_tools, message, student_text: str = None) -> None
         coach_tools.state.claim_gate_extra_fens.clear()
     # Results the backend router graded before this turn count as this turn's gradings.
     turn_grading_results = [dict(entry) for entry in (getattr(state, "pregraded", None) or {}).values()]
+    turn_corrections = []  # student-facing corrections from non-grading tools (get_game_position)
     turn_tool_names = []
     response = _send_without_leaks(chat, message, state)
     full_text = ""
@@ -218,7 +220,9 @@ def run_agent_turn(chat, coach_tools, message, student_text: str = None) -> None
                 if step:
                     result = {**result, "next_step": step + (" " + result["next_step"] if result.get("next_step") else "")}
                 turn_grading_results.append({"tool": fn_call.name, "args": args_dict, "result": result})
-            elif fn_call.name == "submit_diagnosis" and isinstance(result, dict) and result.get("success"):
+            elif isinstance(result, dict) and result.get("correction"):
+                turn_corrections.append(result["correction"])
+            if fn_call.name == "submit_diagnosis" and isinstance(result, dict) and result.get("success"):
                 # Run kjofd3ug S4/S11: after grading and logging, the final reply presented the next
                 # moment without the feedback (text written beside tool calls is not shown).
                 feedback = [s for item in turn_grading_results
@@ -235,12 +239,14 @@ def run_agent_turn(chat, coach_tools, message, student_text: str = None) -> None
         response = _send_without_leaks(chat, tool_parts, state)
 
     coach_tools.state._turn_grading_results = turn_grading_results
+    coach_tools.state._turn_corrections = turn_corrections
     coach_tools.state._turn_tool_names = turn_tool_names
     _render(full_text, coach_tools.state, getattr(coach_tools, "config", None))
     if hasattr(coach_tools.state, "_turn_grading_results"):
         coach_tools.state._turn_grading_results = []
     if hasattr(coach_tools.state, "_turn_tool_names"):
         coach_tools.state._turn_tool_names = []
+    coach_tools.state._turn_corrections = []
     if hasattr(coach_tools.state, "claim_gate_extra_fens"):
         coach_tools.state.claim_gate_extra_fens.clear()
 
@@ -762,12 +768,18 @@ def _state_unreported_feedback(output_text: str, state) -> str:
     """A grading verdict or verified explanation credit the reply leaves out is stated by the
     backend first, in its own verified words (run kjofd3ug S4 and S11: graded, logged, moved on)."""
     missing = []
+    lower = (output_text or "").lower()
+    # Run rxsdfgdx S18: "It's completely natural to want to avoid the perpetual check" passed the old
+    # perpetual-and-draw word test; a correction counts as said only when the reply welcomes the draw.
+    said = "welcome" in lower or "bienvenid" in lower
+    corrections = [item["result"]["correction"] for item in getattr(state, "_turn_grading_results", []) or []
+                   if (item.get("result") or {}).get("correction")]
+    if _DRAW_AVOIDANCE_RE.search(_normalize_text(getattr(state, "latest_user_text", None) or "")):
+        corrections += list(getattr(state, "_turn_corrections", None) or [])
+    if not said:
+        missing += list(dict.fromkeys(c[0].upper() + c[1:] for c in corrections))
     for item in getattr(state, "_turn_grading_results", []) or []:
         result = item.get("result") or {}
-        correction = result.get("correction")
-        lower = (output_text or "").lower()
-        if correction and not (("perpetual" in lower or "repetition" in lower) and "draw" in lower):
-            missing.append(correction[0].upper() + correction[1:])
         sentence = feedback_sentence(item.get("tool"), result)
         # The integrity guard may already have stated it (xpweac5a: "Qxg4+ is the real threat." twice).
         if not sentence or _feedback_spoken(output_text, item) or sentence in missing or sentence in output_text:
