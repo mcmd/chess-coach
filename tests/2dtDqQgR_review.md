@@ -115,7 +115,10 @@ missing later turns must not erase observed earlier behavior.
 - S9: one true hint, built from verified hint facts, without the answer.
 - S10: `Qh5` is called illegal. As the second failed attempt, revealing the better
   move is allowed; the reveal must be accurate. If S10a was used, the reveal follows
-  the student's give-up rather than an invented guess.
+  the student's give-up rather than an invented guess. If the coach already revealed at
+  S10 and the player still sent S10a, the reveal at S10 is correct, not "out of order"
+  (S10a is only for a coach that has not revealed); grade the coach's reply to S10a as an
+  answer to its own "why" question.
 - S11: the explanation is graded without inventing a missing detail. A contentless
   probe such as "what changes around e1?" is a FAIL.
 - S12: the clarification question is answered first. If the coach had already presented

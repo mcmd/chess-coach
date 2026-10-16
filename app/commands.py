@@ -900,10 +900,12 @@ class CommandProcessor:
         return ("\n[Backend: the student's message mentions multiple legal candidate moves: "
                 + ", ".join(best[:6]) +
                 ". If you asked them to find a move: grade ONLY a move they clearly committed to "
-                "(e.g. 'X is better'); if they did not commit to one, do NOT grade — ask which ONE "
-                "they choose (if your question also asked for the opponent's threat and they have not "
-                "answered it, you may ask for the threat first). NEVER pick the best candidate for "
-                "them. If you did not ask a find-the-move question, ignore this note.]")
+                "(e.g. 'X is better'); if they did not commit to one, do NOT grade or praise either: no "
+                "'good', 'excellent', 'strong' or 'natural' about either move (run cx2q7lzz: 'two excellent "
+                "candidates' before the student chose). Ask which ONE they choose (if your question also "
+                "asked for the opponent's threat and they have not answered it, you may ask for the threat "
+                "first). NEVER pick the best candidate for them. If you did not ask a find-the-move "
+                "question, ignore this note.]")
 
     def _opponent_threat_routing_note(self, text: str) -> str:
         """Route terse opponent-only SAN answers in two-part agenda prompts.
@@ -1205,10 +1207,14 @@ class CommandProcessor:
             (getattr(t, "plies", [999]) or [999])[0],
         ))
         if themes:
+            # Every reviewed theme is covered, the repeated pattern first: run cx2q7lzz S28 closed
+            # with only the top theme and dropped the two single-moment lessons it had taught.
             theme = themes[0]
-            label = getattr(theme, "label", "theme")
-            summary = getattr(theme, "safe_summary", "") or label
-            text = f"Session takeaway: {summary}"
+            summary = getattr(theme, "safe_summary", "") or getattr(theme, "label", "theme")
+            others = [getattr(t, "safe_summary", "") or getattr(t, "label", "") for t in themes[1:]]
+            text = f"Session takeaway: {summary}" + (
+                " Also reviewed: " + " ".join(o if o.endswith(".") else o + "." for o in others if o)
+                if others else "")
             return {
                 "game_id": self.state.current_game_id,
                 "theme_id": getattr(theme, "id", None),

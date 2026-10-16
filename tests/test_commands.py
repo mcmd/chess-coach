@@ -671,6 +671,32 @@ def test_p0_8_wrap_up_records_verified_theme_takeaway(stub_config):
     assert "a single ignored threat moment" in dossier["session_takeaways"][0]["text"]
 
 
+def test_wrap_up_takeaway_covers_every_reviewed_theme(stub_config):
+    # Run cx2q7lzz S28: the takeaway named only the repeated theme (26. Qxa7, 31. Kh1) and the
+    # coach dropped the two single-moment lessons (20. Nxb5, 24. Kxg2) it had just taught.
+    from app.review import GameReview, MoveRecord, ReviewTheme
+
+    proc, state, _ = make_processor(stub_config)
+    rec = MoveRecord(ply=0, number=1, color="white", san="e4", uci="e2e4",
+                     fen_before=chess.STARTING_FEN, fen_after=chess.STARTING_FEN,
+                     eval_before_cp=0, eval_after_cp=-100, drop_pct=12.0, quality="inaccuracy")
+    state.current_game_id = "game-1"
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0], themes=[
+        ReviewTheme(id="bad_trade:middlegame", label="bad trade (middlegame)", plies=[38], confidence="low",
+                    safe_summary="a single bad trade moment in the middlegame: 20. Nxb5."),
+        ReviewTheme(id="ignored_threat:middlegame", label="ignored threat (middlegame)", plies=[50, 60],
+                    confidence="high", safe_summary="2x ignored threat in the middlegame: 26. Qxa7, 31. Kh1."),
+        ReviewTheme(id="allows_forcing_sequence:middlegame", label="allows forcing sequence (middlegame)",
+                    plies=[46], confidence="low",
+                    safe_summary="a single allows forcing sequence moment in the middlegame: 24. Kxg2."),
+    ])
+
+    text = state.teaching_ledger.get("last_takeaway", {}).get("text") if proc.process("wrap up") else None
+
+    assert text.index("26. Qxa7") < text.index("20. Nxb5") and "24. Kxg2" in text
+    assert state.teaching_ledger["last_takeaway"]["theme_id"] == "ignored_threat:middlegame"
+
+
 def test_p0_8_lesson_complete_ack_closes_without_new_quiz(stub_config):
     from app.review import GameReview, MoveRecord, ReviewTheme
 
