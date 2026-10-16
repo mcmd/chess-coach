@@ -480,10 +480,13 @@ def _practical_refutation(r: MoveRecord, engines, board_before: chess.Board, boa
     line = _numbered_line(r.fen_before, r.best_line[:8]) if r.best_line else r.best_move_san
     return (f"Practical framing: even after {r.best_move_san} the engine finds a long win for the opponent "
             f"({line}; {deep_best_white_cp / 100.0:+.2f}), but only well beyond practical depth: at depth "
-            f"{PRACTICAL_DEPTH} {r.best_move_san} holds ({best_practical / 100.0:+.2f}) while {r.san} loses at "
-            f"once ({played_practical / 100.0:+.2f}). Teach the practical difference: {r.san} lost to a short "
-            f"forcing line, {r.best_move_san} kept the opponent's task hard. Do not call the position "
-            f"balanced, and do not call {r.best_move_san} simply losing.")
+            f"{PRACTICAL_DEPTH} (about what a human calculates) {r.best_move_san} looks defensible "
+            f"({best_practical / 100.0:+.2f}) while {r.san} loses at once ({played_practical / 100.0:+.2f}). "
+            f"{r.best_move_san} also loses with best play: it does not hold, save or draw the game. Teach the "
+            f"practical difference: {r.san} lost to a short forcing line, {r.best_move_san} would have kept the "
+            f"opponent's task hard. For the worse side a perpetual check or repetition is a drawing chance to "
+            f"welcome, not something to avoid. Do not call the position balanced, and do not call "
+            f"{r.best_move_san} simply losing.")
 
 
 

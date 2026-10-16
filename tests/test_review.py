@@ -1101,6 +1101,10 @@ def test_engine_only_refutation_of_the_better_move_is_reported_as_practical():
 
     note = _practical_refutation(r, engines, before, chess.Board(r.fen_after), deep_best_white_cp=-716)
     assert note and "Kh2" in note and "Kh1" in note
+    # Router run r_2e1yzi S19/S20: "at depth 10 Kh2 holds" became "Kh2 held the position" and "salvaba
+    # la partida"; at depth 30 Kh2 still loses. S18 left "Kh2 avoids the perpetual" uncorrected.
+    assert " holds " not in note and "also loses with best play" in note
+    assert "repetition is a drawing chance" in note
     assert _practical_refutation(r, engines, before, chess.Board(r.fen_after), deep_best_white_cp=-150) is None
 
 
