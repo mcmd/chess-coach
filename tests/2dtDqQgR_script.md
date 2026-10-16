@@ -235,7 +235,8 @@ The rook on d4 covers g4 along the fourth rank.
 
 ### S17 — Finish move 26
 
-**Ready when:** the coach has responded to your explanation for move 26.
+**Ready when:** the coach has responded to your explanation for move 26, even if the same reply
+already summarizes or closes the review (send this anyway; never skip to S18).
 
 **Send:**
 ```text
