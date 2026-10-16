@@ -346,6 +346,9 @@ class CoachTools:
             board = self._game_board(fen)
         except (ValueError, TypeError) as e:
             return {"error": f"Invalid FEN: {e}"}
+        invented = self._invented_game_fen(board.fen())
+        if invented:
+            return invented
 
         invert = self.config.dark_terminal
         token_before = render_board_token(self.state, board, pov, invert)
@@ -1531,6 +1534,52 @@ class CoachTools:
             return {"error": "No game review available. Ask the user to load a game first (/load_pgn or paste a PGN)."}
         return {"review_digest": self.state.review.digest()}
 
+    def get_game_position(self, move_number: int, side: str = "white") -> dict:
+        """
+        The loaded game's real position before a given move, the move played there, and the position
+        after it. Use this for any game position that is not an agenda moment (for example the final
+        move) instead of constructing a FEN yourself; pass the returned FEN to analyze_position.
+
+        Args:
+            move_number: The game's move number (e.g. 31).
+            side: "white" or "black": whose move it was.
+        """
+        review = self.state.review
+        if not review or not review.records:
+            return {"error": "No game is loaded."}
+        side = (side or "white").strip().lower()
+        record = next((r for r in review.records if r.number == int(move_number) and r.color == side), None)
+        if record is None:
+            return {"error": f"The game has no {side} move {move_number}.",
+                    "game_moves": f"{review.records[0].move_label} to {review.records[-1].move_label}"}
+        result = {"move_played": record.move_label, "fen_before": record.fen_before,
+                  "fen_after": record.fen_after, "verified_quality": record.quality}
+        if record.draw_rule:
+            result["draw_rule"] = (f"{record.move_label} reached a draw by rule "
+                                   f"({record.draw_rule.replace('_', ' ')}): it is not a mistake.")
+        if record is review.records[-1]:
+            result["game_ending"] = review.ending()
+        return result
+
+    def _invented_game_fen(self, fen: str) -> dict | None:
+        """An error when `fen` claims a game move's number and side to move but is not that game position
+        (run pr40jw2f analysed a made-up 'move 31' with two black queens and reported its loss odds)."""
+        review = self.state.review
+        if not review or not review.records:
+            return None
+        fields = fen.split()
+        known = {self.state.board.fen(), *getattr(self.state, "claim_gate_extra_fens", [])}
+        if len(fields) < 6 or fen in known:
+            return None
+        for game_fen in [r.fen_before for r in review.records] + [review.records[-1].fen_after]:
+            game = game_fen.split()
+            if (game[1], game[5]) == (fields[1], fields[5]) and game[:4] != fields[:4]:
+                return {"error": (f"This FEN is not the game's position with {'White' if game[1] == 'w' else 'Black'} "
+                                  f"to move at move {game[5]}. Never construct a FEN: use get_game_position for a "
+                                  "game position, or moves_to_apply from a real FEN for a hypothetical line."),
+                        "game_fen": game_fen}
+        return None
+
     def explain_pawn_structure_evolution(self, color: str = None) -> dict:
         """
         Returns a backend-verified pawn-structure story for the loaded game.
@@ -1820,7 +1869,7 @@ class CoachTools:
             self.analyze_position, self.evaluate_student_answer, self.evaluate_threat_answer,
             self.evaluate_explanation, self.explain_move,
             self.play_sparring_reply, self.execute_coach_move, self.submit_diagnosis,
-            self.get_game_review_summary, self.explain_pawn_structure_evolution,
+            self.get_game_review_summary, self.get_game_position, self.explain_pawn_structure_evolution,
             self.get_opening_repertoire,
             self.query_endgame_tablebase, self.fetch_lichess_game_by_id,
             self.fetch_chessgames_com_game,

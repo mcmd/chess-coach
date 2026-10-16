@@ -1200,3 +1200,25 @@ def test_a_repetition_draw_is_seen_from_game_positions_and_cannot_be_logged_as_a
     assert "not a mistake" in logged["error"] and not state.diagnostics
     state.review = None  # the same FEN, no longer a position of a reviewed game
     assert "draw_rule" not in tools.analyze_position(before_last, moves_to_apply=["Nf3"])
+
+
+def test_game_positions_come_from_the_game_and_an_invented_one_is_refused(stub_config):
+    # Run pr40jw2f: with 31. Kh1 off the agenda the coach had no FEN for it, made one up (two black
+    # queens) and reported a 97% loss chance for a position that never occurred.
+    from app.review import review_game
+    from tests.test_review import _Cfg
+    pgn = ('[White "mcmd"]\n[Black "Opponent"]\n[Result "1/2-1/2"]\n\n'
+           "1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8 5. Nf3 1/2-1/2\n")
+    tools, state = make_tools(stub_config)
+    state.review = review_game(pgn, FakeEngines(), _Cfg(), with_maia=False)
+
+    final = tools.get_game_position(5, "white")
+    assert final["fen_before"] == state.review.records[-1].fen_before
+    assert "not a mistake" in final["draw_rule"] and "repetition" in final["game_ending"]
+    assert "error" in tools.get_game_position(9, "white")
+
+    invented = "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 8 5"  # move 5, White to move
+    refused = tools.analyze_position(invented)
+    assert refused["game_fen"] == final["fen_before"] and "Never construct a FEN" in refused["error"]
+    assert "error" not in tools.analyze_position(final["fen_before"])
+    assert "error" not in tools.analyze_position("4k3/8/8/8/8/8/8/4K2R w K - 0 40")  # not a game move
