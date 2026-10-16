@@ -485,6 +485,14 @@ def check_recording(run_dir: str | Path) -> dict:
             if isinstance(record, dict):
                 line_positions += _line_positions(record.get("fen_before"), record.get("best_line"))
                 line_positions += _line_positions(record.get("fen_after"), record.get("punishment_line"))
+                # The better move's refutation of the opponent's resource (slice B): run nnbbjvjq
+                # narrated 24... Qf4 25. Rxe8+ Rxe8 26. Qxe8# from there.
+                refutation = record.get("resource_refutation")
+                if isinstance(refutation, dict) and record.get("best_move_san"):
+                    for line in [refutation.get("line")] + list(refutation.get("alternatives") or []):
+                        line_positions += _line_positions(record.get("fen_before"),
+                                                          [record["best_move_san"], refutation.get("resource")]
+                                                          + list(line or []))
         for match in NUMBERED_LINE.finditer(text):
             number, black = int(match[1]), bool(match[2])
             # "1. Qd7 (+4.79), 2. Qg6 (+5.34)" ranks engine moves; it is not a move number.

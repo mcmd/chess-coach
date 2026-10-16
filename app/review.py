@@ -2194,7 +2194,7 @@ def _anticipate_wrong_answer(r: MoveRecord, engines, board_before: chess.Board) 
                 verdict = f"loses ({guess_m / 100:+.1f} for the student after it); refute with: {line}"
             elif guess_m < 100:
                 verdict = (f"gives up the advantage (about level after it, {guess_m / 100:+.1f}) but does not "
-                           f"lose; say so if the student offers it. Line: {line}")
+                           f"lose; once the student commits to it, say it is about level, not losing. Line: {line}")
             else:
                 verdict = (f"keeps a smaller edge ({guess_m / 100:+.1f} after it, weaker than the better move); "
                            f"line: {line}")
