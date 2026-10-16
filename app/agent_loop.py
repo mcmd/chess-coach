@@ -63,7 +63,9 @@ def _is_timeout(exc) -> bool:
     from google.genai import errors
     if isinstance(exc, httpx.TimeoutException):
         return True
-    return isinstance(exc, errors.APIError) and (getattr(exc, "code", None) == 504
+    # The call's own time limit can come back from the server as 504 DEADLINE_EXCEEDED or as 499
+    # CANCELLED (run di701mir died at S2 on a 499 that skipped the retry).
+    return isinstance(exc, errors.APIError) and (getattr(exc, "code", None) in (499, 504)
                                                  or "DEADLINE_EXCEEDED" in str(exc))
 
 
