@@ -199,8 +199,22 @@ def test_suggested_categories_from_motif_evidence():
         base.update(kw)
         return MoveRecord(**base)
 
-    r = rec(best_line_motifs=[{"motif": "knight_fork", "move": "Nc7+", "detail": ""}])
-    assert "missed_fork" in suggest_error_categories(r)
+    # A missed fork counts only when it is the student's and wins material later in the line (§5.3).
+    won = {"motif": "knight_fork", "move": "Nc7+", "detail": "", "side": "white", "material_won": True}
+    assert "missed_fork" in suggest_error_categories(rec(best_line_motifs=[won]))
+    assert "missed_fork" not in suggest_error_categories(rec(best_line_motifs=[{**won, "material_won": False}]))
+    # 2dtDqQgR move 26: the better line's skewer was Black's move, not something White missed.
+    theirs = {"motif": "skewer", "move": "Re4", "detail": "", "side": "black"}
+    assert "missed_pin_or_skewer" not in suggest_error_categories(rec(best_line_motifs=[theirs]))
+    # A quiet punishing resource the better move refutes is an ignored threat (YbjNb8wD 8. c4 ...e4),
+    # ahead of a time flag that is only a secondary cause.
+    quiet = rec(punishment_line=["e4"], time_flag="hope_chess",
+                resource_refutation={"resource": "e4", "line": ["hxg4"], "mate_in": None, "student_cp": 400})
+    assert suggest_error_categories(quiet) == ["ignored_threat", "time_management"]
+    # Only a fallback: with other evidence (here a zwischenzug -> calculation_error) it adds nothing.
+    assert "ignored_threat" not in suggest_error_categories(
+        rec(punishment_line=["e4"], resource_refutation=quiet.resource_refutation, time_flag=None,
+            motifs=[{"motif": "zwischenzug", "move": "Re8+", "detail": "", "side": "black"}]))
 
     r = rec(motifs=[{"motif": "back_rank_mate", "move": "Ra8#", "detail": ""}])
     assert "king_safety" in suggest_error_categories(r)
@@ -561,6 +575,14 @@ def test_likely_wrong_answer_anticipated_with_refutation():
     assert "Nf3" in record.likely_wrong_answer
     assert "refute with" in record.likely_wrong_answer
     assert "most likely student guess" in review.digest()
+
+    # Run y6jaazmg: 26. f3 gave up the edge but stayed level (0.00 at depth 30), yet the digest said
+    # "loses 10 win%; refute with" and the coach told the student f3 loses.
+    evals[fens[4]] = 150
+    evals[guess_board.fen()] = -20
+    level = review_game(PGN, FakeEngines(evals=evals, maia={fens[4]: {"h5f7": 0.45, "g1f3": 0.25}}),
+                        _Cfg()).records[4].likely_wrong_answer
+    assert "gives up the advantage" in level and "does not lose" in level and "refute" not in level
 
 
 def test_aspirational_instinct_from_stronger_maia():
@@ -1257,3 +1279,44 @@ def test_review_ending_names_checkmate_and_resignation():
     assert "checkmate" in mate.ending().lower() and "2... Qh4#" in mate.ending()
     resigned = review_game(_short_game("1. e4 e5 2. Qh5 Nc6", "0-1"), FakeEngines(), _Cfg(), with_maia=False)
     assert "White resigned" in resigned.ending() and "good result" not in resigned.ending()
+
+
+class _MateAfterEngines:
+    """top_lines double: a mate in 2 for the side to move at the given FEN, a quiet +0.2 elsewhere."""
+
+    def __init__(self, mate_fen, pv_san):
+        self.mate_fen, self.pv_san = mate_fen, pv_san
+        self.config = None
+
+    def top_lines(self, board, multipv=3, depth=18, time_cap=None):
+        if board.fen() == self.mate_fen:
+            walk, pv = board.copy(), []
+            for san in self.pv_san:
+                pv.append(walk.parse_san(san))
+                walk.push(pv[-1])
+            return [{"score": chess.engine.PovScore(chess.engine.Mate(2), board.turn), "pv": pv}]
+        return [{"score": chess.engine.PovScore(chess.engine.Cp(20), board.turn), "pv": [next(iter(board.legal_moves))]}]
+
+
+def test_the_better_move_is_explained_by_the_opponent_resource_it_refutes():
+    # 2dtDqQgR 24 (Quality-SOL §5.6, Stockfish depth 30): after 24. Kxg2 the punishment starts quietly with
+    # 24...Qf4; after 24. Rfe1 the same 24...Qf4 runs into 25. Rxe8+ Rxe8 26. Qxe8#.
+    from app.review import MoveRecord, _explanation_primitives, _refute_quiet_resource
+    record = MoveRecord(eval_before_cp=184, eval_after_cp=0, **_GAME_2DTD_RECORDS[24])
+    board = chess.Board(record.fen_before)
+    after = board.copy()
+    after.push_san("Rfe1")
+    after.push_san("Qf4")
+    engines = _MateAfterEngines(after.fen(), ["Rxe8+", "Rxe8", "Qxe8#"])
+
+    record.resource_refutation = _refute_quiet_resource(record, engines, board)
+    assert record.resource_refutation["resource"] == "Qf4" and record.resource_refutation["mate_in"] == 2
+    key = next(r for r in _explanation_primitives(record, board, chess.Board(record.fen_after))["reasons"]
+               if r.get("key"))
+    assert key["kind"] == "resource_contrast" and "e8" in key["squares"] and "mate" in key["keywords"]
+    assert "24... Qf4 25. Rxe8+ Rxe8 26. Qxe8#" in key["text"] and "24. Kxg2" in key["text"]
+
+    # Not a lesson: a resource the better move does not refute, or a forcing first move (own path).
+    assert _refute_quiet_resource(record, _MateAfterEngines("none", []), board) is None
+    forcing = MoveRecord(eval_before_cp=89, eval_after_cp=-446, **_GAME_2DTD_RECORDS[26])
+    assert _refute_quiet_resource(forcing, engines, chess.Board(forcing.fen_before)) is None

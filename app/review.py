@@ -137,6 +137,9 @@ class MoveRecord:
     # Lichess's [%eval] of the final position (-4.45) made it a "blunder" taught as a mistake.
     draw_rule: str = None
     eval_without_draw_rule_cp: int = None  # white POV: the eval the draw rule replaced (play on, no claim)
+    # The opponent's quiet punishing resource (first move after the played move) refuted after the better
+    # move: {"resource", "line", "mate_in", "student_cp"} (Quality-SOL §5.6, 2dtDqQgR 24. Rfe1 Qf4 Rxe8+).
+    resource_refutation: dict = None
 
     @property
     def move_label(self) -> str:
@@ -597,12 +600,14 @@ def moment_digest_lines(i: int, r: MoveRecord, continuation: str = None) -> list
     if r.best_move_san:
         secret.append(f"better was {_numbered_line(r.fen_before, [r.best_move_san])}" +
                       (f" (line: {_numbered_line(r.fen_before, r.best_line)})" if r.best_line else ""))
-    if r.best_line_motifs:
-        secret.append("what the student missed: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in r.best_line_motifs))
+    missed = teaching_motifs(r.best_line_motifs, r.color)
+    if missed:
+        secret.append("what the student missed: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in missed))
     if r.punishment_line:
         secret.append(f"the punishment of {r.move_label} is: {_numbered_line(r.fen_after, r.punishment_line)}")
-    if r.motifs:
-        secret.append("motifs in the punishment: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in r.motifs))
+    punished = teaching_motifs(r.motifs, _other_side(r.color))
+    if punished:
+        secret.append("motifs in the punishment: " + "; ".join(f"{m['motif']}: {m['detail']}" for m in punished))
     if r.opening_theory_brief:
         secret.append(r.opening_theory_brief)
     if r.saving_resource:
@@ -1187,6 +1192,14 @@ def _theme_key(r: MoveRecord) -> str:
     return r.recommended_diagnosis or r.lesson_objective or "uncategorized"
 
 
+def theme_summary(review: GameReview, cat: str, phase: str, plies: list) -> str:
+    """The verified one-line wording of a theme over `plies`."""
+    moves = ", ".join(review.records[p].move_label for p in plies)
+    label = cat.replace("_", " ")
+    return (f"{len(plies)}x {label} in the {phase}: {moves}." if len(plies) >= 2
+            else f"a single {label} moment in the {phase}: {moves}.")
+
+
 def _derive_themes(review: GameReview) -> list:
     """Cluster the enriched agenda by verified category + phase (P0-1a), mirroring
     batch.aggregate_patterns down onto a single game. The synthesis reads these and
@@ -1206,7 +1219,6 @@ def _derive_themes(review: GameReview) -> list:
     themes = []
     for (cat, phase), plies in groups.items():
         plies = sorted(plies)
-        moves = ", ".join(review.records[p].move_label for p in plies)
         label = cat.replace("_", " ")
         count = len(plies)
         themes.append(ReviewTheme(
@@ -1216,8 +1228,7 @@ def _derive_themes(review: GameReview) -> list:
             # A repeated category within one game is a real in-game pattern; a
             # singleton is a one-off (teach it, but don't generalise to a "habit").
             confidence="high" if count >= 2 else "low",
-            safe_summary=(f"{count}x {label} in the {phase}: {moves}." if count >= 2
-                          else f"a single {label} moment in the {phase}: {moves}."),
+            safe_summary=theme_summary(review, cat, phase, plies),
             avoid_language=[f"do not group these plies with moments outside cluster '{cat}:{phase}'"],
         ))
     # Largest (most repeated) clusters first — the most teachable patterns lead.
@@ -1459,6 +1470,10 @@ def _enrich_agenda(review: GameReview, engines, online: bool = True):
             deep_after_white_cp = infos[0]["score"].white().score(mate_score=MATE_CP)
         except Exception:
             pass
+        try:
+            r.resource_refutation = _refute_quiet_resource(r, engines, board_before)
+        except Exception:
+            r.resource_refutation = None
         r.suggested_categories = suggest_error_categories(r)
         r.position_facts = position_facts(board_before)
         _attach_lesson_primitives(r, board_before, board_after)
@@ -1784,10 +1799,14 @@ def _explanation_primitives(r: MoveRecord, board_before: chess.Board, board_afte
             else:
                 data["forcing_move_prevented"] = True
     elif not simple_capture_trade and r.best_move_san:
-        data["why_best_move_works"] = (
-            f"{r.best_move_san} was the engine-verified improvement; use the line "
-            f"{_numbered_line(r.fen_before, r.best_line)} to explain the concrete consequence." if r.best_line
-            else f"{r.best_move_san} was the engine-verified improvement.")
+        contrast = _resource_contrast(r, board_before) if r.resource_refutation else None
+        if contrast:
+            data.update(contrast)
+        else:
+            data["why_best_move_works"] = (
+                f"{r.best_move_san} was the engine-verified improvement; use the line "
+                f"{_numbered_line(r.fen_before, r.best_line)} to explain the concrete consequence." if r.best_line
+                else f"{r.best_move_san} was the engine-verified improvement.")
 
     if r.lesson_objective == "check_opponent_forcing_replies":
         data["process_habit"] = ("After choosing a candidate move, ask: what forcing checks, captures, and "
@@ -1840,7 +1859,8 @@ def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
     if target:
         # A forcing tactic is the point: the student must grasp the square it lands
         # on and (when present) the motif — not just that they "lost material".
-        keywords = _motif_keywords(r.motifs) + _motif_keywords(r.best_line_motifs)
+        keywords = (_motif_keywords(teaching_motifs(r.motifs, _other_side(r.color)))
+                    + _motif_keywords(teaching_motifs(r.best_line_motifs, r.color)))
         if (data.get("forcing_move") or "").endswith("#"):
             keywords.append("mate")
         wrong_move = {
@@ -1868,7 +1888,7 @@ def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
     elif data.get("why_best_move_works") and r.best_move_san:
         dest = _san_dest_square(board_before, r.best_move_san)
         squares = list(data.get("best_move_reason_squares") or ([dest] if dest else []))
-        keywords = sorted(set(_motif_keywords(r.best_line_motifs)
+        keywords = sorted(set(_motif_keywords(teaching_motifs(r.best_line_motifs, r.color))
                               + list(data.get("best_move_keywords") or [])))
         # Positional point: key when there is a concrete square or motif to anchor on.
         # Without verified best-move facts it is only the generic "engine-verified
@@ -1880,6 +1900,8 @@ def _reason_set(r: MoveRecord, board_before: chess.Board, data: dict) -> list:
             "generic": not data.get("best_move_reason_squares"),
             "squares": squares,
             "keywords": keywords,
+            **({"kind": "resource_contrast", "resource": data["resource_refuted"]}
+               if data.get("resource_refuted") else {}),
         })
     if data.get("human_temptation"):
         m = re.search(r" on ([a-h][1-8])", data["human_temptation"])
@@ -1944,6 +1966,83 @@ def _diagnosis_sentence(r: MoveRecord) -> str:
     if r.best_move_san:
         return f"Played {r.move_label}; {r.best_move_label or r.best_move_san} was the engine-verified improvement."
     return f"Played {r.move_label} and lost ground in the position."
+
+
+def _resource_contrast(r: MoveRecord, board_before: chess.Board) -> dict | None:
+    """The move-order lesson from `r.resource_refutation`, as explanation primitives: after the better
+    move the opponent's resource fails, after the played move it works (§5.6)."""
+    ref = r.resource_refutation
+    try:
+        after_best = board_before.copy(stack=False)
+        after_best.push(after_best.parse_san(r.best_move_san))
+        refuted = _numbered_line(after_best.fen(), [ref["resource"]] + list(ref["line"]))
+        after_resource = after_best.copy(stack=False)
+        after_resource.push(after_resource.parse_san(ref["resource"]))
+        squares = []
+        for line in [ref["line"]] + list(ref.get("alternatives") or []):
+            square = _san_dest_square(after_resource, line[0]) if line else None
+            if square and square not in squares:
+                squares.append(square)
+        resource_square = _san_dest_square(after_best, ref["resource"])
+    except (ValueError, KeyError, IndexError):
+        return None
+    outcome = (f"White mates in {ref['mate_in']}" if ref.get("mate_in") and r.color == "white" else
+               f"Black mates in {ref['mate_in']}" if ref.get("mate_in") else "it loses material by force")
+    others = [_numbered_line(after_resource.fen(), line) for line in ref.get("alternatives") or []]
+    text = (f"After {r.best_move_label or r.best_move_san}, the opponent's {ref['resource']} fails: {refuted} — "
+            f"{outcome}" + (f" (also {'; '.join(others)})" if others else "") + ". After "
+            f"{r.move_label}, {ref['resource']} works: {_numbered_line(r.fen_after, r.punishment_line[:3])}. "
+            "The better move comes first so the opponent's resource no longer works.")
+    return {"why_best_move_works": text, "resource_refuted": ref["resource"],
+            "best_move_reason_squares": squares + ([resource_square] if resource_square and resource_square not in squares
+                                                    else []),
+            "best_move_keywords": ["mate", "mates", "checkmate", "mated"] if ref.get("mate_in") else []}
+
+
+def _refute_quiet_resource(r: MoveRecord, engines, board_before: chess.Board) -> dict | None:
+    """Why the better move matters when the played move's punishment begins quietly: the opponent's
+    first punishing move, played after the better move instead, and what the student's side then has.
+    2dtDqQgR 24: after 24. Kxg2 the punishment starts 24...Qf4 (no check, no capture); after 24. Rfe1,
+    24...Qf4 runs into 25. Rxe8+ Rxe8 26. Qxe8# (Stockfish depth 30: mate in 2 either way). Returns
+    None unless the resource is quiet, legal after the better move, and loses decisively there."""
+    if not r.punishment_line or not r.best_move_san:
+        return None
+    after_played = board_before.copy()
+    after_played.push_uci(r.uci)
+    try:
+        resource = after_played.parse_san(r.punishment_line[0])
+    except ValueError:
+        return None
+    if after_played.gives_check(resource) or after_played.is_capture(resource):
+        return None  # forcing first moves have their own reason path
+    board = board_before.copy()
+    board.push(board.parse_san(r.best_move_san))
+    if resource not in board.legal_moves:
+        return None
+    resource_san = board.san(resource)
+    board.push(resource)
+    if board.is_game_over():
+        return None
+    infos = engines.top_lines(board, multipv=2,
+                              depth=int(_engine_setting(engines, "agenda_punishment_depth", 18)),
+                              time_cap=float(_engine_setting(engines, "agenda_punishment_time", 4.0)))
+    if not infos or not infos[0].get("pv"):
+        return None
+    score = infos[0]["score"].pov(board.turn)
+    mate_in = score.mate() if score.is_mate() and score.mate() > 0 else None
+    student_cp = score.score(mate_score=MATE_CP)
+    before_cp = r.deep_eval_before_cp if r.deep_eval_before_cp is not None else r.eval_before_cp
+    before_m = before_cp if r.color == "white" else -before_cp
+    if not mate_in and not (student_cp >= 300 and student_cp - before_m >= 300):
+        return None
+    lines = []
+    for info in infos:
+        alt = info["score"].pov(board.turn)
+        if (info.get("pv") and (mate_in and alt.is_mate() and alt.mate() > 0
+                                or not mate_in and alt.score(mate_score=MATE_CP) >= 300)):
+            lines.append(_pv_to_san(board, info["pv"][:2 * (mate_in or 3)]))
+    return {"resource": resource_san, "line": lines[0], "alternatives": lines[1:], "mate_in": mate_in,
+            "student_cp": student_cp}
 
 
 def _first_forcing_punishment(board_after: chess.Board, punishment_line: list):
@@ -2078,14 +2177,14 @@ def _anticipate_wrong_answer(r: MoveRecord, engines, board_before: chess.Board) 
     if not guess:
         return
     try:
-        gb = chess.Board(r.fen_before)
+        gb = board_before.copy()  # with the game's moves on the stack
         gb.push(gb.parse_san(guess["move"]))
         terminal = _terminal_eval_cp(gb)
         if terminal is not None:
             guess_cp = terminal
         else:
             with tracing.suspended():
-                score, _ = engines.quick_eval(gb.fen())
+                score, _ = engines.quick_eval(gb.fen(), history=history_key(gb))
             guess_cp = score.white().score(mate_score=MATE_CP)
         mover_white = r.color == "white"
         before_m = r.eval_before_cp if mover_white else -r.eval_before_cp
@@ -2094,9 +2193,18 @@ def _anticipate_wrong_answer(r: MoveRecord, engines, board_before: chess.Board) 
         if guess_drop >= 10:
             infos = engines.top_lines(gb, multipv=1, depth=12, time_cap=1.0)
             pv = infos[0].get("pv") or []
-            refutation = " ".join(_pv_to_san(gb, pv[:6]))
-            r.likely_wrong_answer = (f"{guess['move']} (~{guess['probability']:.0%} of peers try it) — "
-                                     f"loses {guess_drop:.0f} win%; refute with: {refutation}")
+            line = " ".join(_pv_to_san(gb, pv[:6]))
+            # Run y6jaazmg: "f3 loses 10 win%; refute with ..." became "f3 loses", but after 26. f3 the
+            # position is level (0.00 at depth 30): it gives up the edge, it does not lose.
+            if guess_m <= -150:
+                verdict = f"loses ({guess_m / 100:+.1f} for the student after it); refute with: {line}"
+            elif guess_m < 100:
+                verdict = (f"gives up the advantage (about level after it, {guess_m / 100:+.1f}) but does not "
+                           f"lose; once the student commits to it, say it is about level, not losing. Line: {line}")
+            else:
+                verdict = (f"keeps a smaller edge ({guess_m / 100:+.1f} after it, weaker than the better move); "
+                           f"line: {line}")
+            r.likely_wrong_answer = f"{guess['move']} (~{guess['probability']:.0%} of peers try it) — {verdict}"
         elif guess_drop <= 5:
             r.likely_wrong_answer = (f"{guess['move']} (~{guess['probability']:.0%} of peers try it) — "
                                      "actually a decent alternative; give credit if the student offers it")
@@ -2354,6 +2462,25 @@ def _refuted_recapture_is_new(before: chess.Board, after: chess.Board, line: lis
     return False
 
 
+def _other_side(color: str) -> str:
+    return "black" if color == "white" else "white"
+
+
+def teaching_motifs(motifs: list, side: str) -> list:
+    """The motifs of a line a lesson may cite as `side`'s: played by `side`, and a fork only if it wins
+    material later in the line (Quality-SOL §5.3). 2dtDqQgR move 26: the better line's 'Re4 skewers the
+    d4 rook' was Black's, its 'Qc7 forks e5, a7 and b8' won nothing, and both became 'what the student
+    missed' and a missed_fork diagnosis."""
+    out = []
+    for m in motifs or []:
+        if m.get("side", side) != side:
+            continue
+        if str(m.get("motif", "")).endswith("fork") and not m.get("material_won"):
+            continue
+        out.append(m)
+    return out
+
+
 def suggest_error_categories(record: MoveRecord) -> list:
     """Evidence-based diagnosis suggestions: tactics in the line the student
     MISSED map to missed_*; tactics in the opponent's punishment map to what
@@ -2373,8 +2500,8 @@ def suggest_error_categories(record: MoveRecord) -> list:
             suggestions.append("premature_attack")
     except (ValueError, AssertionError, AttributeError):
         pass
-    missed_kinds = {m["motif"] for m in record.best_line_motifs}
-    punish_kinds = {m["motif"] for m in record.motifs}
+    missed_kinds = {m["motif"] for m in teaching_motifs(record.best_line_motifs, record.color)}
+    punish_kinds = {m["motif"] for m in teaching_motifs(record.motifs, _other_side(record.color))}
 
     if any(k.endswith("fork") for k in missed_kinds):
         if "premature_attack" not in suggestions:
@@ -2402,6 +2529,11 @@ def suggest_error_categories(record: MoveRecord) -> list:
         # The refutation is an immediate forcing check: whatever else the move
         # was trying to do (e.g. grab material), the root error was ignoring a
         # direct threat — sharper than the is_capture -> bad_trade fallback.
+        suggestions.append("ignored_threat")
+    elif record.resource_refutation and not suggestions:
+        # The punishment starts with a quiet resource the better move would have refuted (YbjNb8wD 8. c4:
+        # ...e4 works, after 8. h3 it fails to hxg4): the student ignored that threat. Only as a fallback:
+        # ZU8uPxvn 10...f5 has the same evidence but its lesson is the premature pawn move.
         suggestions.append("ignored_threat")
 
     if record.time_flag in ("hope_chess", "time_scramble"):

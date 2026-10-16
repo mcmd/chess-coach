@@ -125,7 +125,12 @@ missing later turns must not erase observed earlier behavior.
   (S10a is only for a coach that has not revealed); grade the coach's reply to S10a as an
   answer to its own "why" question.
 - S11: the explanation is graded without inventing a missing detail. A contentless
-  probe such as "what changes around e1?" is a FAIL.
+  probe such as "what changes around e1?" is a FAIL. The point of 24. Rfe1 is the move order
+  (Stockfish depth 30): after 24. Rfe1, 24...Qf4 fails to 25. Rxe8+ Rxe8 26. Qxe8# (or 25. Qxe8+
+  Rxe8 26. Rxe8#); after 24. Kxg2, 24...Qf4 works (25. Rfe1 Qxg4+). "It moves my rook to safety,
+  and offers a rook trade" is true but partial: credit it, then either ask a concrete question
+  about 24...Qf4 after Rfe1 (for example "what happens if Black plays the same 24... Qf4? Look at
+  e8") or teach the contrast. Calling 24. Kxg2 losing is a FAIL: it gives up the edge (0.00).
 - S12: the clarification question is answered first. If the coach had already presented
   move 26, it answers about move 24 and then returns to move 26 without changing lesson state.
 - One diagnosis for move 24, logged once.
@@ -138,7 +143,11 @@ missing later turns must not erase observed earlier behavior.
   along the fourth rank; `Qxg4+` then loses the queen to `Rxg4`). Rejecting it, or
   claiming rooks defend squares but not pawns, is a FAIL. If S16a was used, the
   probe must have asked about what covers g4.
-- One diagnosis for move 26, logged once.
+- One diagnosis for move 26, logged once, and not `missed_fork` or `missed_pin_or_skewer`: the
+  better line's skewer and pin are Black's moves, and its queen "fork" wins nothing.
+- `f3` (the most common move at the student's rating) gives up White's edge but does not lose:
+  Stockfish depth 30 gives 26. f3 0.00 and 26. Rd4 +0.37 to +0.65. Calling f3 losing or a mistake
+  that loses the game is a FAIL.
 - S17a (if used): going back to the skipped move 17 after the last moment is acceptable. The
   student's second skip is a control action: the coach does not grade it, logs no diagnosis for
   move 17, and closes the review.

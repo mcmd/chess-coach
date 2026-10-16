@@ -96,7 +96,9 @@ def _send_with_spinner(chat, payload):
 # 1. **Analyze ...**"). Kept in the chat history it is imitated by every later reply
 # (live eval 2026-10-12: 22/40 replies; replays leaked 14/14 with it, 0/4 without),
 # and the drafts reveal withheld answers. Such parts never reach the student or history.
-_LEAKED_REASONING_RE = re.compile(r"\A\W*(?:\w+'?s?\s+)?\**\s*thinking process\b", re.IGNORECASE)
+# Run kfh79jvv: the same leak as "s Thought: The tool has loaded the game ... Wait, ...".
+_LEAKED_REASONING_RE = re.compile(r"\A\W*(?:\w+'?s?\s+)?\**\s*(?:thinking process\b|thoughts?\s*\**\s*:)",
+                                  re.IGNORECASE)
 _LEAK_NOTICE = "_(My reply came out garbled, so I discarded it. Please send your last message again.)_"
 
 
@@ -745,6 +747,12 @@ def _feedback_spoken(text: str, item: dict) -> bool:
     if result.get("key_reason_named") is True:
         return any(token in lower for token in _EXPLANATION_ACK_TOKENS)
     words_in = set(re.findall(r"[a-z]{5,}", lower))
+    if result.get("student_passed") and result.get("missing_key_reason"):
+        # Taught when the reply carries the point's own squares or moves (e8, Qf4), not just its topic.
+        point = result["missing_key_reason"]
+        tokens = set(re.findall(r"\b[a-h][1-8]\b|\b[KQRBN]x?[a-h][1-8]\b", point))
+        return sum(1 for t in tokens if t.lower() in lower) >= 2 if tokens else \
+            len(set(re.findall(r"[a-z]{5,}", point.lower())) & words_in) >= 3
     return any(len(set(re.findall(r"[a-z]{5,}", c.lower())) & words_in) >= 2
                for c in result.get("credited") or [])
 

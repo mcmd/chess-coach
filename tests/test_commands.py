@@ -704,10 +704,10 @@ def test_wrap_up_takeaway_leaves_out_a_moment_the_student_skipped(stub_config):
     proc, state, _ = make_processor(stub_config)
     board, records = chess.Board(), []
     for ply, uci in enumerate(["e2e4", "e7e5", "g1f3", "b8c6"]):
-        before = board.fen()
+        before, san = board.fen(), board.san(chess.Move.from_uci(uci))
         board.push_uci(uci)
         records.append(MoveRecord(ply=ply, number=ply // 2 + 1, color="white" if ply % 2 == 0 else "black",
-                                  san=uci, uci=uci, fen_before=before, fen_after=board.fen(), eval_before_cp=0,
+                                  san=san, uci=uci, fen_before=before, fen_after=board.fen(), eval_before_cp=0,
                                   eval_after_cp=-100, drop_pct=12.0, quality="inaccuracy"))
     state.current_game_id = "game-1"
     state.review = GameReview(headers={}, records=records, student_color="white", agenda_plies=[0, 2], themes=[
@@ -721,6 +721,14 @@ def test_wrap_up_takeaway_leaves_out_a_moment_the_student_skipped(stub_config):
     proc.process("wrap up")
     text = state.teaching_ledger["last_takeaway"]["text"]
     assert "2. Nf3" in text and "1. e4" not in text
+
+    # Run 25w1p3ap: the skipped moment shared a theme with a taught one ("2x ignored threat (17. d5,
+    # 26. Qxa7)"); the takeaway names only what was taught.
+    state.review.themes = [ReviewTheme(id="ignored_threat:opening", label="ignored threat", plies=[0, 2],
+                                       confidence="high", safe_summary="2x ignored threat in the opening: 1. e4, 2. Nf3.")]
+    proc.process("wrap up")
+    text = state.teaching_ledger["last_takeaway"]["text"]
+    assert "a single ignored threat moment in the opening: 2. Nf3." in text and "1. e4" not in text
 
 
 def test_p0_8_lesson_complete_ack_closes_without_new_quiz(stub_config):

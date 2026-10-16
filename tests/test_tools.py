@@ -31,6 +31,14 @@ def test_wrong_answer_withholds_best_move(stub_config):
     assert result["reveal_allowed"] is False
     assert "best_move" not in result
     assert "note" in result
+    # Slice C (26. f3 gives up the edge but stays level): "wrong" is not "losing".
+    assert "does not lose" in result["outcome"]
+
+
+def test_a_worse_move_that_leaves_the_student_losing_says_so(stub_config):
+    tools, _ = make_tools(stub_config, FakeEngines(multipv={START: [("e2e4", 300), ("g1f3", -400)]}))
+    result = tools.evaluate_student_answer(START, "Nf3")
+    assert result["outcome"] == "You are worse after it."
 
 
 def test_second_failure_unlocks_reveal(stub_config):
@@ -696,6 +704,28 @@ def test_naming_only_the_move_is_not_an_explanation(stub_config):
     assert tools.evaluate_explanation(rec.fen_before, state.latest_user_text)["key_reason_named"] is True
 
 
+def test_a_tactic_override_needs_the_students_own_verified_motif(stub_config):
+    # Run ec0yrv9l: 26. Qxa7 was logged missed_fork over the backend's ignored_threat, citing "a skewer, pin,
+    # and queen fork" from the better line; the skewer and pin were Black's and the fork won nothing.
+    from app.review import GameReview, MoveRecord
+    from tests.test_review import _GAME_2DTD_RECORDS
+    tools, state = make_tools(stub_config)
+    rec = MoveRecord(eval_before_cp=0, eval_after_cp=-446, **{**_GAME_2DTD_RECORDS[26], "best_line_motifs": [
+        {"motif": "skewer", "move": "Re4", "detail": "", "side": "black", "ply": 1},
+        {"motif": "queen_fork", "move": "Qc7", "detail": "", "side": "white", "ply": 4, "material_won": False}]})
+    rec.recommended_diagnosis = "ignored_threat"
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+    reason = ("The backend suggested ignored_threat, but the line for Rd4 involves a skewer, pin, and queen fork, "
+              "making missed_fork more accurate for the tactical nature of the defense.")
+
+    refused = tools.submit_diagnosis(rec.fen_before, "missed_fork", "Played 26. Qxa7.", "Check threats.",
+                                     override_reason=reason)
+    assert "needs a verified fork" in refused["error"] and not state.diagnostics
+    rec.best_line_motifs[1]["material_won"] = True  # a fork that wins material is real evidence
+    assert tools.submit_diagnosis(rec.fen_before, "missed_fork", "Played 26. Qxa7.", "Check threats.",
+                                  override_reason=reason)["success"] is True
+
+
 def test_castling_described_in_words_matches_the_submitted_move(stub_config):
     tools, state = make_tools(stub_config)
     board = chess.Board()
@@ -1245,3 +1275,25 @@ def test_a_search_cut_short_by_its_time_limit_says_its_numbers_are_rough(stub_co
     engines.depth_reached[START] = 14
     cut = tools.analyze_position(START)
     assert "depth 14 of 18" in cut["search_note"] and "do not quote these numbers" in cut["search_note"]
+
+
+def test_move_24_explanations_get_full_partial_or_a_concrete_probe(stub_config):
+    # Slice B: "Qf4 fails to mate on e8" is the point of 24. Rfe1; "rook to safety" is true but partial.
+    from app.review import GameReview, MoveRecord, _explanation_primitives
+    from tests.test_review import _GAME_2DTD_RECORDS
+
+    def grade(answer):
+        tools, state = make_tools(stub_config)
+        rec = MoveRecord(eval_before_cp=184, eval_after_cp=0, **_GAME_2DTD_RECORDS[24])
+        rec.resource_refutation = {"resource": "Qf4", "line": ["Rxe8+", "Rxe8", "Qxe8#"],
+                                   "alternatives": [["Qxe8+", "Rxe8", "Rxe8#"]], "mate_in": 2, "student_cp": 99998}
+        rec.explanation_primitives = _explanation_primitives(rec, chess.Board(rec.fen_before), chess.Board(rec.fen_after))
+        state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+        state.latest_user_text = answer
+        return tools.evaluate_explanation(rec.fen_before, answer)
+
+    assert grade("If Black plays Qf4, I take on e8 with check and it's mate.")["key_reason_named"] is True
+    assert grade("My rook and queen both hit e8, so Black can't play Qf4.")["key_reason_named"] is True
+    partial = grade("it moves my rook to safety, and offers a rook trade")
+    assert partial["key_reason_named"] is False and any("out of the attack" in c for c in partial["also_named"])
+    assert partial["probe_question"] == "After 24. Rfe1, what happens if Black plays the same 24... Qf4? Look at e8."

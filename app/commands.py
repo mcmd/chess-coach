@@ -24,7 +24,7 @@ from app.planner import _CLOSE_RE, TeachingPlan, _normalize_text, plan_free_text
 from app.router import GRADING_LABELS, describe_moment, resolve_explanation, resolve_move, resolve_threat
 from app.tools import grading_next_step
 from app.rating import current_rating_enrichment, rating_offer_note
-from app.review import adopt_review_pov, review_game, attach_board_tokens
+from app.review import adopt_review_pov, review_game, attach_board_tokens, theme_summary
 from app.self_assessment import start_self_assessment, self_assessment_open_note
 from app.sparring import sparring_pgn_from_board
 from app.trace import trace
@@ -1204,8 +1204,18 @@ class CommandProcessor:
         # have been diagnosed, only their themes were taught.
         diagnosed = {d.get("fen") for d in self.state.diagnostics}
         if diagnosed:
-            themes = [t for t in themes if any(0 <= p < len(review.records) and review.records[p].fen_before
-                                               in diagnosed for p in (getattr(t, "plies", None) or []))]
+            taught_themes = []
+            for t in themes:
+                taught = [p for p in (getattr(t, "plies", None) or [])
+                          if 0 <= p < len(review.records) and review.records[p].fen_before in diagnosed]
+                if taught and taught != list(t.plies):
+                    # Run 25w1p3ap: "2x ignored threat (17. d5, 26. Qxa7)" although 17. d5 was skipped.
+                    cat, _, phase = t.id.partition(":")
+                    t = replace(t, plies=taught, confidence="high" if len(taught) >= 2 else "low",
+                                safe_summary=theme_summary(review, cat, phase, taught))
+                if taught:
+                    taught_themes.append(t)
+            themes = taught_themes
         confidence_rank = {"high": 0, "medium": 1, "low": 2}
         themes.sort(key=lambda t: (
             confidence_rank.get(getattr(t, "confidence", "low"), 2),

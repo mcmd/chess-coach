@@ -183,6 +183,24 @@ def test_verified_hypothetical_line_is_legal_and_unverified_one_is_not(tmp_path)
     assert by_turn == {1: "PASS", 2: "FAIL"}
 
 
+def test_a_line_from_the_better_moves_refutation_of_a_resource_is_known(tmp_path):
+    # Run nnbbjvjq: "24... Qf4 25. Rxe8+ Rxe8 26. Qxe8#" (the slice B lesson after 24. Rfe1) was judged
+    # illegal because only the game, best and punishment lines were known positions.
+    def run(with_refutation):
+        (tmp_path / str(with_refutation)).mkdir()
+        recording = Recording(tmp_path / str(with_refutation))
+        game, positions, source = source_game(recording)
+        state = game_state(game, positions, 2)
+        record = {"fen_before": positions[0].fen(), "fen_after": positions[1].fen(), "ply": 0, "san": "Nf3",
+                  "move_label": "1. Nf3", "best_move_san": "e4", "best_line": [], "punishment_line": ["e5"]}
+        if with_refutation:
+            record["resource_refutation"] = {"resource": "e5", "line": ["Nf3", "Nc6"], "alternatives": []}
+        state["review_agenda"] = [record]
+        recording.turn(1, state, reply="After 1. e4, the reply 1... e5 runs into 2. Nf3 Nc6.")
+        return {c["verdict"] for c in findings(recording.save(), "visible_line_legality")}
+    assert run(True) == {"PASS"} and "FAIL" in run(False)
+
+
 def test_single_numbered_move_in_prose_is_checked(tmp_path):
     # Run par4cj6m: "after Black recaptures with 20... Qxb5" was illegal (the queen on d6
     # cannot reach b5) but the checker only read numbered lines of two or more moves.
