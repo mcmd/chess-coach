@@ -168,18 +168,25 @@ class EngineManager:
             if not pv:
                 continue
             score = info["score"].pov(probe.turn)
-            line, tb = [], probe.copy(stack=False)
-            for m in pv[:6]:
-                line.append(tb.san(m))
+            # Numbered from the opponent's move ("20... e4 21. Nxe4 Qg6 22. Qc2 Nxd5"): run s7writoz
+            # retold the unnumbered line as "Nxe4 ... Qg6 ... Nxd5", dropping White's 22. Qc2.
+            line, numbered, tb = [], [], probe.copy(stack=False)
+            for i, m in enumerate(pv[:6]):
+                san = tb.san(m)
+                line.append(san)
+                if tb.turn == chess.WHITE:
+                    numbered.append(f"{tb.fullmove_number}. {san}")
+                else:
+                    numbered.append(f"{tb.fullmove_number}... {san}" if i == 0 else san)
                 tb.push(m)
+            entry = {"threat_line": " ".join(line), "numbered_line": " ".join(numbered)}
             if score.is_mate() and score.mate() > 0:
-                threats.append({"threat": f"mate in {score.mate()} if you do nothing",
-                                "threat_line": " ".join(line)})
+                threats.append({"threat": f"mate in {score.mate()} if you do nothing", **entry})
             else:
                 cp = score.score(mate_score=100000)
                 if cp - current_cp_opp >= 120:
                     threats.append({"threat": f"opponent gains {(cp - current_cp_opp) / 100.0:+.1f} if you do nothing",
-                                    "threat_line": " ".join(line)})
+                                    **entry})
         return threats
 
     # --- HUMAN MOVE PREDICTION (maia3) ---

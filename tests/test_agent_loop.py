@@ -73,6 +73,16 @@ def test_claim_gate_level1_redacts_illegal_move():
     assert "Qh5" not in out and "unverified move" in out and findings
 
 
+def test_claim_gate_keeps_backticked_squares_named_as_pawns():
+    # Run s7writoz S25: "(the `g7` and `h7` pawns)" was redacted to "(an unverified move)" twice;
+    # the squares in code spans were read as pawn moves.
+    board = chess.Board("1r2r1k1/Q4ppp/8/3P4/1P4q1/P7/5P2/3R1RK1 w - - 8 31")
+    text = "Because Black still had pawns on those files (the `g7` and `h7` pawns), they were half-open."
+    out, findings = apply_claim_gate(text, [board], level=1)
+    assert out == text and not findings
+    assert find_illegal_moves("Now `e5` grabs space.", [chess.Board()]) == ["e5"]
+
+
 def test_claim_gate_records_structured_l1_observability():
     state = SessionState()
     state.current_game_id = "game-1"

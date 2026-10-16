@@ -565,8 +565,8 @@ def _mask_non_claim_move_mentions(text: str) -> str:
     )
     masked = re.sub(piece_context, lambda m: " " * len(m.group(0)),
                     masked, flags=re.IGNORECASE)
-    square_list_context = (
-        r"\b(?:[a-h][1-8]\s*(?:,|and|or)?\s*){1,6}"
+    square_list_context = (   # "g7 and h7 pawns", also as code spans: "`g7` and `h7` pawns" (run s7writoz)
+        r"(?<![A-Za-z0-9])(?:`?[a-h][1-8]`?\s*(?:,|and|or)?\s*){1,6}"
         r"(?=(?:pawns?|pieces?|squares?|files?|ranks?)\b)"
     )
     masked = re.sub(square_list_context, lambda m: " " * len(m.group(0)),
