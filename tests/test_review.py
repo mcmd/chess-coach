@@ -211,6 +211,10 @@ def test_suggested_categories_from_motif_evidence():
     quiet = rec(punishment_line=["e4"], time_flag="hope_chess",
                 resource_refutation={"resource": "e4", "line": ["hxg4"], "mate_in": None, "student_cp": 400})
     assert suggest_error_categories(quiet) == ["ignored_threat", "time_management"]
+    # Only a fallback: with other evidence (here a zwischenzug -> calculation_error) it adds nothing.
+    assert "ignored_threat" not in suggest_error_categories(
+        rec(punishment_line=["e4"], resource_refutation=quiet.resource_refutation, time_flag=None,
+            motifs=[{"motif": "zwischenzug", "move": "Re8+", "detail": "", "side": "black"}]))
 
     r = rec(motifs=[{"motif": "back_rank_mate", "move": "Ra8#", "detail": ""}])
     assert "king_safety" in suggest_error_categories(r)

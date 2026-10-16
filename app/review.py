@@ -2524,9 +2524,10 @@ def suggest_error_categories(record: MoveRecord) -> list:
         # was trying to do (e.g. grab material), the root error was ignoring a
         # direct threat — sharper than the is_capture -> bad_trade fallback.
         suggestions.append("ignored_threat")
-    elif record.resource_refutation:
+    elif record.resource_refutation and not suggestions:
         # The punishment starts with a quiet resource the better move would have refuted (YbjNb8wD 8. c4:
-        # ...e4 works, after 8. h3 it fails to hxg4): the student ignored that threat.
+        # ...e4 works, after 8. h3 it fails to hxg4): the student ignored that threat. Only as a fallback:
+        # ZU8uPxvn 10...f5 has the same evidence but its lesson is the premature pawn move.
         suggestions.append("ignored_threat")
 
     if record.time_flag in ("hope_chess", "time_scramble"):
