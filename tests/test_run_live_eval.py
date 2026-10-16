@@ -54,6 +54,16 @@ def test_model_cannot_skip_a_student_turn_or_finish_early(tmp_path):
     assert relay.exchange("S0")["execution_status"] == "STOPPED_UNEXPECTED"
 
 
+def test_the_exact_message_of_the_allowed_next_step_counts_as_that_step(tmp_path):
+    # Run qheo9plj: the player sent S0's message text instead of "S0" and the run ended before S0.
+    session = Session()
+    relay = _PlayerRelay(session, _Script(SCRIPT), tmp_path, 60, 30)
+    assert relay.exchange("load game")["execution_status"] == "RUNNING"
+    assert relay.sent_steps[-1]["step"] == "S0" and session.submissions == ["load game"]
+    skipped = relay.exchange("detour")  # S2's text while S1 or S1a is due: still a skipped turn
+    assert skipped["execution_status"] == "STOPPED_UNEXPECTED" and session.submissions == ["load game"]
+
+
 def test_explanation_branch_cannot_repeat_or_reopen_a_completed_turn(tmp_path):
     relay = _PlayerRelay(Session(), _Script(SCRIPT), tmp_path, 60, 30)
     for step in ("S0", "S1", "S1a"):

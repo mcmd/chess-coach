@@ -201,7 +201,13 @@ class _PlayerRelay:
         with self._lock:
             if self.status != "RUNNING":
                 return self.result()
-            if step not in self.script.allowed(self.last_step):
+            allowed = self.script.allowed(self.last_step)
+            # Run qheo9plj: the player passed S0's message text as the step ID. Only an allowed next
+            # step's exact message maps to its ID, so this cannot skip or reorder a turn.
+            by_text = [s for s in allowed if self.script.messages.get(s, "").strip() == str(step).strip()]
+            if step not in allowed and len(by_text) == 1:
+                step = by_text[0]
+            if step not in allowed:
                 self.status = "STOPPED_UNEXPECTED"
                 self.error = f"Step {step!r} is incompatible with last step {self.last_step!r}"
                 self.persist()
