@@ -409,6 +409,33 @@ def test_human_tendency_summary_says_whether_most_players_agree(stub_config):
     assert summary["in_words"] == "Most players rated about 1150 choose e4 (73%)."
 
 
+def test_analyze_position_reports_the_digest_risk_for_an_agenda_position(stub_config):
+    # Run sce7o0q6 S27: the digest called the move-31 position must-hold (Maia 10/53/37 at the
+    # game-time rating) but analyze_position on the same FEN said drawish (17/63/19 at 1200), and
+    # the coach told the student the opposite of the digest. One position, one set of numbers.
+    from app.review import GameReview, MoveRecord
+    from tests.test_review import _GAME_2DTD_RECORDS
+    rec = MoveRecord(eval_before_cp=0, eval_after_cp=0, human_win_prob=0.10, human_draw_prob=0.53,
+                     human_loss_prob=0.37, maia_elo=1142, **_GAME_2DTD_RECORDS[31])
+    engines = FakeEngines(maia={rec.fen_before: {"g1h1": 0.83, "g1h2": 0.17}},
+                          maia_wdl={rec.fen_before: (0.17, 0.63, 0.19)})
+    tools, state = make_tools(stub_config, engines)
+    state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
+    human = tools.analyze_position(rec.fen_before)["human_tendency_at_student_elo"]
+    assert human["win_draw_loss_for_side_to_move"] == {"win": 0.10, "draw": 0.53, "loss": 0.37}
+    assert human["risk_profile"] == "must-hold" and "1142" in human["wdl_source"]
+
+
+def test_human_move_sentence_names_the_position_after_applied_moves(stub_config):
+    # Run sce7o0q6 S2: a Maia share for the position after 20. Kh1 was told as if it were for
+    # the position before it.
+    after_e4 = chess.Board()
+    after_e4.push_san("e4")
+    engines = FakeEngines(maia={after_e4.fen(): {"e7e5": 0.6, "c7c5": 0.3}})
+    human = make_tools(stub_config, engines)[0].analyze_position(START, moves_to_apply=["e4"])
+    assert human["human_tendency_at_student_elo"]["in_words"].startswith("After e4: ")
+
+
 def test_analyze_position_says_whether_moving_a_piece_is_forced(stub_config):
     # Run kjofd3ug S6: "moving the queen is absolutely forced", asserted with nothing behind it.
     board = chess.Board("r3r1k1/p1n2ppp/3q4/1p1Pp3/1P4n1/P1N2N2/4QPPP/3R1RK1 w - - 3 20")
@@ -828,7 +855,7 @@ def test_unverified_reason_is_not_confirmed_when_no_key_reason_exists(stub_confi
     from app.review import GameReview, MoveRecord, _explanation_primitives
     from tests.test_review import _GAME_2DTD_RECORDS
     tools, state = make_tools(stub_config)
-    rec = MoveRecord(eval_before_cp=0, eval_after_cp=0, **_GAME_2DTD_RECORDS[31])
+    rec = MoveRecord(eval_before_cp=0, eval_after_cp=0, deep_eval_before_cp=-834, **_GAME_2DTD_RECORDS[31])
     rec.explanation_primitives = _explanation_primitives(
         rec, chess.Board(rec.fen_before), chess.Board(rec.fen_after))
     state.review = GameReview(headers={}, records=[rec], student_color="white", agenda_plies=[0])
@@ -838,6 +865,15 @@ def test_unverified_reason_is_not_confirmed_when_no_key_reason_exists(stub_confi
 
     assert result["gradable"] is False and result["credited"] == []
     assert "do not confirm" in result["guidance"].lower() and "if the explanation is sound" not in result["guidance"]
+    # Run sce7o0q6 S18: "do not confirm" alone left the misconception standing (the coach said only
+    # "Kh2 is the best move" and wrapped up). The grader names the correction, and the backend
+    # states it when the reply leaves it out.
+    assert "drawing chance" in result["correction"] and "White" in result["correction"]
+    from app.agent_loop import _state_unreported_feedback
+    state._turn_grading_results = [{"tool": "evaluate_explanation", "args": {}, "result": result}]
+    assert "drawing chance" in _state_unreported_feedback("Kh2 is the best move. That wraps up.", state)
+    spoken = "Careful: for you a perpetual check would have been a draw, which is welcome here."
+    assert _state_unreported_feedback(spoken, state) == spoken
 
 
 def test_evaluate_explanation_unknown_fen_errors(stub_config):

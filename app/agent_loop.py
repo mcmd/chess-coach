@@ -207,7 +207,9 @@ def run_agent_turn(chat, coach_tools, message) -> None:
                 # Run kjofd3ug S4/S11: after grading and logging, the final reply presented the next
                 # moment without the feedback (text written beside tool calls is not shown).
                 feedback = [s for item in turn_grading_results
-                            if (s := feedback_sentence(item["tool"], item["result"]))]
+                            for s in ([("Correct this: " + item["result"]["correction"])
+                                       if (item["result"] or {}).get("correction") else None]
+                                      + [feedback_sentence(item["tool"], item["result"])]) if s]
                 if feedback:
                     result = {**result, "next_step": ("Before presenting the next moment, tell the student "
                                                       "this turn's feedback first: " + " ".join(feedback))}
@@ -740,7 +742,12 @@ def _state_unreported_feedback(output_text: str, state) -> str:
     backend first, in its own verified words (run kjofd3ug S4 and S11: graded, logged, moved on)."""
     missing = []
     for item in getattr(state, "_turn_grading_results", []) or []:
-        sentence = feedback_sentence(item.get("tool"), item.get("result") or {})
+        result = item.get("result") or {}
+        correction = result.get("correction")
+        lower = (output_text or "").lower()
+        if correction and not (("perpetual" in lower or "repetition" in lower) and "draw" in lower):
+            missing.append(correction[0].upper() + correction[1:])
+        sentence = feedback_sentence(item.get("tool"), result)
         if not sentence or _feedback_spoken(output_text, item) or sentence in missing:
             continue
         missing.append(sentence)

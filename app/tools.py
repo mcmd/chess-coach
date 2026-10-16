@@ -190,6 +190,24 @@ _THREAT_VERDICTS = {
 }
 
 
+_DRAW_AVOIDANCE_RE = re.compile(r"\b(avoid|escape|stop|prevent)\w*\b[^.]*\b(perpetual|repetition|draw)")
+
+
+def _draw_avoidance_correction(record, normalized_text: str) -> str | None:
+    """The student treats a perpetual check or repetition as a danger while their side is
+    objectively worse, where it is the drawing chance (run sce7o0q6 S18: "Kh2, because it avoids
+    the perpetual" stood uncorrected)."""
+    if not _DRAW_AVOIDANCE_RE.search(normalized_text or ""):
+        return None
+    deep = record.deep_eval_before_cp if record.deep_eval_before_cp is not None else record.eval_before_cp
+    mover_cp = deep if record.color == "white" else -deep
+    if mover_cp > -200:
+        return None
+    side = record.color.capitalize()
+    return (f"for {side}, who is worse here ({mover_cp / 100:+.1f} with best play), a perpetual check or a "
+            "repetition is a drawing chance to welcome, not something to avoid.")
+
+
 def feedback_sentence(tool: str, result: dict) -> str | None:
     """The backend's own student-facing wording of one grading result (run kjofd3ug: the coach
     graded, logged the diagnosis and moved on without saying the verdict)."""
@@ -371,16 +389,31 @@ class CoachTools:
         hist = (base_hist + [m.uci() for m in board.move_stack]) if base_hist is not None else None
         maia = self.engines.maia_predict(board.fen(), history_uci=hist, tier="deep")
         if maia:
-            maia_summary = {"top_human_moves": maia["top_moves"],
-                            "in_words": _human_moves_in_words(maia["top_moves"], self.config.user_elo),
+            # Run sce7o0q6 S2: a share for the position after the applied moves was told as if it
+            # were for the position before them; the sentence names its position.
+            in_words = _human_moves_in_words(maia["top_moves"], self.config.user_elo)
+            if in_words and moves_to_apply:
+                in_words = f"After {' '.join(moves_to_apply[:10])}: {in_words}"
+            maia_summary = {"top_human_moves": maia["top_moves"], "in_words": in_words,
                             "win_probability_for_side_to_move": maia["win_probability_for_side_to_move"]}
-            d, l = maia.get("draw_probability"), maia.get("loss_probability")
+            w, d, l = maia["win_probability_for_side_to_move"], maia.get("draw_probability"), maia.get("loss_probability")
+            source = f"Maia at about {self.config.user_elo}"
+            record = None if moves_to_apply else self._agenda_record_for_fen(fen)
+            if record is not None and record.human_draw_prob is not None and record.human_win_prob is not None:
+                # Run sce7o0q6 S27: the digest called the move-31 position must-hold (10/53/37 at the
+                # game-time rating) and this call, at the coaching rating, said drawish (17/63/19).
+                # An agenda position keeps the digest's numbers so the coach is never told both.
+                w, d, l = record.human_win_prob, record.human_draw_prob, record.human_loss_prob or 0.0
+                maia_summary["win_probability_for_side_to_move"] = w
+                source = (f"Maia at about {record.maia_elo or self.config.user_elo} (the review digest's "
+                          "figure for this position)")
             if d is not None:
-                w = maia["win_probability_for_side_to_move"] or 0.0
+                w = w or 0.0
                 profile, guidance = _wdl_risk_profile(w, d, l or 0.0)
                 maia_summary["win_draw_loss_for_side_to_move"] = {
                     "win": round(w, 3), "draw": round(d, 3), "loss": round(l or 0.0, 3)}
                 maia_summary["risk_profile"] = profile
+                maia_summary["wdl_source"] = source
                 if guidance:
                     maia_summary["risk_guidance"] = guidance
 
@@ -955,16 +988,21 @@ class CoachTools:
                 self.state.socratic_attempts[f"explain-complete:{fen}"] = True
                 self._persist_lesson_progress(fen, "awaiting_diagnosis")
             credited = [r["text"] for r in reasons if not r.get("key") and named(r)]
-            return {"gradable": False, "credited": credited,
-                    "guidance": (("No concrete load-bearing reason is verified for this move beyond the "
-                                  "engine line. " if key_reasons else
-                                  "No single load-bearing reason is pinned for this moment. ")
-                                 + (f"True in the student's words (verified): {'; '.join(credited)}. Credit "
-                                    "exactly these. " if credited else
-                                    "Nothing in the student's words is verified; do not confirm it. ")
-                                 + "Do not say 'exactly' or 'that's it', and do not confirm any other claim "
-                                   "in their words. Teach the verified line in plain words, then proceed to "
-                                   "submit_diagnosis. Do not probe.")}
+            correction = _draw_avoidance_correction(record, text)
+            result = {"gradable": False, "credited": credited,
+                      "guidance": ((f"First correct the student's reasoning: {correction} " if correction else "")
+                                   + ("No concrete load-bearing reason is verified for this move beyond the "
+                                      "engine line. " if key_reasons else
+                                      "No single load-bearing reason is pinned for this moment. ")
+                                   + (f"True in the student's words (verified): {'; '.join(credited)}. Credit "
+                                      "exactly these. " if credited else
+                                      "Nothing in the student's words is verified; do not confirm it. ")
+                                   + "Do not say 'exactly' or 'that's it', and do not confirm any other claim "
+                                     "in their words. Teach the verified line in plain words, then proceed to "
+                                     "submit_diagnosis. Do not probe.")}
+            if correction:
+                result["correction"] = correction
+            return result
 
         key = key_reasons[0]
         key_named = named(key)
