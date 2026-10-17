@@ -288,6 +288,18 @@ def test_an_override_backed_by_the_students_own_words_records_their_statement(st
     assert diag["student_cause"] == "I just didn't notice my queen could be taken"
     assert diag["student_evidence"]["quote"] == "I just didn't notice my queen could be taken"
 
+    # Run wb7lxi6h: the student's reason for the better move was passed as the cause of the mistake.
+    state.diagnostics.clear()
+    state.grading_outcomes[fen] = {"explanation": {"assessment": "named_key_reason",
+                                                   "quote": "Honestly I just didn't notice my queen could be taken."}}
+    tools.submit_diagnosis(fen, rec, "x", "y", student_quote="I just didn't notice my queen could be taken")
+    assert state.diagnostics[0]["cause_basis"] == "unknown" and state.diagnostics[0]["student_cause"] is None
+    state.diagnostics.clear()
+    state.grading_outcomes.clear()
+    state.latest_user_text = "because that one actually defends my g pawn"
+    tools.submit_diagnosis(fen, rec, "x", "y", student_quote="because that one actually defends my g pawn")
+    assert state.diagnostics[0]["cause_basis"] == "unknown"
+
 
 def test_diagnosis_rejects_boilerplate_override_when_mismatched(stub_config):
     tools, state = make_tools(stub_config, _scripted_engines())

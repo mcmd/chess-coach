@@ -89,6 +89,13 @@ _TACTIC_CATEGORIES = {
     "missed_tactic": lambda kind: kind in ("discovered_attack", "discovered_check", "double_check", "zwischenzug"),
 }
 
+# The student reporting their own thinking at the time ("I didn't see the bishop", "I thought it was free",
+# "no vi el alfil"), which a cause needs (Quality-SOL §7.1).
+_OWN_REASONING_RE = re.compile(
+    r"\b(?:i\s+(?:just\s+|really\s+|simply\s+|honestly\s+)?(?:thought|wanted|was|didn'?t|did\s+not|missed|forgot|"
+    r"assumed|believed|hoped|panicked|rushed|played|took|grabbed|saw|overlooked)|because\s+i|"
+    r"(?:no\s+vi|pens[eé]|quer[ií]a|me\s+olvid[eé]|jugu[eé]))\b", re.IGNORECASE)
+
 
 def _valid_diagnosis_override(reason: str, recommended: str, chosen: str) -> bool:
     """An override reason must contain actual evidence, not just restate the
@@ -1603,6 +1610,16 @@ class CoachTools:
         # else leaves it unknown. Five words of override prose are not the student's statement.
         quote_found, quote_turn = self._student_turn(student_quote) if student_quote else (False, None)
         quote_found = quote_found and len(self._student_words(student_quote)) >= 3
+        # Run wb7lxi6h: the coach passed the student's reason for the BETTER move ("because that one
+        # actually defends my g pawn") as the cause of the mistake. A cause is the student reporting
+        # their own thinking, and never the explanation or answer they gave for the better move.
+        graded = (self.state.grading_outcomes.get(fen) or {}).get("explanation") or {}
+        quote_compact = self._compact_student_text(student_quote or "")
+        best = getattr(record, "best_move_san", None) if record else None
+        quote_found = (quote_found and bool(_OWN_REASONING_RE.search(student_quote or ""))
+                       and not (graded.get("quote") and quote_compact
+                                and quote_compact in self._compact_student_text(graded["quote"]))
+                       and not (best and best.rstrip("+#") in (student_quote or "")))
         outcomes = self.state.grading_outcomes.get(fen) or {}
         explained = outcomes.get("explanation") or {}
         assessment = explained.get("assessment") or "unassessable"
