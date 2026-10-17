@@ -122,7 +122,7 @@ Beyond the slash commands, you drive the coach in plain language; it has backend
 - `I'd play Rad1` / `Ne4` (a candidate move)
 - `Because it brings my last rook into play and defends e4` (the *why*, after you've found the move)
 
-You earn the answer by attempting: it unlocks when you are right, or after two tries.
+You earn the answer by attempting: it unlocks when you are right, or after two tries. A first illegal move in a moment does not use a try; the coach tells you why it is impossible (from the board, e.g. "your own pawn on d5 is in the way"), and after three illegal moves in a row it shows the board again and offers the answer.
 
 **Ask about risk & drawing chances** (from the human-move model, for the side to move)
 - `How risky is this position, am I playing for a win or a draw?`
