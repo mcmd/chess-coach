@@ -66,6 +66,18 @@ def _score_to_str(score: chess.engine.PovScore) -> str:
     return f"{white.score(mate_score=MATE_CP) / 100.0:+.2f}"
 
 
+def _rough_evaluation(score: chess.engine.PovScore) -> str:
+    """A cut-short search's score in words (a found mate stays exact)."""
+    white = score.white()
+    if white.is_mate():
+        return _score_to_str(score)
+    cp = white.score(mate_score=MATE_CP)
+    if abs(cp) < 50:
+        return "about level (rough)"
+    word = "winning" if abs(cp) >= 300 else "clearly better" if abs(cp) >= 150 else "slightly better"
+    return f"{'White' if cp > 0 else 'Black'} {word} (rough)"
+
+
 from app.notation import legal_san_mentions as _legal_san_mentions, san_mentions as _san_mentions
 
 
@@ -441,10 +453,14 @@ class CoachTools:
                               "expected_engine_line": " ".join(pv_san), "depth_reached": info.get("depth")})
         reached = min((info.get("depth") or 0) for info in infos) if infos else 0
         # Run e_adq2d7 S27: a 4-second search stopped at depth 14 gave 31. Kh2 -4.59 and the coach quoted
-        # it; at depth 30 it is -8.76. A cut-short search's numbers are not quotable as exact.
+        # it; at depth 30 it is -8.76. Run bmcabgeq quoted +4.9 and -8.7 despite a 'do not quote' note, so
+        # a cut-short search's evaluations are given in words only.
         search_note = (f"The search stopped at depth {reached} of {safe_depth} (time limit): its evaluations are "
-                       "rough. Say only which side is better and roughly how much (e.g. 'clearly lost'); do not "
-                       "quote these numbers." if infos and reached < safe_depth else None)
+                       "rough and given in words. Say only which side is better and roughly how much." if infos
+                       and reached < safe_depth else None)
+        if search_note:
+            for line, info in zip(top_lines, infos):
+                line["evaluation"] = _rough_evaluation(info["score"])
 
         forced_check = self._forced_piece_check(board, infos, min(safe_depth, 18))
         draw_rule = _draw_rule(board)

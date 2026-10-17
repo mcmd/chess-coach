@@ -201,6 +201,22 @@ def test_a_line_from_the_better_moves_refutation_of_a_resource_is_known(tmp_path
     assert run(True) == {"PASS"} and "FAIL" in run(False)
 
 
+def test_a_line_analyze_position_returned_is_a_known_position(tmp_path):
+    # Run bmcabgeq narrated the 31. Kh2 continuation ("32. Kg2 ... 32... Qg5+") from an analyze_position
+    # line; with no known position at move 32 the checker listed recording gaps instead of checking it.
+    recording = Recording(tmp_path)
+    game, positions, source = source_game(recording)
+    state = game_state(game, positions, 2)
+    recording.tool("analyze_position", {"fen": chess.STARTING_FEN, "moves_to_apply": ["e4"]},
+                   {"top_stockfish_lines": [{"expected_engine_line": "e5 Nf3 Nc6"}]})
+    recording.turn(1, state, reply="After 1. e4 e5 the game goes 2. Nf3 Nc6.")
+    recording.turn(2, state, reply="After 1. e4 e5 the game goes 2. Nf3 Nf6.")
+    result = recording.save()
+    by_turn = {next(e["turn"] for e in recording.events if e["id"] == c["evidence"][0]): c["verdict"]
+               for c in findings(result, "visible_line_legality")}
+    assert by_turn == {1: "PASS", 2: "PASS"} and not result.get("recording_gaps")
+
+
 def test_single_numbered_move_in_prose_is_checked(tmp_path):
     # Run par4cj6m: "after Black recaptures with 20... Qxb5" was illegal (the queen on d6
     # cannot reach b5) but the checker only read numbered lines of two or more moves.

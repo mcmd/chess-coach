@@ -493,6 +493,18 @@ def check_recording(run_dir: str | Path) -> dict:
                         line_positions += _line_positions(record.get("fen_before"),
                                                           [record["best_move_san"], refutation.get("resource")]
                                                           + list(line or []))
+        # Lines analyze_position returned before this reply, from its root after moves_to_apply: run
+        # bmcabgeq narrated the 31. Kh2 continuation (32. Kg2, 32... Qg5+) and the checker listed it as a gap.
+        for call in call_events:
+            result = results.get(("tool_result", call["data"].get("call_id")))
+            if call["data"].get("name") != "analyze_position" or result is None or result["id"] > reply["id"]:
+                continue
+            args, data = call["data"].get("arguments") or {}, result["data"].get("result") or {}
+            applied = _line_positions(args.get("fen"), list(args.get("moves_to_apply") or []))
+            pv_root = applied[-1].fen() if applied else args.get("fen")
+            line_positions += applied
+            for line in data.get("top_stockfish_lines") or [] if isinstance(data, dict) else []:
+                line_positions += _line_positions(pv_root, str(line.get("expected_engine_line") or "").split())
         for match in NUMBERED_LINE.finditer(text):
             number, black = int(match[1]), bool(match[2])
             # "1. Qd7 (+4.79), 2. Qg6 (+5.34)" ranks engine moves; it is not a move number.

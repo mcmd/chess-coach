@@ -1,3 +1,5 @@
+import re
+
 import chess
 
 from app.memory import load_lesson_metadata, save_lesson_metadata
@@ -1336,16 +1338,19 @@ def test_game_positions_come_from_the_game_and_an_invented_one_is_refused(stub_c
     assert "error" not in tools.analyze_position("4k3/8/8/8/8/8/8/4K2R w K - 0 40")  # not a game move
 
 
-def test_a_search_cut_short_by_its_time_limit_says_its_numbers_are_rough(stub_config):
+def test_a_search_cut_short_by_its_time_limit_gives_no_quotable_numbers(stub_config):
     # Run e_adq2d7 S27: a 4-second search stopped at depth 14 gave 31. Kh2 -4.59 and the coach quoted it
-    # as exact; at depth 30 it is -8.76.
+    # as exact; at depth 30 it is -8.76. Run bmcabgeq quoted +4.9 and -8.7 despite the note.
     engines = FakeEngines()
     tools, _ = make_tools(stub_config, engines)
     full = tools.analyze_position(START)
     assert "search_note" not in full and full["top_stockfish_lines"][0]["depth_reached"] == 18
+    assert re.fullmatch(r"[+-]\d+\.\d\d|#-?\d+", full["top_stockfish_lines"][0]["evaluation"])
     engines.depth_reached[START] = 14
     cut = tools.analyze_position(START)
-    assert "depth 14 of 18" in cut["search_note"] and "do not quote these numbers" in cut["search_note"]
+    assert "depth 14 of 18" in cut["search_note"]
+    assert all(not re.search(r"\d", line["evaluation"]) or line["evaluation"].startswith("#")
+               for line in cut["top_stockfish_lines"])
 
 
 def test_move_24_explanations_get_full_partial_or_a_concrete_probe(stub_config):
