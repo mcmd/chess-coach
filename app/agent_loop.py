@@ -931,7 +931,7 @@ _HYPOTHETICAL_RE = re.compile(
     r"not|never|si|habr[ií]as?|podr[ií]as?|hubieras?|lugar|mejor|no|permit\w*|amenaz\w*)\b|n't\b", re.IGNORECASE)
 _CLAUSE_SPLIT_RE = re.compile(r"[;:]|,?\s+(?:but|however|whereas|while|pero|mientras)\b", re.IGNORECASE)
 _NUMBER_BEFORE_RE = re.compile(r"(\d{1,3})\.(\.\.)?[\s`*]*$")
-_SENTENCE_END_RE = re.compile(r"[.!?]+(?=[\s`*)]|$)|\n")
+_SENTENCE_END_RE = re.compile(r"[.!?]+[`*)\]\"']*(?=\s|$)|\n")
 
 
 def _sentences(text: str) -> list:
@@ -948,14 +948,9 @@ def _sentences(text: str) -> list:
     return spans
 
 
-def _history_mismatch(clause: str, played: dict, last_label: str):
-    """The first move this clause narrates as played that the game did not play, as (claimed, correction).
-    Only moves after the history cue count: in "how 31. Kh2 compares with what you played in the game
-    (31. Kh1)" the first move is not narrated as played."""
-    cue = _HISTORY_CUE_RE.search(clause)
-    if not cue or _HYPOTHETICAL_RE.search(clause):
-        return None
-    clause = clause[cue.start():]
+def _numbered_moves(clause: str):
+    """(move number, black?) and SAN for each move anchored by a move number, directly or by following
+    one in an unbroken run ("31... Qh3+ 32. Kg1 Qg4+")."""
     prev_end = key = None
     for start, end, san in san_mention_spans(clause):
         number = _NUMBER_BEFORE_RE.search(clause[:start])
@@ -967,7 +962,22 @@ def _history_mismatch(clause: str, played: dict, last_label: str):
             key = None
             continue
         prev_end = end
-        claimed = f"{key[0]}{'...' if key[1] else '.'} {san}"
+        yield key, san
+
+
+def _label(key, san) -> str:
+    return f"{key[0]}{'...' if key[1] else '.'} {san}"
+
+
+def _history_mismatch(clause: str, played: dict, last_label: str):
+    """The first move this clause narrates as played that the game did not play, as (claimed, correction).
+    Only moves after the history cue count: in "how 31. Kh2 compares with what you played in the game
+    (31. Kh1)" the first move is not narrated as played."""
+    cue = _HISTORY_CUE_RE.search(clause)
+    if not cue or _HYPOTHETICAL_RE.search(clause):
+        return None
+    for key, san in _numbered_moves(clause[cue.start():]):
+        claimed = _label(key, san)
         record = played.get(key)
         if record is None:
             if key[0] >= 1 and key > max(played):
@@ -975,6 +985,25 @@ def _history_mismatch(clause: str, played: dict, last_label: str):
             return None
         if record.san.rstrip("+#") != san.rstrip("+#!?"):
             return claimed, f"the game went {record.move_label}, not {claimed}"
+    return None
+
+
+def _side_slip(clause: str, played: dict, student_color):
+    """A game move given the other side's move number, e.g. "11. Qxd6!" for Black's 11... Qxd6 (run
+    aqv46cej credited it to the student as an only-move). Illegal for the side named, so never a
+    hypothetical for that side."""
+    for key, san in _numbered_moves(clause):
+        record, other = played.get(key), played.get((key[0], not key[1]))
+        if record is None or other is None or other.san.rstrip("+#") != san.rstrip("+#!?") \
+                or record.san.rstrip("+#") == san.rstrip("+#!?"):
+            continue
+        try:
+            chess.Board(record.fen_before).parse_san(san.rstrip("!?"))
+            continue
+        except ValueError:
+            owner = ("your opponent's" if student_color and other.color != student_color
+                     else f"{other.color.capitalize()}'s")
+            return _label(key, san), f"{other.move_label} was {owner} move"
     return None
 
 
@@ -988,7 +1017,8 @@ def _correct_narrated_history(output_text: str, state) -> str:
     for start, end in _sentences(output_text):
         sentence = output_text[start:end]
         for clause in _CLAUSE_SPLIT_RE.split(sentence):
-            found = _history_mismatch(clause, played, records[-1].move_label)
+            found = (_history_mismatch(clause, played, records[-1].move_label)
+                     or _side_slip(clause, played, getattr(review, "student_color", None)))
             if found:
                 claimed, correction = found
                 _event_append(state, "history_claim_events", {

@@ -541,6 +541,12 @@ def test_moves_narrated_as_played_must_be_the_games_moves():
     for text in unchanged:
         assert _correct_narrated_history(text, state) == text
 
+    # Run aqv46cej: "8. cxd3!, 9. a3!, and 11. Qxd6!: ... only-moves" credited Black's 11... Qxd6 to the student.
+    assert _correct_narrated_history("Only-moves: 1. Nf3! and 1. Nf6!", state) == (
+        "Only-moves: 1. Nf3! and 1. Nf6! (Game record: 1... Nf6 was your opponent's move.)")
+    assert _correct_narrated_history("* **`1. Nf6!`** (only move)", state) == (
+        "* **`1. Nf6!`** (Game record: 1... Nf6 was your opponent's move.) (only move)")
+
 
 def test_numbered_or_code_span_pawn_moves_are_still_checked():
     start = [chess.Board()]
