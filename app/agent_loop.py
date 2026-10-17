@@ -13,7 +13,8 @@ from rich.markdown import Markdown
 
 from app.memory import load_dossier
 from app.notation import ambiguous_piece_references, san_mention_spans
-from app.tools import GRADING_TOOLS, feedback_sentence, grading_next_step
+from app.planner import _normalize_text
+from app.tools import _DRAW_AVOIDANCE_RE, GRADING_TOOLS, feedback_sentence, grading_next_step
 from app.trace import fmt_args, trace
 from app.ui import console
 
@@ -142,15 +143,17 @@ def _send_without_leaks(chat, payload, state):
     return response
 
 
-def run_agent_turn(chat, coach_tools, message) -> None:
+def run_agent_turn(chat, coach_tools, message, student_text: str = None) -> None:
     """Send `message`, execute any tool calls until the model stops asking,
-    then render the final response."""
-    coach_tools.state.latest_user_text = message
+    then render the final response. `student_text` is what the student typed: grading
+    provenance is checked against it, never against the backend notes in `message`."""
+    coach_tools.state.latest_user_text = message if student_text is None else student_text
     state = coach_tools.state
     if hasattr(coach_tools.state, "claim_gate_extra_fens"):
         coach_tools.state.claim_gate_extra_fens.clear()
     # Results the backend router graded before this turn count as this turn's gradings.
     turn_grading_results = [dict(entry) for entry in (getattr(state, "pregraded", None) or {}).values()]
+    turn_corrections = []  # student-facing corrections from non-grading tools (get_game_position)
     turn_tool_names = []
     response = _send_without_leaks(chat, message, state)
     full_text = ""
@@ -217,7 +220,9 @@ def run_agent_turn(chat, coach_tools, message) -> None:
                 if step:
                     result = {**result, "next_step": step + (" " + result["next_step"] if result.get("next_step") else "")}
                 turn_grading_results.append({"tool": fn_call.name, "args": args_dict, "result": result})
-            elif fn_call.name == "submit_diagnosis" and isinstance(result, dict) and result.get("success"):
+            elif isinstance(result, dict) and result.get("correction"):
+                turn_corrections.append(result["correction"])
+            if fn_call.name == "submit_diagnosis" and isinstance(result, dict) and result.get("success"):
                 # Run kjofd3ug S4/S11: after grading and logging, the final reply presented the next
                 # moment without the feedback (text written beside tool calls is not shown).
                 feedback = [s for item in turn_grading_results
@@ -234,12 +239,14 @@ def run_agent_turn(chat, coach_tools, message) -> None:
         response = _send_without_leaks(chat, tool_parts, state)
 
     coach_tools.state._turn_grading_results = turn_grading_results
+    coach_tools.state._turn_corrections = turn_corrections
     coach_tools.state._turn_tool_names = turn_tool_names
     _render(full_text, coach_tools.state, getattr(coach_tools, "config", None))
     if hasattr(coach_tools.state, "_turn_grading_results"):
         coach_tools.state._turn_grading_results = []
     if hasattr(coach_tools.state, "_turn_tool_names"):
         coach_tools.state._turn_tool_names = []
+    coach_tools.state._turn_corrections = []
     if hasattr(coach_tools.state, "claim_gate_extra_fens"):
         coach_tools.state.claim_gate_extra_fens.clear()
 
@@ -761,14 +768,21 @@ def _state_unreported_feedback(output_text: str, state) -> str:
     """A grading verdict or verified explanation credit the reply leaves out is stated by the
     backend first, in its own verified words (run kjofd3ug S4 and S11: graded, logged, moved on)."""
     missing = []
+    lower = (output_text or "").lower()
+    # Run rxsdfgdx S18: "It's completely natural to want to avoid the perpetual check" passed the old
+    # perpetual-and-draw word test; a correction counts as said only when the reply welcomes the draw.
+    said = "welcome" in lower or "bienvenid" in lower
+    corrections = [item["result"]["correction"] for item in getattr(state, "_turn_grading_results", []) or []
+                   if (item.get("result") or {}).get("correction")]
+    if _DRAW_AVOIDANCE_RE.search(_normalize_text(getattr(state, "latest_user_text", None) or "")):
+        corrections += list(getattr(state, "_turn_corrections", None) or [])
+    if not said:
+        missing += list(dict.fromkeys(c[0].upper() + c[1:] for c in corrections))
     for item in getattr(state, "_turn_grading_results", []) or []:
         result = item.get("result") or {}
-        correction = result.get("correction")
-        lower = (output_text or "").lower()
-        if correction and not (("perpetual" in lower or "repetition" in lower) and "draw" in lower):
-            missing.append(correction[0].upper() + correction[1:])
         sentence = feedback_sentence(item.get("tool"), result)
-        if not sentence or _feedback_spoken(output_text, item) or sentence in missing:
+        # The integrity guard may already have stated it (xpweac5a: "Qxg4+ is the real threat." twice).
+        if not sentence or _feedback_spoken(output_text, item) or sentence in missing or sentence in output_text:
             continue
         missing.append(sentence)
         _event_append(state, "grader_verdict_events", {
@@ -811,13 +825,13 @@ def _run_grading_integrity_guard(output_text: str, state) -> str:
     verified = [feedback_sentence(item.get("tool"), item.get("result") or {}) for item in results
                 if (item.get("result") or {}).get("verdict") != "stale_or_fabricated_student_input"
                 and not (item.get("result") or {}).get("error")]
-    if all(item.get("tool") == "evaluate_explanation" for item in stale):
-        ask = "Why does that move work? Tell me in your own words what it does."
-    else:
-        ask = ("I tried to grade a move or threat that was not actually in your latest message, so I "
-               "will not treat it as verified. Please restate the candidate move or threat you want me to "
-               "check, or ask me to explain the position directly.")
-    return " ".join([s for s in verified if s] + [ask])
+    # Run xpweac5a S14: the student named the threat, the coach graded a move they never wrote, and the
+    # notice talked about grading. Ask for what the student has not given yet (Quality-SOL §9.6).
+    asks = {"evaluate_explanation": "Why does that move work? Tell me in your own words what it does.",
+            "evaluate_student_answer": "Which move would you play here?",
+            "evaluate_threat_answer": "What is your opponent threatening here?"}
+    ask = list(dict.fromkeys(asks.get(item.get("tool"), asks["evaluate_student_answer"]) for item in stale))
+    return " ".join([s for s in verified if s] + ask)
 
 
 def _move_mentioned_near_label(text: str, move: str, label_pattern: str) -> bool:
@@ -901,6 +915,123 @@ def _fix_position_labels(output_text: str, state) -> str:
     return output_text
 
 
+# Quality-SOL §9.1: moves narrated as the game's own must be the game's moves. Run sacvi7je: "In the game,
+# you played 31. Kh1, and it did end in a draw by repetition after 31... Qh3+ 32. Kg1 Qg4+ 33. Kh1" was
+# legal on known boards, so the claim gate passed it, yet the game ended with 31. Kh1.
+_HISTORY_CUE_RE = re.compile(
+    r"\b(?:in (?:the|your|this) game|the game (?:continued|went|ended)|you (?:then |actually )?played|"
+    r"(?:white|black|your opponent|the opponent) (?:then |actually )?(?:played|answered|replied|responded|continued)|"
+    r"en (?:la|tu|esta) partida|jugaste|(?:las )?(?:blancas|negras) (?:jugaron|respondieron|contestaron))\b",
+    re.IGNORECASE)
+# A clause that weighs another move, a possibility or a denial is not a report of what was played
+# (zgnvh1if: "When you played 24. Kxg2, you gave Black the time to play 24... Qf4").
+_HYPOTHETICAL_RE = re.compile(
+    r"\b(?:if|would|could|should|might|can|instead|rather|than|compared?|had|suppose|imagine|engine|line|best|"
+    r"better|alternative|allow\w*|threat\w*|lets?|to play|time to|chance|options?|opportunit\w*|gave|giv\w*|"
+    r"not|never|si|habr[ií]as?|podr[ií]as?|hubieras?|lugar|mejor|no|permit\w*|amenaz\w*)\b|n't\b", re.IGNORECASE)
+_CLAUSE_SPLIT_RE = re.compile(r"[;:]|,?\s+(?:but|however|whereas|while|pero|mientras)\b", re.IGNORECASE)
+_NUMBER_BEFORE_RE = re.compile(r"(\d{1,3})\.(\.\.)?[\s`*]*$")
+_SENTENCE_END_RE = re.compile(r"[.!?]+[`*)\]\"']*(?=\s|$)|\n")
+
+
+def _sentences(text: str) -> list:
+    """(start, end) of each sentence; the period of a move number ("31." / "31...") ends none."""
+    spans, start = [], 0
+    for m in _SENTENCE_END_RE.finditer(text):
+        word = text[start:m.start()].rsplit(None, 1)[-1] if text[start:m.start()].split() else ""
+        if m.group(0) != "\n" and re.fullmatch(r"[`*]*\d{1,3}", word):
+            continue
+        spans.append((start, m.end()))
+        start = m.end()
+    if text[start:].strip():
+        spans.append((start, len(text)))
+    return spans
+
+
+def _numbered_moves(clause: str):
+    """(move number, black?) and SAN for each move anchored by a move number, directly or by following
+    one in an unbroken run ("31... Qh3+ 32. Kg1 Qg4+")."""
+    prev_end = key = None
+    for start, end, san in san_mention_spans(clause):
+        number = _NUMBER_BEFORE_RE.search(clause[:start])
+        if number:
+            key = (int(number.group(1)), bool(number.group(2)))
+        elif key is not None and not clause[prev_end:start].strip(" `*"):
+            key = (key[0], True) if not key[1] else (key[0] + 1, False)
+        else:
+            key = None
+            continue
+        prev_end = end
+        yield key, san
+
+
+def _label(key, san) -> str:
+    return f"{key[0]}{'...' if key[1] else '.'} {san}"
+
+
+def _history_mismatch(clause: str, played: dict, last_label: str):
+    """The first move this clause narrates as played that the game did not play, as (claimed, correction).
+    Only moves after the history cue count: in "how 31. Kh2 compares with what you played in the game
+    (31. Kh1)" the first move is not narrated as played."""
+    cue = _HISTORY_CUE_RE.search(clause)
+    if not cue or _HYPOTHETICAL_RE.search(clause):
+        return None
+    for key, san in _numbered_moves(clause[cue.start():]):
+        claimed = _label(key, san)
+        record = played.get(key)
+        if record is None:
+            if key[0] >= 1 and key > max(played):
+                return claimed, f"the game ended with {last_label}; {claimed} was not played"
+            return None
+        if record.san.rstrip("+#") != san.rstrip("+#!?"):
+            return claimed, f"the game went {record.move_label}, not {claimed}"
+    return None
+
+
+def _side_slip(clause: str, played: dict, student_color):
+    """A game move given the other side's move number, e.g. "11. Qxd6!" for Black's 11... Qxd6 (run
+    aqv46cej credited it to the student as an only-move). Illegal for the side named, so never a
+    hypothetical for that side."""
+    for key, san in _numbered_moves(clause):
+        record, other = played.get(key), played.get((key[0], not key[1]))
+        if record is None or other is None or other.san.rstrip("+#") != san.rstrip("+#!?") \
+                or record.san.rstrip("+#") == san.rstrip("+#!?"):
+            continue
+        try:
+            chess.Board(record.fen_before).parse_san(san.rstrip("!?"))
+            continue
+        except ValueError:
+            owner = ("your opponent's" if student_color and other.color != student_color
+                     else f"{other.color.capitalize()}'s")
+            return _label(key, san), f"{other.move_label} was {owner} move"
+    return None
+
+
+def _correct_narrated_history(output_text: str, state) -> str:
+    review = getattr(state, "review", None)
+    records = list(getattr(review, "records", None) or [])
+    if not records:
+        return output_text
+    played = {(r.number, r.color == "black"): r for r in records}
+    pieces, cursor = [], 0
+    for start, end in _sentences(output_text):
+        sentence = output_text[start:end]
+        for clause in _CLAUSE_SPLIT_RE.split(sentence):
+            found = (_history_mismatch(clause, played, records[-1].move_label)
+                     or _side_slip(clause, played, getattr(review, "student_color", None)))
+            if found:
+                claimed, correction = found
+                _event_append(state, "history_claim_events", {
+                    "type": "narrated_history_mismatch", "claimed": claimed, "correction": correction,
+                    "game_id": getattr(state, "current_game_id", None)})
+                trace(f"history check: {claimed} narrated as played; {correction}")
+                insert = end - 1 if output_text[end - 1:end] == "\n" else end
+                pieces.append(output_text[cursor:insert] + f" (Game record: {correction}.)")
+                cursor = insert
+                break
+    return "".join(pieces) + output_text[cursor:]
+
+
 _YOUR_LEVEL_RE = re.compile(r"\b(at|around|near) your level\b", re.IGNORECASE)
 
 
@@ -946,6 +1077,7 @@ def _render(full_text: str, state, config=None) -> None:
 
     output_text = _run_grading_integrity_guard(output_text, state)
     output_text = _run_claim_gate(output_text, state, config)
+    output_text = _correct_narrated_history(output_text, state)
     _run_ambiguous_piece_lint(output_text, state)
     output_text = _state_unreported_feedback(output_text, state)
     output_text = _label_rating_cohort(output_text, state)

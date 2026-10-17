@@ -772,6 +772,29 @@ class CoachTools:
         matched = sum(1 for w in submitted_words if any(self._typo_variant(w, l) for l in latest_words))
         return matched / len(submitted_words) >= 0.85
 
+    def _explanation_context(self, submitted: str) -> tuple:
+        """The student's own sentence(s) containing the submitted explanation, and which message they
+        came from. An extracted span can drop the words around it ("I don't think it defends g4" ->
+        "it defends g4"), so grading and the coach see the containing sentences in both routing arms
+        (Quality-SOL §6.1). A typo-level or unlocatable submission is graded as submitted."""
+        span = self._compact_student_text(submitted)
+        sources = [("latest_message", getattr(self.state, "latest_user_text", None) or "")] + [
+            ("earlier_moment_message", t) for t in reversed(getattr(self.state, "moment_student_texts", None) or [])]
+        for origin, text in sources:
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?;])\s+|\n+", text) if s.strip()]
+            compacts = [self._compact_student_text(s) for s in sentences]
+            whole = "".join(compacts)
+            at = whole.find(span) if span else -1
+            if at < 0 or whole != self._compact_student_text(text):
+                continue
+            keep, pos = [], 0
+            for sentence, compact in zip(sentences, compacts):
+                if pos < at + len(span) and at < pos + len(compact):
+                    keep.append(sentence)
+                pos += len(compact)
+            return " ".join(keep), origin
+        return (submitted or "").strip(), "submitted_text"
+
     def _pregraded_result(self, tool: str, fen: str) -> dict | None:
         """The backend router already graded the student's message with this tool on this
         position this turn: return that result instead of spending another attempt."""
@@ -1008,11 +1031,21 @@ class CoachTools:
             "evaluate_explanation", "student_explanation", student_explanation)
         if provenance_error:
             return provenance_error
+        context, origin = self._explanation_context(student_explanation)
+        result = self._grade_explanation(record, fen, context, student_explanation)
+        result["graded_text_source"] = origin
+        if context != (student_explanation or "").strip():
+            result["graded_text"] = context
+        return result
+
+    def _grade_explanation(self, record, fen: str, context: str, student_explanation: str) -> dict:
+        """`context` (the student's containing sentences) is matched; the give-up intent is read
+        from the submitted text the router or coach resolved."""
         reasons = (getattr(record, "explanation_primitives", None) or {}).get("reasons") or []
         key_reasons = [r for r in reasons if r.get("key")]
         # Squares inside move notation ("Rd4") name the move, not the reason: mask piece
         # moves, pawn captures and castling before matching (bare squares like "g4" stay).
-        explanation = _MOVE_TOKEN_RE.sub(" ", student_explanation or "")
+        explanation = _MOVE_TOKEN_RE.sub(" ", context or "")
         text = _normalize_text(explanation)
         if not re.search(r"[a-z]", text):
             return {"gradable": False,
@@ -1397,6 +1430,12 @@ class CoachTools:
 
         if any(d.get("fen") == fen for d in self.state.diagnostics):
             return {"success": True, "message": "Diagnosis already logged for this position. Do not call this tool again."}
+        agenda = self.state.review.agenda if self.state.review else []
+        idx = next((i for i, r in enumerate(agenda) if r.fen_before == fen), None)
+        if idx is not None and idx in ((self.state.lesson_metadata or {}).get("skipped_agenda_indices") or []):
+            # Runs xpweac5a/ehuw4sca: the untaught 17. d5 was submitted right after the student skipped it.
+            return {"error": (f"The student skipped {agenda[idx].move_label}: it is closed without a diagnosis. "
+                              "Do not log or quiz it; go on to the next moment."), "skipped": True}
 
         record = self._agenda_record_for_fen(fen)
         recommended = getattr(record, "recommended_diagnosis", None) if record else None
@@ -1543,6 +1582,13 @@ class CoachTools:
         ledger["explained_concepts"] = concepts[-24:]
 
     def _persist_lesson_progress(self, fen: str = None, status: str = "awaiting_answer") -> None:
+        meta = self.state.lesson_metadata or {}
+        skipped = meta.get("skipped_agenda_indices") or []
+        if skipped and self.state.review and fen:
+            # Grading a skipped moment means the student came back to it: it is open again.
+            back = next((i for i, r in enumerate(self.state.review.agenda) if r.fen_before == fen), None)
+            if back in skipped:
+                self.state.lesson_metadata = {**meta, "skipped_agenda_indices": [i for i in skipped if i != back]}
         if not getattr(self.config, "lesson_file", None):
             return
         # Only agenda moments drive lesson state: dossier drills, sparring, and
@@ -1617,7 +1663,8 @@ class CoachTools:
                 # corrects it only runs on agenda moments).
                 result["correction"] = (f"For {record.color.capitalize()}, who would have been worse if play had "
                                         "gone on, a perpetual check or repetition is the draw to welcome, not "
-                                        "something to avoid. Say so if the student wanted to avoid it.")
+                                        "something to avoid.")
+                result["correction_when"] = "the student wanted to avoid the perpetual or the repetition: say so"
         if record is review.records[-1]:
             result["game_ending"] = review.ending()
         return result

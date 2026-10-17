@@ -215,7 +215,7 @@ class Recorder:
                  "socratic_attempts", "review_context", "teaching_ledger", "active_dossier_drill",
                  "grading_integrity_events", "claim_gate_events", "grader_verdict_events",
                  "ambiguous_piece_events", "verdict_contradiction_events", "deliberation_events",
-                 "router_events", "pregraded")
+                 "history_claim_events", "router_events", "pregraded")
         data = {name: getattr(state, name, None) for name in names}
         data.update(board_fen=state.board.fen(),
                     loaded_moves_uci=[move.uci() for move in state.loaded_moves])
@@ -326,6 +326,12 @@ class Recorder:
         self.old_record = self.console.record
         self.console.record = True
         try:
+            # Trace lines are developer output (off in the real CLI): they go to the terminal log, not to
+            # the recorded student-visible replies (reviewers of runs zgnvh1if and ehuw4sca read them as leaks).
+            from rich.console import Console
+            from app import trace as trace_module
+            self.hooks.append((trace_module, "console", trace_module.console))  # restored with the patches
+            trace_module.console = Console(file=self.console.file, width=self.console.width)
             self.patch(coach, "cli_prompt", self.prompt)
             original_config = coach.load_config
 
@@ -440,10 +446,10 @@ class Recorder:
 
             original_turn = coach.run_agent_turn
 
-            def turn(chat, coach_tools, message):
+            def turn(chat, coach_tools, message, student_text=None):
                 self.state = coach_tools.state
                 try:
-                    result = original_turn(chat, coach_tools, message)
+                    result = original_turn(chat, coach_tools, message, student_text=student_text)
                 except BaseException as exc:
                     self.error(exc)
                     raise

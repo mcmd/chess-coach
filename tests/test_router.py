@@ -117,6 +117,46 @@ def test_give_up_missed_by_the_rules_is_still_recorded(stub_config):
     assert state.socratic_attempts[record.fen_before] == 1
 
 
+def test_explanation_span_is_graded_alike_in_both_arms_and_its_source_is_recorded(stub_config):
+    # Quality-SOL §6.1/§9.4: the router's span and the coach's quoted span reach the same backend grading
+    # of the student's whole sentence; an unquoted router span falls back to the message, recorded.
+    message = "Hmm, it keeps the knight active. That's my reason."
+    routed, routed_state, record = _routed_lesson(stub_config, None, status="awaiting_explanation")
+    routed.router.route = Route(label="explanation", explanation="keeps the knight active",
+                                about_current_moment=True)
+    routed.process(message)
+    entry = routed_state.pregraded[f"evaluate_explanation:{record.fen_before}"]
+    assert routed_state.router_events[-1]["explanation_source"] == "router_span"
+
+    coach, coach_state, _ = _routed_lesson(stub_config, None, status="awaiting_explanation")
+    coach.router = None
+    coach.process(message)
+    coach_state.latest_user_text = message  # what coach.py passes run_agent_turn as student_text
+    direct = coach.tools.evaluate_explanation(record.fen_before, "keeps the knight active")
+    assert direct == entry["result"] and direct["graded_text"] == "Hmm, it keeps the knight active."
+    assert coach_state.socratic_attempts == routed_state.socratic_attempts
+
+    routed.router.route = Route(label="explanation", explanation="it attacks the queen", about_current_moment=True)
+    routed.process("Because it is active.")
+    assert routed_state.router_events[-1]["explanation_source"] == "whole_message_fallback"
+
+
+def test_a_skipped_moment_is_closed_without_a_diagnosis_until_the_student_comes_back(stub_config):
+    # Runs xpweac5a/ehuw4sca S1a: after "Let's skip this one", the coach submitted a diagnosis for the
+    # untaught 17. d5 and was told to ask why the move works.
+    proc, state, record = _routed_lesson(stub_config, None, status="fresh_review")
+    proc.router = None
+    state.teaching_ledger.setdefault("self_assessment", {})["status"] = "answered"  # S1 came first
+    prompt = proc.process("Let's skip this one and go to the next mistake.").prompt
+    assert f"the student skipped {record.move_label}" in prompt
+    refused = proc.tools.submit_diagnosis(record.fen_before, "ignored_threat", "Played it.", "Scan threats.")
+    assert refused.get("skipped") is True and state.diagnostics == []
+
+    state.latest_user_text = _legal_move(record)
+    proc.tools.evaluate_student_answer(record.fen_before, _legal_move(record))
+    assert not state.lesson_metadata.get("skipped_agenda_indices")
+
+
 def test_resolvers_accept_only_quoted_legal_moves():
     board = chess.Board()
     assert resolve_move(board, "knight to f3", "I'd go knight to f3") == "Nf3"

@@ -178,13 +178,14 @@ class CommandProcessor:
             # Review-lesson notes (self-assessment, threat routing, give-up, pending
             # diagnosis) belong to a game review, not to a sparring game in progress.
             return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text))
+        skip_note = self._skip_note(text)  # before the self-assessment note settles a pending opener
         planned += self._self_assessment_response_note(text, plan)
         planned += self._redundancy_note(plan)
         if plan.intent == "close_with_takeaway":
             planned += self._takeaway_note()
         return CommandResult(prompt=self._enrich(planned) + self._candidate_list_note(text)
                              + self._opponent_threat_routing_note(text)
-                             + self._give_up_note(text) + self._move_on_note(text)
+                             + self._give_up_note(text) + self._move_on_note(text) + skip_note
                              + self._pending_diagnosis_note(text) + self._persistence_note(text) + route_note)
 
     _PERSISTENCE_RE = re.compile(r"(?:\bsav(?:e|ed|ing)\b|/memori[sz]e|\bmemori[sz]e|\bdossier\b|\bstored\b|"
@@ -299,8 +300,10 @@ class CommandProcessor:
             if san:
                 calls.append(("evaluate_threat_answer", {"fen": fen, "threat_move_san": san}))
         else:
-            reason = resolve_explanation(route.explanation, text) or text
-            calls.append(("evaluate_explanation", {"fen": fen, "student_explanation": reason}))
+            reason = resolve_explanation(route.explanation, text)
+            # Quality-SOL §6.1: a missing or unquoted router span falls back to the whole message, recorded as such.
+            event["explanation_source"] = "router_span" if reason else "whole_message_fallback"
+            calls.append(("evaluate_explanation", {"fen": fen, "student_explanation": reason or text}))
         graded = []
         while calls:
             tool, args = calls.pop(0)
@@ -1034,6 +1037,31 @@ class CommandProcessor:
         return (f"\n[Backend: the student chose to move on; the explanation step for {record.move_label} "
                 "is closed as passed. If you have not already taught the key reason, state it in one "
                 "sentence. NEVER invent a student explanation for the grading tools.]")
+
+    _SKIP_RE = re.compile(r"\b(?:skip|salt(?:a|ar|emos|ate|emonos))\b", re.IGNORECASE)
+
+    def _skip_note(self, text: str) -> str:
+        """Run xpweac5a/ehuw4sca S1a: after "Let's skip this one", the coach tried to log a diagnosis for
+        the untaught 17. d5 and was told to ask why the move works. A skipped, unattempted moment is
+        closed without grading or diagnosis (Quality-SOL §9.6); grading it later re-opens it."""
+        meta = self.state.lesson_metadata or {}
+        sa = self.state.teaching_ledger.get("self_assessment") or {}
+        if (not self.state.review or sa.get("status") == "pending" or not self._SKIP_RE.search(text or "")
+                or meta.get("lesson_status") not in ("fresh_review", "awaiting_answer")):
+            return ""
+        agenda = self.state.review.agenda
+        idx = int(meta.get("last_agenda_index") or 0)
+        if not 0 <= idx < len(agenda) or any(d.get("fen") == agenda[idx].fen_before for d in self.state.diagnostics):
+            return ""
+        skipped = sorted(set(meta.get("skipped_agenda_indices") or []) | {idx})
+        self.state.lesson_metadata = {**meta, "skipped_agenda_indices": skipped}
+        lesson_file = getattr(self.config, "lesson_file", None)
+        if lesson_file:
+            save_lesson_metadata(lesson_file, self.state.lesson_metadata)
+        nxt = agenda[idx + 1].move_label if idx + 1 < len(agenda) else None
+        return (f"\n[Backend: the student skipped {agenda[idx].move_label}; it is closed without grading or a "
+                "diagnosis. Do not quiz it, reveal its answer or call submit_diagnosis for it. "
+                + (f"Present the next moment ({nxt}) now.]" if nxt else "It was the last moment: close the review.]"))
 
     def _pending_diagnosis_note(self, text: str = "") -> str:
         """Observed live (3x in one session): the model ends its turn ANNOUNCING

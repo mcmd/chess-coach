@@ -252,9 +252,41 @@ def test_grading_integrity_guard_blocks_affirming_fabricated_answer():
     output = _run_grading_integrity_guard("Yes, Nf6 is exactly what Black wants to do.", state)
 
     assert "Nf6 is exactly" not in output
-    assert "not actually in your latest message" in output
+    assert output == "What is your opponent threatening here?"
     assert state.grading_integrity_events
     assert state.grading_integrity_events[0]["type"] == "stale_grading_response_blocked"
+
+
+def test_a_move_the_student_never_named_is_asked_for_and_the_threat_verdict_said_once():
+    # Run xpweac5a S14: the router graded the student's threat (Qxg4+), the coach then graded 26. Rd4 the
+    # student never wrote; the reply said "Qxg4+ is the real threat." twice plus a notice about grading.
+    state = SessionState()
+    fen = "1r2r1k1/p4ppp/6q1/2QP4/1P4P1/P7/5PK1/3R1R2 w - - 3 26"
+    state._turn_grading_results = [
+        {"tool": "evaluate_threat_answer", "args": {"fen": fen, "threat_move_san": "Qxg4+"},
+         "result": {"verdict": "correct_threat", "student_threat": "Qxg4+"}},
+        {"tool": "evaluate_student_answer", "args": {"fen": fen, "student_move_san": "Rd4"},
+         "result": {"verdict": "stale_or_fabricated_student_input", "error": "does not match"}},
+    ]
+    output = _state_unreported_feedback(_run_grading_integrity_guard("Rd4 is best!", state), state)
+    assert output.count("Qxg4+") == 1 and output.endswith("Which move would you play here?")
+    assert "Rd4" not in output
+
+
+def test_a_game_position_correction_is_stated_when_the_reply_does_not_welcome_the_draw():
+    # Run rxsdfgdx S18: get_game_position returned "the draw to welcome", yet the reply said "It's completely
+    # natural to want to avoid the perpetual check" and passed the old perpetual-and-draw word test.
+    correction = ("For White, who would have been worse if play had gone on, a perpetual check or repetition "
+                  "is the draw to welcome, not something to avoid.")
+    reply = "It's natural to want to avoid the perpetual, but 31. Kh1 was best and the draw a great result."
+    state = SessionState()
+    state._turn_corrections = [correction]
+    state.latest_user_text = "Shouldn't I have played Kh2 to avoid the perpetual?"
+    assert _state_unreported_feedback(reply, state) == correction + "\n\n" + reply
+    welcomed = "No: as the worse side you should welcome the perpetual. 31. Kh1 drew."
+    assert _state_unreported_feedback(welcomed, state) == welcomed
+    state.latest_user_text = "Was 31. Kh1 a good move?"
+    assert _state_unreported_feedback(reply, state) == reply
 
 
 def test_a_passed_explanation_is_taught_before_the_lesson_moves_on():
@@ -468,6 +500,54 @@ def test_bare_squares_in_prose_are_not_move_claims():
         assert find_illegal_moves(text, [chess.Board(_MOVE4_FEN)]) == []
 
 
+def _game_review(sans):
+    from app.review import GameReview, MoveRecord
+    board, records = chess.Board(), []
+    for ply, san in enumerate(sans):
+        before = board.fen()
+        move = board.push_san(san)
+        records.append(MoveRecord(ply=ply, number=ply // 2 + 1, color="black" if ply % 2 else "white", san=san,
+                                  uci=move.uci(), fen_before=before, fen_after=board.fen(), eval_before_cp=0,
+                                  eval_after_cp=0, drop_pct=0.0, quality="ok"))
+    return GameReview(headers={}, records=records, student_color="white", agenda_plies=[])
+
+
+def test_moves_narrated_as_played_must_be_the_games_moves():
+    # Run sacvi7je: "In the game, you played 31. Kh1, and it did end in a draw by repetition after
+    # 31... Qh3+ 32. Kg1 Qg4+ 33. Kh1." Every move was legal somewhere, but the game ended with 31. Kh1.
+    from app.agent_loop import _correct_narrated_history
+    state = SessionState()
+    state.review = _game_review(["Nf3", "Nf6", "Ng1", "Ng8", "Nf3"])
+
+    beyond = "In the game, you played 3. Nf3, and it ended in a draw after 3... Nf6 4. Ng1 Ng8. Next question?"
+    assert _correct_narrated_history(beyond, state) == (
+        "In the game, you played 3. Nf3, and it ended in a draw after 3... Nf6 4. Ng1 Ng8. (Game record: the "
+        "game ended with 3. Nf3; 3... Nf6 was not played.) Next question?")
+    shifted = "Then Black answered `2... Nf6`, retreating.\nGood."
+    assert _correct_narrated_history(shifted, state) == (
+        "Then Black answered `2... Nf6`, retreating. (Game record: the game went 2... Ng8, not 2... Nf6.)\nGood.")
+    assert _correct_narrated_history("En la partida jugaste 2. Ng1 y luego 3. Ng1.", state).endswith(
+        "(Game record: the game went 3. Nf3, not 3. Ng1.)")
+    assert [e["claimed"] for e in state.history_claim_events] == ["3... Nf6", "2... Nf6", "3. Ng1"]
+
+    unchanged = [
+        "In the game you played 1. Nf3 and Black answered 1... Nf6 2. Ng1 Ng8.",
+        "In the game you played 3. Nf3; 3. e4 would have been more active.",
+        "In the game you played 2. Ng1, but 2. e4 was the principled move.",
+        "If you had played 3. e4 in the game, Black would answer 3... e5.",
+        "After 3. Nf3 Nf6 4. Ng1 the position repeats.",
+        "Black did not play 3... Nf6 in the game.",
+    ]
+    for text in unchanged:
+        assert _correct_narrated_history(text, state) == text
+
+    # Run aqv46cej: "8. cxd3!, 9. a3!, and 11. Qxd6!: ... only-moves" credited Black's 11... Qxd6 to the student.
+    assert _correct_narrated_history("Only-moves: 1. Nf3! and 1. Nf6!", state) == (
+        "Only-moves: 1. Nf3! and 1. Nf6! (Game record: 1... Nf6 was your opponent's move.)")
+    assert _correct_narrated_history("* **`1. Nf6!`** (only move)", state) == (
+        "* **`1. Nf6!`** (Game record: 1... Nf6 was your opponent's move.) (only move)")
+
+
 def test_numbered_or_code_span_pawn_moves_are_still_checked():
     start = [chess.Board()]
     assert find_illegal_moves("Now 1. e5 grabs space.", start) == ["e5"]
@@ -595,6 +675,22 @@ def test_grading_result_tells_the_coach_to_state_the_verdict_first(stub_config):
     result = chat.sent[1][0].function_response.response["result"]
     assert result["next_step"].startswith("Say first: e4 is the best move.")
     assert "WHY" in result["next_step"]
+
+
+def test_a_move_found_only_in_the_backend_notes_is_not_the_students(stub_config):
+    # Quality-SOL §9.4: provenance was checked against the whole prompt, so a move in the backend's
+    # notes (move history, router results, plan block) counted as the student's input.
+    from tests.test_tools import _answer_engines, START
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), _answer_engines(), stub_config)
+    call = SimpleNamespace(name="evaluate_student_answer", args={"fen": START, "student_move_san": "e4"})
+    chat = FakeChat([SimpleNamespace(candidates=[], function_calls=[call]), _text_response("ok")])
+
+    run_agent_turn(chat, tools, "Student request: what now?\n[Backend: the engine's line is e4 e5.]",
+                   student_text="what now?")
+
+    assert chat.sent[1][0].function_response.response["result"]["verdict"] == "stale_or_fabricated_student_input"
+    assert state.socratic_attempts == {}
 
 
 def test_a_correct_move_given_with_a_reason_gets_the_reason_graded_not_asked_again(stub_config):
