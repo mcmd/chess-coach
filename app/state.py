@@ -34,6 +34,10 @@ class SessionState:
     router_events: list[dict] = field(default_factory=list)  # Flash router decisions (observability)
     moment_student_texts: list[str] = field(default_factory=list)  # student messages during the current agenda moment
     moment_student_key: str = None               # "game:agenda_index" the texts above belong to
+    student_turn_count: int = 0                  # free-text student turns so far: the session's turn ids
+    # Quality-SOL §7.1: fen -> {"move": "found"|"revealed", "explanation": {assessment, quote, turn_id}},
+    # the grading outcomes a diagnosis record cites as its assessment and student evidence.
+    grading_outcomes: dict = field(default_factory=dict)
     # Board diagram theme (set from config at startup; defaults = lichess green).
     board_light_color: str = "#eeeed2"
     board_dark_color: str = "#769656"
@@ -61,6 +65,7 @@ class TimelineManager:
         self.state.diagnostics.clear()
         self.state.review = None
         self.state.socratic_attempts.clear()
+        self.state.grading_outcomes.clear()
         self.state.current_game_id = None
         self.state.pending_unmatched_review.clear()
         self.state.review_context.clear()

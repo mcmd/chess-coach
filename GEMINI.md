@@ -25,7 +25,7 @@ app/motifs.py        tactical motif detection (fork/pin/skewer/back-rank/...) on
 app/tools.py         CoachTools: the Gemini-callable tools (analyze_position packet,
                      evaluate_student_answer, play_sparring_reply, submit_diagnosis enum, ...)
 app/prompts.py       system instruction (modes, Socratic protocol) + chat session factory
-app/memory.py        atomic persistence: chat history, player dossier (taxonomy aggregation)
+app/memory.py        atomic persistence: chat history, player dossier (versioned schema, evidence-qualified aggregation)
 app/render.py        board ASCII rendering bound to [[BOARD_xxxx]] tokens
 app/config.py        config.json + profiles + CLI args
 ```
@@ -79,6 +79,11 @@ app/config.py        config.json + profiles + CLI args
   tool was actually called in that turn.
 - **`submit_diagnosis` accepts only the closed taxonomy** in
   `app/tools.py::ERROR_TAXONOMY` — that is what makes the dossier aggregate.
+- **Dossier writes go through `memory.save_dossier`** (Quality-SOL §7.3): it refuses to overwrite
+  a file with a newer `schema_version`; `load_dossier` keeps unknown fields and migrates older
+  files once (backup + atomic rewrite). Trusted counts come only from evidence-qualified,
+  non-superseded `diagnosis_events`; categories are provisional lesson labels, and a cause is
+  recorded only from the student's own words (`cause_basis`).
 - **`TimelineManager.reset()` rewinds but keeps the loaded game**;
   `clear()` is the full wipe. Don't conflate them.
 - **`app/concepts.py` and `app/motifs.py` stay pure** (board in, data out,

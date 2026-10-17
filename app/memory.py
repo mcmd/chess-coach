@@ -1,6 +1,8 @@
+import copy
 import json
 import os
 import re
+import shutil
 from datetime import date
 
 from google.genai import types
@@ -63,9 +65,20 @@ def save_history(chat_session, history_file):
     _atomic_write_json(history_file, serializable[-MAX_HISTORY_MESSAGES:])
 
 
+# Quality-SOL §7.3: files without `schema_version` are version 1 (counters without evidence).
+# Version 2 keeps every diagnosis as an evidence-qualified event (§7.1) and holds the old totals
+# apart as legacy, unverified observations.
+DOSSIER_SCHEMA_VERSION = 2
+DIAGNOSIS_EVIDENCE_VERSION = 1
+DIAGNOSIS_EVENT_LIMIT = 1000
+LEGACY_UNVERIFIED = "legacy_unverified"
+
 _DOSSIER_DEFAULT = {
+    "schema_version": DOSSIER_SCHEMA_VERSION,
+    # Trusted aggregates, regenerated from evidence-qualified, non-superseded diagnosis_events.
     "total_blunders_analyzed": 0,
     "error_frequencies": {},
+    "diagnosis_events": [],     # every memorized diagnosis (newest first), superseded ones included
     "recent_habits": [],
     "recent_positions": [],
     "session_takeaways": [],
@@ -115,72 +128,229 @@ def save_lesson_metadata(lesson_file: str, metadata: dict) -> None:
     _atomic_write_json(lesson_file, data)
 
 
+def _read_stored_dossier(dossier_file: str) -> dict | None:
+    if not dossier_file or not os.path.exists(dossier_file):
+        return None
+    try:
+        with open(dossier_file, "r", encoding="utf-8") as f:
+            stored = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    return stored if isinstance(stored, dict) else None
+
+
+def _unsupported_schema(version) -> bool:
+    """Quality-SOL §7.3: a newer (or unreadable) schema version is read-only for this code."""
+    return isinstance(version, bool) or not isinstance(version, int) or version > DOSSIER_SCHEMA_VERSION
+
+
 def load_dossier(dossier_file: str) -> dict:
-    dossier = dict(_DOSSIER_DEFAULT)
-    dossier["error_frequencies"] = {}
-    dossier["recent_habits"] = []
-    dossier["recent_positions"] = []
-    dossier["session_takeaways"] = []
-    dossier["self_assessment_history"] = []
-    dossier["drill_history"] = []
-    dossier["drill_outcomes"] = []
-    dossier["drill_state"] = {}
-    dossier["drill_sets"] = []
-    dossier["imported_games"] = []
-    dossier["typicality_history"] = []
-    dossier["recurring_patterns"] = []
-    dossier["batch_trends"] = []
-    dossier["slide_trend"] = {}
-    if os.path.exists(dossier_file):
-        try:
-            with open(dossier_file, "r", encoding="utf-8") as f:
-                stored = json.load(f)
-            for key in _DOSSIER_DEFAULT:
-                if key in stored:
-                    dossier[key] = stored[key]
-        except (json.JSONDecodeError, OSError):
-            pass
+    """The long-term dossier, with defaults for missing keys. Quality-SOL §7.3: stored fields this
+    code does not know are kept; an older schema is migrated once (one-time backup next to the
+    file, then an atomic rewrite); a newer schema is returned as read, and `save_dossier` never
+    overwrites it."""
+    dossier = copy.deepcopy(_DOSSIER_DEFAULT)
+    stored = _read_stored_dossier(dossier_file)
+    if stored is None:
+        return dossier
+    dossier.update(stored)
+    version = stored.get("schema_version", 1)
+    if _unsupported_schema(version) or version >= DOSSIER_SCHEMA_VERSION:
+        return dossier
+    _migrate_dossier(dossier, version)
+    backup = f"{dossier_file}.v{version}.bak"
+    if not os.path.exists(backup):
+        shutil.copy2(dossier_file, backup)
+    _atomic_write_json(dossier_file, dossier)
     return dossier
 
 
-def update_dossier(diagnostics, dossier_file):
+def save_dossier(dossier_file: str, dossier: dict) -> bool:
+    """Atomic dossier write. False, with nothing written, when there is no dossier file or the file
+    on disk has a schema version this code does not support (Quality-SOL §7.3)."""
+    if not dossier_file:
+        return False
+    stored = _read_stored_dossier(dossier_file)
+    if stored is not None and _unsupported_schema(stored.get("schema_version", 1)):
+        return False
+    dossier["schema_version"] = DOSSIER_SCHEMA_VERSION
+    _atomic_write_json(dossier_file, dossier)
+    return True
+
+
+def _entry_draw_rule(entry: dict) -> str | None:
+    """The draw rule a stored entry's move reached: its stored flag, else a python-chess replay of the
+    played move from the FEN. A bare FEN shows only the move-count rules, not a repetition, so an old
+    entry that cannot be re-checked stays legacy_unverified. None when nothing is found."""
+    if entry.get("draw_rule"):
+        return entry["draw_rule"]
+    fen, played = entry.get("fen"), entry.get("played")
+    if not fen or not played:
+        return None
+    import chess
+    from app.review import _draw_rule
+    try:
+        board = chess.Board(fen)
+        board.push_san(played)
+    except ValueError:
+        return None
+    return _draw_rule(board)
+
+
+def _supersede_if_drawn(entry: dict, today: str) -> bool:
+    """Quality-SOL §7.4 slice E: a diagnosis of a move that reached a draw by rule stays in history,
+    marked superseded with the reason, and leaves mistake counts, recommendations and drills."""
+    if entry.get("superseded"):
+        return True
+    rule = _entry_draw_rule(entry)
+    if not rule:
+        return False
+    entry["superseded"] = {
+        "reason": f"the move reached a draw by rule ({rule.replace('_', ' ')}); it was not a mistake",
+        "draw_rule": rule,
+        "date": today,
+    }
+    return True
+
+
+def _counts_as_mistake(event: dict) -> bool:
+    return (bool(event.get("evidence_version")) and not event.get("superseded")
+            and (event.get("error_category") or "") not in ("", "none", "unknown"))
+
+
+def _refresh_aggregates(dossier: dict) -> None:
+    """Trusted counts are regenerated from evidence-qualified, non-superseded events (§7.3)."""
+    frequencies = {}
+    for event in dossier.get("diagnosis_events") or []:
+        if _counts_as_mistake(event):
+            frequencies[event["error_category"]] = frequencies.get(event["error_category"], 0) + 1
+    dossier["error_frequencies"] = frequencies
+    dossier["total_blunders_analyzed"] = sum(frequencies.values())
+
+
+def _migrate_dossier(dossier: dict, from_version: int) -> None:
+    """Quality-SOL §7.3 migration to schema 2. Nothing is dropped: entries without evidence are
+    marked legacy_unverified, draw-by-rule diagnoses are superseded (§7.4), and the old totals move
+    to `legacy_totals` (as recorded, and net of superseded entries) instead of being relabelled as
+    verified counts."""
+    today = date.today().isoformat()
+    superseded = {}
+    for pos in dossier.get("recent_positions") or []:
+        if not pos.get("evidence_version"):
+            pos.setdefault("evidence_status", LEGACY_UNVERIFIED)
+        # Only /memorize entries (no `source`) were counted in the old totals; imported ones were not.
+        if _supersede_if_drawn(pos, today) and not pos.get("source"):
+            category = pos.get("error_category") or "unknown"
+            superseded[category] = superseded.get(category, 0) + 1
+    for drill_set in dossier.get("drill_sets") or []:
+        drill_set.setdefault("evidence_status", LEGACY_UNVERIFIED)
+        for pos in drill_set.get("positions") or []:
+            pos.setdefault("evidence_status", LEGACY_UNVERIFIED)
+            _supersede_if_drawn(pos, today)
+    for pattern in dossier.get("recurring_patterns") or []:
+        pattern.setdefault("evidence_status", LEGACY_UNVERIFIED)
+        dropped = sum(1 for pos in pattern.get("representative_positions") or []
+                      if _supersede_if_drawn(pos, today))
+        if dropped:
+            pattern["superseded_moments"] = dropped
+    recorded = {category: int(n or 0) for category, n in (dossier.get("error_frequencies") or {}).items()}
+    recorded_total = int(dossier.get("total_blunders_analyzed") or 0)
+    net = {category: n - superseded.get(category, 0) for category, n in recorded.items()}
+    dossier["legacy_totals"] = {
+        "evidence_status": LEGACY_UNVERIFIED,
+        "migrated_from_schema_version": from_version,
+        "migrated_on": today,
+        "as_recorded": {"total_blunders_analyzed": recorded_total, "error_frequencies": recorded},
+        "superseded": superseded,
+        "total_blunders_analyzed": max(0, recorded_total - sum(superseded.values())),
+        "error_frequencies": {category: n for category, n in net.items() if n > 0},
+    }
+    _refresh_aggregates(dossier)
+    dossier["schema_version"] = DOSSIER_SCHEMA_VERSION
+
+
+def diagnosis_event_id(diag: dict) -> str | None:
+    """Quality-SOL §7.3 event identity: game + ply + student side + evidence version, so teaching
+    the same moment twice is one event while the same mistake in another game is another. Without
+    a game identity the exact FEN (it carries the move counters) stands in for game and ply.
+    Legacy records without evidence have no identity."""
+    version = diag.get("evidence_version")
+    if not version:
+        return None
+    if diag.get("game_id") and diag.get("ply") is not None and diag.get("student_side"):
+        return f"{diag['game_id']}:{diag['ply']}:{diag['student_side']}:v{version}"
+    if diag.get("fen"):
+        return f"fen:{diag['fen']}:v{version}"
+    return None
+
+
+def _diagnosis_event(diag: dict, today: str) -> dict:
+    event = dict(diag)  # §7.3: unfamiliar evidence fields are kept
+    # New diagnoses use the closed taxonomy key; tolerate legacy records.
+    event["error_category"] = diag.get("error_category") or diag.get("error_diagnosis") or "unknown"
+    event.setdefault("date", today)
+    event["event_id"] = diagnosis_event_id(diag)
+    if not diag.get("evidence_version"):
+        event.setdefault("evidence_status", LEGACY_UNVERIFIED)
+    _supersede_if_drawn(event, today)
+    return event
+
+
+def _position_from_event(event: dict) -> dict:
+    position = {"fen": event["fen"], "error_category": event["error_category"]}
+    for key in ("event_id", "evidence_version", "evidence_status", "category_basis", "game_id", "ply",
+                "student_side", "played", "error_typicality", "maia_played_prob"):
+        if event.get(key) is not None:
+            position[key] = event[key]
+    return position
+
+
+def update_dossier(diagnostics, dossier_file) -> bool:
+    """Persist a session's diagnoses (/memorize). Teaching an already memorized moment again is a
+    no-op (§7.3 event identity). Returns False when nothing could be written: a dossier with a newer
+    schema is never overwritten."""
     dossier = load_dossier(dossier_file)
-
+    today = date.today().isoformat()
+    known = {e.get("event_id") for e in dossier["diagnosis_events"] if e.get("event_id")}
+    added = []
     for diag in diagnostics:
-        # New diagnoses use the closed taxonomy key; tolerate legacy records.
-        category = diag.get("error_category") or diag.get("error_diagnosis") or "unknown"
-        if category not in ("none", "unknown", ""):
-            dossier["total_blunders_analyzed"] += 1
-            dossier["error_frequencies"][category] = dossier["error_frequencies"].get(category, 0) + 1
-            if diag.get("fen"):
-                position = {"fen": diag["fen"], "error_category": category}
-                if diag.get("error_typicality"):
-                    position["error_typicality"] = diag["error_typicality"]
-                if diag.get("maia_played_prob") is not None:
-                    position["maia_played_prob"] = diag["maia_played_prob"]
-                dossier["recent_positions"].insert(0, position)
+        event = _diagnosis_event(diag, today)
+        if event["event_id"] in known:
+            continue
+        if event["event_id"]:
+            known.add(event["event_id"])
+        added.append(event)
 
-        habit = diag.get("preventative_habit")
+    counted = []
+    for event in added:
+        dossier["diagnosis_events"].insert(0, event)
+        if event.get("superseded"):
+            continue  # kept in history only (§7.4)
+        counted.append(event)
+        if event["error_category"] not in ("none", "unknown", "") and event.get("fen"):
+            dossier["recent_positions"].insert(0, _position_from_event(event))
+        habit = event.get("preventative_habit")
         if habit and habit != "N/A":
             dossier["recent_habits"].insert(0, habit)
 
-    if diagnostics:
+    if counted:
         # Progress signal: as patterns get learned, the student's mistakes
         # should drift from peer-common ("typical") to rare slips ("atypical").
         dossier["typicality_history"].append({
-            "date": date.today().isoformat(),
-            "typical_errors": sum(1 for d in diagnostics
+            "date": today,
+            "typical_errors": sum(1 for d in counted
                                   if d.get("error_typicality") == "typical_for_level"),
-            "atypical_errors": sum(1 for d in diagnostics
+            "atypical_errors": sum(1 for d in counted
                                    if d.get("error_typicality") == "atypical_for_level"),
-            "total_diagnosed": len(diagnostics),
+            "total_diagnosed": len(counted),
         })
 
+    dossier["diagnosis_events"] = dossier["diagnosis_events"][:DIAGNOSIS_EVENT_LIMIT]
     dossier["recent_habits"] = dossier["recent_habits"][:5]
     dossier["recent_positions"] = dossier["recent_positions"][:20]
     dossier["typicality_history"] = dossier["typicality_history"][-20:]
-
-    _atomic_write_json(dossier_file, dossier)
+    _refresh_aggregates(dossier)
+    return save_dossier(dossier_file, dossier)
 
 
 def record_session_takeaway(dossier_file: str, takeaway: dict) -> None:
@@ -203,7 +373,7 @@ def record_session_takeaway(dossier_file: str, takeaway: dict) -> None:
     ]
     dossier["session_takeaways"] = [entry] + existing
     dossier["session_takeaways"] = dossier["session_takeaways"][:10]
-    _atomic_write_json(dossier_file, dossier)
+    save_dossier(dossier_file, dossier)
 
 
 def record_self_assessment(dossier_file: str, assessment: dict) -> None:
@@ -233,7 +403,7 @@ def record_self_assessment(dossier_file: str, assessment: dict) -> None:
     ]
     dossier["self_assessment_history"] = [entry] + existing
     dossier["self_assessment_history"] = dossier["self_assessment_history"][:30]
-    _atomic_write_json(dossier_file, dossier)
+    save_dossier(dossier_file, dossier)
 
 
 def _norm_key(text: str) -> str:
@@ -400,8 +570,10 @@ def _drill_set_for_pattern(prev: dict | None, entry: dict, pat: dict,
             "move_label": pos.get("move_label"),
             "played": pos.get("played"),
             "better": pos.get("better"),
+            "category_basis": pos.get("category_basis") or "rule_based",
         }
-        for optional in ("error_typicality", "maia_played_prob"):
+        # §7.3/§7.4: provenance and supersession marks survive a rebuild of the drill bank.
+        for optional in ("error_typicality", "maia_played_prob", "evidence_status", "superseded"):
             if pos.get(optional) is not None:
                 item[optional] = pos[optional]
         positions.append(item)
@@ -473,6 +645,9 @@ def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
             "previous_rate": prev.get("rate") if prev else None,
             "status": "active",
             "missed_batches": 0,
+            # Quality-SOL §7.1: counted from engine rules across games; the category names a
+            # provisional lesson label, not a cause the student stated.
+            "category_basis": "rule_based",
         }
         entry.update(_pattern_recurrence_fields(prev, pat, batch_summary, today))
         if (entry["previous_rate"] and entry["rate"] is not None
@@ -551,4 +726,4 @@ def update_dossier_with_batch(dossier_file: str, batch_summary: dict) -> None:
             prev_slide["status"] = "stale"
         dossier["slide_trend"] = prev_slide
 
-    _atomic_write_json(dossier_file, dossier)
+    save_dossier(dossier_file, dossier)

@@ -234,6 +234,7 @@ class CommandProcessor:
             self.state.moment_student_texts = []
         self.state.moment_student_texts.append(text)
         self.state.moment_student_texts[:] = self.state.moment_student_texts[-12:]
+        self.state.student_turn_count += 1
 
     def _current_moment(self):
         """The agenda moment the coach is quizzing on, during an active review only."""
@@ -475,6 +476,7 @@ class CommandProcessor:
         self.state.move_index = 0
         self.timeline.pgn_nodes = []
         self.state.socratic_attempts.clear()
+        self.state.grading_outcomes.clear()
         attach_batch_board_tokens(batch, self.state,
                                   invert=getattr(self.config, "dark_terminal", False))
         meta["batch_id"] = batch.batch_id
@@ -546,6 +548,7 @@ class CommandProcessor:
         self.timeline.load_game(review.game)
         self.state.review = review
         self.state.socratic_attempts.clear()
+        self.state.grading_outcomes.clear()
         attach_board_tokens(review, self.state, invert=getattr(self.config, "dark_terminal", False))
 
         game_id = source_game_id or self._local_game_id(review)
@@ -796,15 +799,21 @@ class CommandProcessor:
                 "[yellow]This is a borrowed/unmatched game and dossier saving was not opted in. "
                 "Nothing was written to your personal dossier.[/yellow]"
             ))
-        # Enrich diagnoses with backend typicality before persisting, so the
-        # dossier can track the typical->atypical progress trend.
+        # Enrich diagnoses with backend facts before persisting: typicality for the dossier's
+        # typical->atypical trend, and an exact draw rule so a drawn move is stored superseded
+        # (Quality-SOL §7.4), never counted as a mistake.
         if self.state.review:
             by_fen = {r.fen_before: r for r in self.state.review.records}
             for diag in self.state.diagnostics:
                 record = by_fen.get(diag.get("fen"))
                 if record and record.error_typicality and not diag.get("error_typicality"):
                     diag["error_typicality"] = record.error_typicality
-        update_dossier(self.state.diagnostics, self.config.dossier_file)
+                if record and record.draw_rule and not diag.get("draw_rule"):
+                    diag["draw_rule"] = record.draw_rule
+        if not update_dossier(self.state.diagnostics, self.config.dossier_file):
+            return CommandResult(message=(
+                "[yellow]Nothing was written: your dossier file was saved by a newer version of the coach "
+                "(or no dossier file is configured). This session's diagnoses are still in memory.[/yellow]"))
         self._clear()  # wipes timeline, cache, and history file
         return CommandResult(message="[bold green]✨ Session memorized! Dossier updated. Memory wiped and screen cleared.[/bold green]",
                              reset_chat=True, clear_screen=True)
@@ -828,13 +837,17 @@ class CommandProcessor:
             verification = (" Backend verification: this stored position was rechecked locally before "
                             "presentation; use that only as a trust/provenance fact, not as the lesson "
                             "severity.")
+        # Quality-SOL §7.1: the stored category is a provisional lesson label, not a known weakness or cause.
+        provenance = (" It comes from an older record saved without evidence (legacy, unverified)."
+                      if pick.get("evidence_status") == "legacy_unverified" else "")
         prompt = (f"DOSSIER REVIEW DRILL. Priority: {pick.get('priority_reason')}.{pattern} "
                   f"Drill type: {drill_kind}. Drill goal: {drill_goal} "
-                  f"I previously made a '{pick.get('error_category', 'unknown')}' mistake "
-                  f"in this position: {pick['fen']}.{popularity} "
+                  f"This stored position from my games carries the provisional lesson label "
+                  f"'{pick.get('error_category', 'unknown')}': {pick['fen']}.{provenance}{popularity} "
                   f"{verification} "
-                  "Set the scene with analyze_position (do not reveal the answer), "
-                  "remind me what KIND of mistake I tend to make here, and quiz me: ask me to find the best move. "
+                  "Set the scene with analyze_position (do not reveal the answer) and quiz me: ask me to find "
+                  "the best move. The label names what to practise, not an established weakness or why I "
+                  "erred; do not tell me what kind of mistake I tend to make. "
                   "Grade my answer with evaluate_student_answer.")
         return CommandResult(prompt=self._enrich(prompt),
                              message=(f"[green]Pulled a {pick.get('error_category', 'dossier')} "
@@ -998,6 +1011,8 @@ class CommandProcessor:
             attempts[key] = attempts.get(key, 0) + 1
         spent = max(attempts[record.fen_before], attempts[f"threat:{record.fen_before}"])
         if spent >= 2:
+            # Quality-SOL §6.3/§7.1: a revealed move completes teaching but is not an independent success.
+            self.state.grading_outcomes.setdefault(record.fen_before, {}).setdefault("move", "revealed")
             return ("\n[Backend: the student GAVE UP on the current question; a surrendered attempt was "
                     f"recorded (now {spent}). Reveal is allowed: kindly reveal this moment's withheld "
                     "answer from the digest, walk through WHY it works step by step, then log the "
@@ -1030,6 +1045,8 @@ class CommandProcessor:
             return ""
         self.state.socratic_attempts[f"explain:{record.fen_before}"] = 2
         self.state.socratic_attempts[f"explain-complete:{record.fen_before}"] = True
+        self.state.grading_outcomes.setdefault(record.fen_before, {})["explanation"] = {
+            "assessment": "passed", "quote": None, "turn_id": None}
         self.state.lesson_metadata = {**meta, "lesson_status": "awaiting_diagnosis"}
         lesson_file = getattr(self.config, "lesson_file", None)
         if lesson_file:

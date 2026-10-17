@@ -3,25 +3,60 @@ from google.genai import types
 from app.memory import drill_practice_summary, load_dossier
 
 
+def _student_reported_causes(d: dict, limit: int = 3) -> list:
+    """Quality-SOL §7.1: a cause is shown only with student-statement or human-review evidence."""
+    lines = []
+    for event in d.get("diagnosis_events") or []:
+        if event.get("superseded") or event.get("cause_basis") not in ("student_statement", "human_review"):
+            continue
+        quote = (event.get("student_evidence") or {}).get("quote") or event.get("student_cause")
+        if quote:
+            lines.append(f"{event.get('error_category')}: the student said \"{quote}\"")
+        if len(lines) >= limit:
+            break
+    return lines
+
+
 def get_dossier_context(dossier_file: str) -> str:
     d = load_dossier(dossier_file)
     slide = d.get("slide_trend") or {}
     takeaways = d.get("session_takeaways", [])[:3]
     self_history = d.get("self_assessment_history", [])[-10:]
     drill_summaries = drill_practice_summary(d)
-    if (d.get("total_blunders_analyzed", 0) == 0 and not d.get("recurring_patterns")
+    legacy = d.get("legacy_totals") or {}
+    if (d.get("total_blunders_analyzed", 0) == 0 and not legacy.get("total_blunders_analyzed")
+            and not d.get("recurring_patterns")
             and slide.get("status") not in ("active", "improving") and not takeaways
             and not self_history and not drill_summaries):
         return "No historical data available yet. This is your first session."
+    # Quality-SOL §7.1: categories are provisional lesson labels (rule-based indexes for positions
+    # and drills), not established weaknesses; no cognitive cause without cause_basis evidence.
+    lines = []
     if d.get("total_blunders_analyzed", 0):
         sorted_errors = sorted(d["error_frequencies"].items(), key=lambda item: item[1], reverse=True)
-        error_str = ", ".join(f"{k} ({v}x)" for k, v in sorted_errors)
-        habits_str = "\n- ".join(d.get("recent_habits", []))
-        context = (f"Analyzed {d['total_blunders_analyzed']} past mistakes.\n"
-                   f"Recurring weaknesses: {error_str}\n"
-                   f"Assigned habits:\n- {habits_str}")
-    else:
-        context = "No single-game lesson history yet."
+        lines.append(f"Reviewed {d['total_blunders_analyzed']} past moments. Provisional lesson labels "
+                     "(rule-based categories that index positions to practise, not established "
+                     "weaknesses): " + ", ".join(f"{k} ({v}x)" for k, v in sorted_errors))
+    if legacy.get("total_blunders_analyzed"):
+        legacy_errors = sorted((legacy.get("error_frequencies") or {}).items(),
+                               key=lambda item: item[1], reverse=True)
+        lines.append("Older labels saved before evidence was recorded (legacy, unverified; never cite them "
+                     "as mistake counts or weaknesses): " + ", ".join(f"{k} ({v}x)" for k, v in legacy_errors))
+    labelled = bool(lines)
+    if not labelled:
+        lines.append("No single-game lesson history yet.")
+    habits = d.get("recent_habits", [])
+    if habits and labelled:
+        lines.append("Assigned habits:\n- " + "\n- ".join(habits))
+    causes = _student_reported_causes(d)
+    if causes:
+        lines.append("Causes the student reported in their own words (what they said, not a trait):\n- "
+                     + "\n- ".join(causes))
+    if labelled:
+        lines.append("No reason why the student erred is established" + (" beyond what they reported"
+                                                                         if causes else "")
+                     + "; never state a cognitive cause (e.g. 'you ignore threats') from these labels.")
+    context = "\n".join(lines)
     history = d.get("typicality_history", [])
     if history:
         trend = "; ".join(f"{h['date']}: {h.get('typical_errors', 0)} peer-common / "
@@ -34,8 +69,8 @@ def get_dossier_context(dossier_file: str) -> str:
     if live:
         pat_lines = []
         for p in live:
-            line = (f"{p.get('title')} ({p.get('evidence_count')} moments across "
-                    f"{p.get('games_seen')} games")
+            line = (f"{p.get('title')} ({int(p.get('evidence_count') or 0) - int(p.get('superseded_moments') or 0)} "
+                    f"moments across {p.get('games_seen')} games")
             if p.get("status") == "improving":
                 line += "; IMPROVING since the previous batch — praise this progress honestly"
             if p.get("recent_rate") is not None and p.get("lifetime_rate") is not None:
@@ -49,7 +84,8 @@ def get_dossier_context(dossier_file: str) -> str:
                          f"{practice.get('recent_attempts', 0)} recent solved")
             pat_lines.append(line + ")")
         context += ("\nConfirmed recurring patterns from batch analysis (connect live mistakes "
-                    "to these when they genuinely match):\n- " + "\n- ".join(pat_lines))
+                    "to these when they genuinely match; their names are provisional lesson labels):\n- "
+                    + "\n- ".join(pat_lines))
     if drill_summaries:
         lines = []
         for summary in drill_summaries:
@@ -106,9 +142,11 @@ REUSABLE chess thinking — pattern recognition, threat scanning, calculation di
 not to recite engine output. You are precise, direct, and honest: criticism is specific
 and evidence-based, and genuinely good moves get genuine credit.
 
-### 📂 STUDENT DOSSIER (long-term weaknesses)
+### 📂 STUDENT DOSSIER (provisional lesson labels and past observations)
 {dossier_context}
-Connect today's mistakes to these patterns when they recur.
+Connect today's mistakes to these patterns when the evidence genuinely matches. The categories are provisional
+lesson labels, not established weaknesses: never state a mental cause for a mistake (e.g. "you ignore threats")
+unless the student said it themselves.
 
 ### 🌐 LANGUAGE & NOTATION
 Conduct the session in {language} by default. If a backend "Teaching Plan - P0-8" block specifies a
@@ -142,7 +180,7 @@ an unrequested quiz, agenda jump, or "now let's look at..." redirect.
 **GAME REVIEW** (a digest with CRITICAL MOMENTS is in context): work through the agenda ONE moment at a time, in order. For each moment: set the scene at the FEN BEFORE the mistake, then ask the digest's Initial question EXACTLY as the first question. Do NOT start from the hint ladder; hints are only for after the student has attempted the position or asked for help. Never dump analysis of multiple moments at once. After the student finds or is shown the move, ask them WHY it works before calling `submit_diagnosis`. Once the WHY is answered (or revealed), close the moment in THAT SAME turn: give the explanation, call `submit_diagnosis`, and present the next moment (or the synthesis if it was the last) — NEVER end a turn announcing what you are about to do ("let's log this and move on"); the student should never have to say "ok" to advance. After the last moment, give a 3-sentence game synthesis using the digest's lesson objectives and explanation primitives.
 **BATCH TRAINING** (a BATCH TRAINING REPORT is in context): first present the training plan in your own words — verified strengths, then each recurring pattern with its count (the counts are facts; never invent additional patterns). Recommend Pattern 1 but let the student choose. Then teach the chosen pattern's positions ONE AT A TIME under the GAME REVIEW protocol above. After a pattern's last position, give a synthesis built on that pattern's habit and offer the next pattern.
 **SPARRING**: when it's your turn, call `play_sparring_reply` — the backend picks your move; never choose it yourself. Comment in 1-3 sentences. If the backend flags the student's move as losing significant win%, pause and coach that moment first (mini review-style).
-**DOSSIER DRILL** (/review): quiz the student on a stored weakness; same question-then-grade protocol.
+**DOSSIER DRILL** (/review): quiz the student on a stored position; same question-then-grade protocol.
 **FREE QUESTIONS**: answer directly and explanatorily — Socratic withholding only applies when YOU asked the question. Still verify claims with tools. For full positional assessments, structure the answer around the five elements: material, piece activity, pawn structure, space, king safety.
 **OPENING questions** (roughly the first 10-12 moves): ground advice in `get_opening_repertoire` — what masters AND amateurs at the student's Elo actually play — not in generic principles from memory. When the data contradicts a textbook rule (e.g. masters happily accept doubled pawns for the bishop pair), teach the data and the compensation idea, not the dogma.
 **ENDGAMES with ≤7 pieces**: use `query_endgame_tablebase` for provably perfect play.

@@ -13,7 +13,7 @@ import chess.pgn
 
 from app import external
 from app.batch import batch_dossier_summary, game_key_for, run_batch_review
-from app.memory import _atomic_write_json, load_dossier, update_dossier_with_batch
+from app.memory import load_dossier, save_dossier, update_dossier_with_batch
 from app.review import configured_player_identities, detect_student_color
 
 
@@ -75,11 +75,13 @@ def _seed_representative_positions(dossier_file: str, summary: dict) -> int:
                 "move_label": pos.get("move_label"),
                 "played": pos.get("played"),
                 "better": pos.get("better"),
+                # Quality-SOL §7.1: a batch rule label, not a diagnosis with the student's evidence.
+                "category_basis": "rule_based",
             })
             existing.add(key)
             seeded += 1
     dossier["recent_positions"] = dossier["recent_positions"][:20]
-    _atomic_write_json(dossier_file, dossier)
+    save_dossier(dossier_file, dossier)
     return seeded
 
 
@@ -94,7 +96,7 @@ def _record_imported_games(dossier_file: str, keys: list[str], source: str, batc
         for key in keys
     ]
     dossier["imported_games"] = (entries + existing)[:500]
-    _atomic_write_json(dossier_file, dossier)
+    save_dossier(dossier_file, dossier)
 
 
 def import_pgn_text(pgn_text: str, engines, config, *, source: str = "local PGN",

@@ -11,7 +11,7 @@ from rich.panel import Panel
 from app import external
 from app.concepts import extract_board_features, see_exchange_gain
 from app.drills import record_drill_outcome
-from app.memory import load_lesson_metadata, save_lesson_metadata
+from app.memory import DIAGNOSIS_EVIDENCE_VERSION, load_lesson_metadata, save_lesson_metadata
 from app.motifs import detect_motifs_in_line
 from app.pawn_story import analyze_pawn_structure_evolution
 from app.planner import _normalize_text
@@ -96,6 +96,48 @@ def _valid_diagnosis_override(reason: str, recommended: str, chosen: str) -> boo
                    "overriding", "override", "n/a"):
         residue = residue.replace(phrase, " ")
     return len(residue.split()) >= 5
+
+
+def _explanation_assessment(result: dict) -> str | None:
+    """The Q2 outcome of one evaluate_explanation result (Quality-SOL §6.3/§7.1); None when nothing
+    was assessed (only a move was named, or a probe is still open with nothing credited)."""
+    if result.get("student_passed"):
+        return "passed"
+    if result.get("key_reason_named") is True:
+        return "named_key_reason"
+    if result.get("key_reason_named") is False:
+        if result.get("reveal_allowed"):
+            return "revealed"
+        return "partial" if result.get("also_named") else None
+    if "credited" in result:
+        return "unassessable"  # no concrete load-bearing reason is verified for this moment
+    return None
+
+
+def _diagnosis_mechanism(record) -> dict:
+    """Quality-SOL §7.1: the chess mechanism the review's explanation primitives support. Evidence ids
+    are stable references into the review (agenda ply, key reason, forcing move), never invented;
+    without a supported mechanism the kind is 'unknown' (§7.2 step 5: abstain)."""
+    if record is None:
+        return {"kind": "unknown", "evidence_ids": []}
+    data = getattr(record, "explanation_primitives", None) or {}
+    key = next((r for r in data.get("reasons") or [] if r.get("key")), None)
+    ids = [f"agenda_ply:{record.ply}"]
+    if data.get("resource_refuted"):
+        kind = "refuted_opponent_resource"
+        ids.append(f"resource:{data['resource_refuted']}")
+    elif data.get("forcing_move"):
+        kind = "opponent_forcing_move"
+        ids += [f"forcing_move:{data['forcing_move']}", f"target_square:{data.get('target_square')}"]
+    elif data.get("why_wrong_move_fails"):
+        kind = "capture_trade"
+    elif key and not key.get("generic"):
+        kind = "best_move_point"
+    else:
+        kind = "unknown"
+    if key:
+        ids.append(f"agenda_ply:{record.ply}/key_reason" + (f":{key['kind']}" if key.get("kind") else ""))
+    return {"kind": kind, "evidence_ids": ids}
 
 
 def _file_pawn_named(text: str, square: str) -> bool:
@@ -559,6 +601,8 @@ class CoachTools:
                       "explanation": f"'{student_move_san}' is not a legal move here.",
                       "attempts_so_far": n, "reveal_allowed": n >= 2,
                       "legal_moves": ", ".join(board.san(m) for m in board.legal_moves)}
+            if n >= 2:
+                self.state.grading_outcomes.setdefault(fen, {}).setdefault("move", "revealed")
             self._record_active_drill_outcome(fen, result)
             return result
 
@@ -644,6 +688,9 @@ class CoachTools:
         attempts[fen] = attempts.get(fen, 0) + 1
         n = attempts[fen]
         reveal = correct or n >= 2
+        if reveal:
+            # Quality-SOL §7.1: the first resolution sticks; a move found after a reveal is not independent.
+            self.state.grading_outcomes.setdefault(fen, {}).setdefault("move", "found" if correct else "revealed")
 
         student_san = board.san(move)
         result = {
@@ -797,6 +844,22 @@ class CoachTools:
                 pos += len(compact)
             return " ".join(keep), origin
         return (submitted or "").strip(), "submitted_text"
+
+    def _student_turn(self, quote: str) -> tuple:
+        """(found, turn_id): whether `quote` is, verbatim up to spacing/punctuation, in one of the
+        student's own messages this moment, and that message's session turn id (None when turns are
+        not counted, e.g. a direct tool call). Quality-SOL §7.1: evidence cites real student words."""
+        span = self._compact_student_text(quote)
+        if not span:
+            return False, None
+        count = getattr(self.state, "student_turn_count", 0) or 0
+        texts = list(getattr(self.state, "moment_student_texts", None) or [])
+        for back, text in enumerate(reversed(texts)):
+            if span in self._compact_student_text(text):
+                return True, (count - back if count > back else None)
+        if span in self._compact_student_text(getattr(self.state, "latest_user_text", None) or ""):
+            return True, (count or None)
+        return False, None
 
     def _pregraded_result(self, tool: str, fen: str) -> dict | None:
         """The backend router already graded the student's message with this tool on this
@@ -1039,6 +1102,13 @@ class CoachTools:
         result["graded_text_source"] = origin
         if context != (student_explanation or "").strip():
             result["graded_text"] = context
+        assessment = _explanation_assessment(result)
+        if assessment:
+            # Quality-SOL §7.1: the diagnosis cites this outcome and the student's own located words.
+            found, turn_id = self._student_turn(context)
+            self.state.grading_outcomes.setdefault(fen, {})["explanation"] = {
+                "assessment": assessment, "quote": context[:240] if found else None,
+                "turn_id": turn_id if found else None}
         return result
 
     def _grade_explanation(self, record, fen: str, context: str, student_explanation: str) -> dict:
@@ -1382,15 +1452,14 @@ class CoachTools:
 
     def submit_diagnosis(self, fen: str, error_category: str, error_explanation: str,
                          preventative_habit: str, confidence: float = 1.0,
-                         override_reason: str = None) -> dict:
+                         override_reason: str = None, student_quote: str = None) -> dict:
         """
         Logs a diagnosed mistake to the student's long-term dossier. Call this ONCE
         per distinct mistake, after the student has worked through it.
 
-        Pick the category that names the DECISION ERROR (why the wrong move was
-        chosen), not the topic you happened to discuss. If the review digest
-        suggests a category for this moment, use it unless the conversation
-        revealed a different root cause.
+        The category is a provisional lesson label for the position's chess mechanism,
+        not a claim about the student's mind. If the review digest suggests a category
+        for this moment, use it unless the conversation produced different evidence.
 
         Args:
             fen: The exact FEN of the position BEFORE the mistaken move.
@@ -1398,7 +1467,7 @@ class CoachTools:
                 hanging_piece (left material to a simple capture),
                 missed_tactic (an available tactic went unplayed),
                 missed_fork / missed_pin_or_skewer / missed_mate (specific missed tactic),
-                ignored_threat (didn't ask what the opponent's move threatened),
+                ignored_threat (the move did not meet a threat the opponent already had),
                 allows_forcing_sequence (your move created a forcing reply; different from ignoring a threat that already existed),
                 failed_recapture (left a capture sequence unfinished),
                 bad_trade (won material or traded at a strategic cost, e.g. gave up an active piece),
@@ -1415,8 +1484,12 @@ class CoachTools:
             confidence: Your confidence in the diagnosis, 0.0-1.0.
             override_reason: ONLY when you choose a category DIFFERENT from the
                 backend's recommended diagnosis: state the conversational evidence
-                for the different root cause. OMIT this argument entirely when
+                for the different category. OMIT this argument entirely when
                 your category matches the recommendation.
+            student_quote: ONLY when the student said in their own words why they
+                chose the move (e.g. "I didn't see the bishop"): copy those exact words
+                from their message. It is recorded as what the student reported; never
+                paraphrase, summarize or invent it. OMIT it otherwise: no cause is recorded.
         """
         category = (error_category or "").strip().lower()
         if category not in ERROR_TAXONOMY:
@@ -1510,15 +1583,42 @@ class CoachTools:
             elif _weak_diagnosis_text(error_explanation):
                 error_explanation = _backend_diagnosis_sentence(record)
 
+        # Quality-SOL §7.1: a cause is recorded only from the student's own located words; anything
+        # else leaves it unknown. Five words of override prose are not the student's statement.
+        quote_found, quote_turn = self._student_turn(student_quote) if student_quote else (False, None)
+        quote_found = quote_found and len(self._student_words(student_quote)) >= 3
+        outcomes = self.state.grading_outcomes.get(fen) or {}
+        explained = outcomes.get("explanation") or {}
+        assessment = explained.get("assessment") or "unassessable"
+        if quote_found:
+            evidence = {"turn_id": quote_turn, "quote": student_quote.strip()[:240]}
+        else:
+            evidence = {"turn_id": explained.get("turn_id"), "quote": explained.get("quote")}
+        source = played or record
         diagnosis = {
             "fen": fen,
             "error_category": category,
             "error_explanation": (error_explanation or "")[:200],
             "preventative_habit": (preventative_habit or "")[:200],
             "confidence": float(confidence),
+            # §7.3 event identity: real game + ply + student side (+ evidence_version).
+            "game_id": self._diagnosis_game_id(source),
+            "ply": getattr(source, "ply", None),
+            "student_side": getattr(source, "color", None),
+            "played": getattr(source, "san", None),
+            "mechanism": _diagnosis_mechanism(record),
+            "recommended_category": recommended,
+            "category_basis": ("student_statement" if quote_found and recommended and category != recommended
+                               else "rule_based"),
+            "student_cause": student_quote.strip()[:240] if quote_found else None,
+            "cause_basis": "student_statement" if quote_found else "unknown",
+            "student_evidence": evidence,
+            "assessment": assessment,
+            # Revealed, passed or given-up answers complete teaching but are not independent (§6.3).
+            "independent_success": (outcomes.get("move") == "found"
+                                    and assessment in ("named_key_reason", "unassessable")),
+            "evidence_version": DIAGNOSIS_EVIDENCE_VERSION,
         }
-        if recommended:
-            diagnosis["recommended_diagnosis"] = recommended
         if override_reason:
             diagnosis["override_reason"] = override_reason[:200]
         self.state.diagnostics.append(diagnosis)
@@ -1536,6 +1636,10 @@ class CoachTools:
         result = {"success": True}
         if mismatch_warning:
             result["warning"] = mismatch_warning
+        if student_quote and not quote_found:
+            result["student_quote_warning"] = (
+                "student_quote is not the student's own words from this moment (3+ words, verbatim); "
+                "no cause was recorded. Never present a paraphrase as the student's explanation.")
         if not (self.state.review_context or {}).get("dossier_consent", True):
             result["dossier_logging"] = "disabled_for_borrowed_game_without_opt_in"
             result["message"] = (
@@ -1543,6 +1647,17 @@ class CoachTools:
                 "student's personal dossier unless they opted into borrowed-game logging."
             )
         return result
+
+    def _diagnosis_game_id(self, record) -> str | None:
+        """The real game a reviewed move belongs to (Quality-SOL §7.3 event identity). A batch lesson
+        mixes games, so its records map to their source game; a single review is the loaded game."""
+        review = self.state.review
+        sources = getattr(review, "rep_sources", None)
+        if sources:
+            idx = next((i for i, r in enumerate(review.records) if r is record), None)
+            return sources[idx].get("game_key") if idx is not None and idx < len(sources) else None
+        game_id = self.state.current_game_id
+        return None if (game_id or "").startswith("batch:") else game_id
 
     def _record_teaching_ledger_event(self, record, diagnosis: dict) -> None:
         if not record:
@@ -1936,6 +2051,7 @@ class CoachTools:
         if rating_enrichment:
             self.state.review_context["rating_enrichment"] = rating_enrichment
         self.state.socratic_attempts.clear()
+        self.state.grading_outcomes.clear()
         attach_board_tokens(review, self.state, invert=getattr(self.config, "dark_terminal", False))
         meta = dict(self.state.lesson_metadata or {})
         if source_game_id:

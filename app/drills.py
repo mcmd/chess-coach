@@ -10,7 +10,7 @@ import re
 
 import chess
 
-from app.memory import load_dossier, _atomic_write_json
+from app.memory import load_dossier, save_dossier
 
 DRILL_HISTORY_LIMIT = 50
 DRILL_OUTCOME_LIMIT = 100
@@ -152,7 +152,8 @@ def _verified_positions(dossier: dict, verifier=None) -> list:
     positions = []
     seen = set()
     for raw, default_source in raw_positions:
-        if not _valid_position(raw):
+        # Quality-SOL §7.4: a superseded diagnosis stays in history but never seeds a drill.
+        if raw.get("superseded") or not _valid_position(raw):
             continue
         pos = dict(raw)
         category = pos.get("error_category") or "unknown"
@@ -213,9 +214,13 @@ def select_dossier_drill(dossier: dict, verifier=None) -> dict | None:
             "popularity_note": popularity_branch(pick.get("maia_played_prob")),
             "retrievability": _category_retrievability(dossier, category),
             "verification": pick.get("verification"),
+            "evidence_status": pick.get("evidence_status"),
         }
 
-    frequencies = dossier.get("error_frequencies") or {}
+    # Ranking only: evidence-qualified counts plus the legacy totals net of superseded entries.
+    frequencies = dict((dossier.get("legacy_totals") or {}).get("error_frequencies") or {})
+    for category, count in (dossier.get("error_frequencies") or {}).items():
+        frequencies[category] = int(frequencies.get(category, 0)) + int(count)
     ranked_categories = sorted(
         by_category,
         key=lambda c: (_category_retrievability(dossier, c), -int(frequencies.get(c, 0))),
@@ -236,6 +241,7 @@ def select_dossier_drill(dossier: dict, verifier=None) -> dict | None:
         "popularity_note": popularity_branch(pick.get("maia_played_prob")),
         "retrievability": _category_retrievability(dossier, category),
         "verification": pick.get("verification"),
+        "evidence_status": pick.get("evidence_status"),
     }
 
 
@@ -265,7 +271,7 @@ def record_drill_presented(dossier_file: str, drill: dict) -> None:
         current["last_pattern_id"] = drill["pattern_id"]
     state[category] = current
     dossier["drill_state"] = state
-    _atomic_write_json(dossier_file, dossier)
+    save_dossier(dossier_file, dossier)
 
 
 def _outcome_from_result(result: dict) -> dict | None:
@@ -330,6 +336,9 @@ def record_drill_outcome(dossier_file: str, drill: dict, result: dict) -> dict |
         "source": drill.get("source"),
         **outcome,
     }
+    if drill.get("evidence_status"):
+        # §7.3: practice on a legacy, unverified position is kept apart from transfer evidence.
+        entry["evidence_status"] = drill["evidence_status"]
     if not entry["fen"]:
         return None
 
@@ -352,5 +361,5 @@ def record_drill_outcome(dossier_file: str, drill: dict, result: dict) -> dict |
     current["last_fen"] = entry["fen"]
     state[category] = _updated_memory_state(current, outcome, today)
     dossier["drill_state"] = state
-    _atomic_write_json(dossier_file, dossier)
+    save_dossier(dossier_file, dossier)
     return entry

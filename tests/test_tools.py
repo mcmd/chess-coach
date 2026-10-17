@@ -235,7 +235,56 @@ def test_diagnosis_allows_mismatched_backend_recommendation_with_override(stub_c
     result = tools.submit_diagnosis(fen, wrong, "x", "y", override_reason="Student explained a different root cause.")
     assert result["success"] is True
     assert "warning" in result
-    assert state.diagnostics[0]["recommended_diagnosis"] == rec
+    diag = state.diagnostics[0]
+    # Quality-SOL §7.1: override prose is not the student's statement.
+    assert diag["recommended_category"] == rec and diag["category_basis"] == "rule_based"
+    assert diag["cause_basis"] == "unknown" and diag["student_cause"] is None
+
+
+def test_a_logged_diagnosis_carries_its_evidence_and_no_inferred_cause(stub_config):
+    # Quality-SOL §7.1: mechanism, assessment and the student's own words, from what the backend graded.
+    tools, state = make_tools(stub_config, _scripted_engines())
+    tools._review_and_load(REVIEW_PGN, source_game_id="g1")
+    record = state.review.agenda[0]
+    for text in ("not the key reason", "still not the key reason"):
+        state.latest_user_text = text
+        tools.evaluate_explanation(record.fen_before, text)
+
+    assert tools.submit_diagnosis(record.fen_before, record.recommended_diagnosis, "x", "y")["success"] is True
+
+    diag = state.diagnostics[0]
+    assert (diag["game_id"], diag["ply"], diag["student_side"]) == ("g1", record.ply, record.color)
+    assert diag["mechanism"]["kind"] and f"agenda_ply:{record.ply}" in diag["mechanism"]["evidence_ids"]
+    assert diag["recommended_category"] == record.recommended_diagnosis
+    assert diag["category_basis"] == "rule_based"
+    assert diag["student_cause"] is None and diag["cause_basis"] == "unknown"
+    assert diag["student_evidence"]["quote"] == "still not the key reason"
+    assert diag["assessment"] == "revealed" and diag["independent_success"] is False
+    assert diag["evidence_version"] == 1
+
+
+def test_an_override_backed_by_the_students_own_words_records_their_statement(stub_config):
+    tools, state = make_tools(stub_config, _scripted_engines())
+    tools._review_and_load(REVIEW_PGN)
+    fen = state.review.agenda[0].fen_before
+    rec = state.review.agenda[0].recommended_diagnosis
+    wrong = next(c for c in ERROR_TAXONOMY if c != rec)
+    tools.evaluate_explanation(fen, "not the key reason")
+    tools.evaluate_explanation(fen, "still not the key reason")
+    state.latest_user_text = "Honestly I just didn't notice my queen could be taken."
+
+    invented = tools.submit_diagnosis(fen, wrong, "x", "y", override_reason="Student explained a different root cause.",
+                                      student_quote="I never look at what the opponent threatens")
+    assert "student_quote_warning" in invented
+    assert state.diagnostics[0]["cause_basis"] == "unknown"
+
+    state.diagnostics.clear()
+    tools.submit_diagnosis(fen, wrong, "x", "y", override_reason="Student explained a different root cause.",
+                           student_quote="I just didn't notice my queen could be taken")
+    diag = state.diagnostics[0]
+    assert diag["category_basis"] == "student_statement" and diag["cause_basis"] == "student_statement"
+    assert diag["student_cause"] == "I just didn't notice my queen could be taken"
+    assert diag["student_evidence"]["quote"] == "I just didn't notice my queen could be taken"
 
 
 def test_diagnosis_rejects_boilerplate_override_when_mismatched(stub_config):
