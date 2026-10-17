@@ -80,7 +80,13 @@ def test_claim_gate_keeps_backticked_squares_named_as_pawns():
     text = "Because Black still had pawns on those files (the `g7` and `h7` pawns), they were half-open."
     out, findings = apply_claim_gate(text, [board], level=1)
     assert out == text and not findings
+    # Runs nnbbjvjq, kfh79jvv, yhgxhl22: three more square references redacted as moves.
+    for text in ("their king still had shelter from the `f7`, `g7`, and `h7` pawns.",
+                 "the g2 pawn became a runner (`g2` is passed: no enemy pawn ahead).",
+                 "The engine prefers retreating it to `d7` or `d8`."):
+        assert apply_claim_gate(text, [board], level=1) == (text, [])
     assert find_illegal_moves("Now `e5` grabs space.", [chess.Board()]) == ["e5"]
+    assert find_illegal_moves("Go to e4, then `e5` or 1. e6.", [chess.Board()]) == ["e5", "e6"]
 
 
 def test_claim_gate_records_structured_l1_observability():
@@ -873,6 +879,30 @@ def test_reasoning_leaked_twice_shows_a_retry_notice_and_keeps_history_valid(stu
     assert "Thinking Process" not in _history_text(chat)
     # Each function call is still followed by its function response, then a model turn.
     assert [c.role for c in chat.get_history()] == ["user", "model", "user", "model"]
+
+
+def test_a_malformed_function_call_is_resent_once(stub_config, capsys):
+    # Run bgu3ayf8 S16: finish_reason MALFORMED_FUNCTION_CALL with no content ended the turn with "Received
+    # no text response from the model" and the live run stopped.
+    from google.genai import types
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), FakeEngines(), stub_config)
+    malformed = types.GenerateContentResponse(candidates=[types.Candidate(finish_reason="MALFORMED_FUNCTION_CALL")])
+    chat, models = _real_chat([malformed, _gemini_response(_text("The rook keeps the g4 pawn defended."))])
+
+    run_agent_turn(chat, tools, "because it defends g4")
+
+    assert "The rook keeps the g4 pawn defended." in capsys.readouterr().out and len(models.requests) == 2
+    assert [c.role for c in chat.get_history()] == ["user", "model"]
+
+def test_a_reply_naming_the_real_threat_is_not_given_the_verdict_again():
+    # Run bgu3ayf8 S14: "Qxg4+ is the real threat." was prefixed to "Qxg4+ is the real threat! It comes with check".
+    state = SessionState()
+    state._turn_grading_results = [{"tool": "evaluate_threat_answer", "args": {"threat_move_san": "Qxg4+"},
+                                    "result": {"verdict": "correct_threat", "student_threat": "Qxg4+"}}]
+    reply = "Qxg4+ is the real threat! It comes with check."
+    assert _state_unreported_feedback(reply, state) == reply
+
 
 
 def test_reasoning_beside_a_tool_call_is_dropped_from_history_without_a_resend(stub_config, capsys):

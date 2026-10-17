@@ -293,14 +293,16 @@ def grading_next_step(tool: str, result: dict, can_grade_explanation: bool = Tru
     return (f"Say first: {said}. Then: " if said else "Then: ") + step
 
 
-def _human_moves_in_words(top_moves: list, elo: int) -> str | None:
+def _human_moves_in_words(top_moves: list, elo: int, side: str = None) -> str | None:
     """A sentence the coach can quote. Router run t0zauzig: Qh6 31.6%, Qa6 12.6%, Qg6 11.6%
     became "most humans at this level try Qh6 or Qg6" (no majority; the second move dropped).
-    The rating Maia was asked about is named (19enjp8m mixed it up with the game-time rating)."""
+    The rating Maia was asked about is named (19enjp8m mixed it up with the game-time rating), and
+    the side choosing (run 9wthn48e read Black's 89% recapture "After Nxb5: ... choose Nxb5" as the
+    share of players choosing White's 20. Nxb5)."""
     moves = [m for m in top_moves or [] if m.get("move") and m.get("probability") is not None][:3]
     if not moves:
         return None
-    cohort = f"players rated about {elo}"
+    cohort = f"players rated about {elo}" + (f" playing {side}" if side else "")
     if moves[0]["probability"] >= 0.5:
         return f"Most {cohort} choose {moves[0]['move']} ({moves[0]['probability']:.0%})."
     listed = ", ".join(f"{m['move']} {m['probability']:.0%}" for m in moves)
@@ -414,9 +416,10 @@ class CoachTools:
         if maia:
             # Run sce7o0q6 S2: a share for the position after the applied moves was told as if it
             # were for the position before them; the sentence names its position.
-            in_words = _human_moves_in_words(maia["top_moves"], self.config.user_elo)
+            side = "White" if board.turn == chess.WHITE else "Black"
+            in_words = _human_moves_in_words(maia["top_moves"], self.config.user_elo, side)
             if in_words and moves_to_apply:
-                in_words = f"After {' '.join(moves_to_apply[:10])}: {in_words}"
+                in_words = f"After {' '.join(moves_to_apply[:10])}, {side} to move: {in_words}"
             maia_summary = {"top_human_moves": maia["top_moves"], "in_words": in_words,
                             "win_probability_for_side_to_move": maia["win_probability_for_side_to_move"]}
             w, d, l = maia["win_probability_for_side_to_move"], maia.get("draw_probability"), maia.get("loss_probability")

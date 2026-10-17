@@ -120,11 +120,33 @@ def _drop_last_exchange(chat) -> None:
         del curated[-2:]
 
 
+def _malformed_call(response) -> bool:
+    candidate = response.candidates[0] if getattr(response, "candidates", None) else None
+    return candidate is not None and "MALFORMED_FUNCTION_CALL" in str(getattr(candidate, "finish_reason", ""))
+
+
+def _drop_last_input(chat) -> None:
+    """Remove the last input and anything recorded after it (an invalid reply may record no model
+    turn, so the last two entries are not necessarily one exchange)."""
+    history = chat.get_history()
+    last_input = max((i for i, c in enumerate(history) if c.role == "user"), default=None)
+    if last_input is not None:
+        del history[last_input:]
+
+
 def _send_without_leaks(chat, payload, state):
     """Send, keeping leaked reasoning out of what the student sees and the history.
     Beside a tool call the leaked text is dropped; a leaked reply is regenerated once,
     then replaced by a retry notice that keeps the history's turn order valid."""
     response = _send_with_spinner(chat, payload)
+    if _malformed_call(response):
+        # Run bgu3ayf8 S16: Gemini returned MALFORMED_FUNCTION_CALL with no content and the turn ended
+        # with "Received no text response from the model". One resend, as for a leaked reply.
+        _event_append(state, "deliberation_events", {"type": "malformed_function_call",
+                                                      "game_id": getattr(state, "current_game_id", None)})
+        trace("model returned a malformed function call; resending once")
+        _drop_last_input(chat)
+        response = _send_with_spinner(chat, payload)
     for attempt in range(2):
         leaked = _leaked_parts(response)
         if not leaked:
@@ -578,7 +600,9 @@ def _mask_non_claim_move_mentions(text: str) -> str:
         r"\b(?:on|onto|to|from|at|square|squares|pawn|piece|king|queen|rook|bishop|"
         r"knight|file|rank)\s+"
     )
-    masked = re.sub(square_context + r"`?[a-h][1-8]`?", lambda m: " " * len(m.group(0)),
+    # A list continues the context: "retreating it to `d7` or `d8`" (run yhgxhl22 redacted d8).
+    more_squares = r"(?:\s*(?:,\s*(?:and|or)\b|,|\band\b|\bor\b)\s*`?[a-h][1-8]`?)*"
+    masked = re.sub(square_context + r"`?[a-h][1-8]`?" + more_squares, lambda m: " " * len(m.group(0)),
                     text, flags=re.IGNORECASE)
     piece_context = (
         r"\b`?[a-h][1-8]`?(?:-|\s+)"
@@ -586,12 +610,17 @@ def _mask_non_claim_move_mentions(text: str) -> str:
     )
     masked = re.sub(piece_context, lambda m: " " * len(m.group(0)),
                     masked, flags=re.IGNORECASE)
-    square_list_context = (   # "g7 and h7 pawns", also as code spans: "`g7` and `h7` pawns" (run s7writoz)
-        r"(?<![A-Za-z0-9])(?:`?[a-h][1-8]`?\s*(?:,|and|or)?\s*){1,6}"
+    # "g7 and h7 pawns", also as code spans: "`g7` and `h7` pawns" (run s7writoz) and "the `f7`, `g7`,
+    # and `h7` pawns" (run nnbbjvjq).
+    square_list_context = (
+        r"(?<![A-Za-z0-9])(?:`?[a-h][1-8]`?\s*(?:,\s*(?:and|or)\b|,|and|or)?\s*){1,6}"
         r"(?=(?:pawns?|pieces?|squares?|files?|ranks?)\b)"
     )
     masked = re.sub(square_list_context, lambda m: " " * len(m.group(0)),
                     masked, flags=re.IGNORECASE)
+    # A square as the subject of a state: "(`g2` is passed: no enemy pawn ahead)" (run kfh79jvv).
+    masked = re.sub(r"(?<![A-Za-z0-9.])`?[a-h][1-8]`?(?=\s+(?:is|was|became|becomes|remains|stays|stayed)\b)",
+                    lambda m: " " * len(m.group(0)), masked, flags=re.IGNORECASE)
     negative_context = (
         r"\b(?:not|isn't|isnt|wasn't|wasnt|doesn't|doesnt|don't|dont|can't|cant|"
         r"cannot|couldn't|couldnt|illegal|invalid|no)\b"
@@ -723,7 +752,8 @@ def _event_append(state, attr: str, event: dict) -> None:
 
 
 _VERDICT_ACK_TOKENS = {
-    "correct_threat": ("correct", "yes", "spot on", "right", "threatening"),
+    # "Qxg4+ is the real threat! ..." (run bgu3ayf8) acknowledged it; the backend repeated it anyway.
+    "correct_threat": ("correct", "yes", "spot on", "right", "threatening", "the real threat"),
     "real_but_secondary_threat": ("secondary", "not the main", "not black's main", "legal", "real threat"),
     "not_a_real_threat": ("not a real threat", "not the threat", "doesn't threaten", "does not threaten"),
     "no_significant_threat_exists": ("no significant threat", "no immediate threat", "no forcing threat"),
