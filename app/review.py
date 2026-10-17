@@ -557,13 +557,15 @@ def moment_digest_lines(i: int, r: MoveRecord, continuation: str = None) -> list
         lines.append(f"  {r.tablebase_note}")
     if r.practical_note:
         lines.append(f"  Nature of the mistake: {r.practical_note}")
+    # Quality-SOL §7.1: commonness says how natural the move looks, not why the student played it (run
+    # thbyse1n called the rare 26. Qxa7 "a quick process slip" because this line told it to).
     if r.error_typicality == "typical_for_level":
         lines.append("  Typicality: this mistake is COMMON at this level — normalize it first, "
-                     "then teach the underlying pattern thoroughly (it is a real knowledge gap).")
+                     "then teach the underlying pattern thoroughly.")
     elif r.error_typicality == "atypical_for_level":
-        lines.append("  Typicality: players at this level RARELY play this — treat it as a "
-                     "process slip (time, attention, tilt), NOT a knowledge gap. Check the clock "
-                     "data and coach the habit, not the pattern.")
+        lines.append("  Typicality: players at this level RARELY play this. That says nothing about why the "
+                     "student did: do not call it a slip, tunnel vision, time trouble or a knowledge gap unless "
+                     "the student says so or the clock data shows it.")
     if r.best_move_human_prob is not None:
         lines.append(f"  Findability: ~{r.best_move_human_prob:.0%} of {cohort} find "
                      "the right move here — calibrate your hints and your praise accordingly.")
@@ -917,7 +919,7 @@ def review_game(pgn_text: str, engines, config, on_progress=None, agenda_size: i
         quality = classify_move(drop, is_best, is_only, is_forced)
 
         # Typicality lens: brilliancies peers miss, errors peers share, errors
-        # peers DON'T make (process slips, not knowledge gaps).
+        # peers rarely make (how natural the move is, not why it was played).
         brilliancy = None
         typicality = None
         if maia:

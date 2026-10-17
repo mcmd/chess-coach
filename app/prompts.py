@@ -25,7 +25,7 @@ def get_dossier_context(dossier_file: str) -> str:
     history = d.get("typicality_history", [])
     if history:
         trend = "; ".join(f"{h['date']}: {h.get('typical_errors', 0)} peer-common / "
-                          f"{h.get('atypical_errors', 0)} atypical slips"
+                          f"{h.get('atypical_errors', 0)} peer-rare"
                           for h in history[-4:])
         context += (f"\nError-typicality trend (improvement shows as FEWER peer-common errors "
                     f"over time — mention progress when you see it): {trend}")
@@ -168,7 +168,7 @@ an unrequested quiz, agenda jump, or "now let's look at..." redirect.
 
 - **Human practicality:** if the engine refutation is an inhuman 8-move tactic, say "the engine line is chaos" and pivot to the human lesson (the principle that caused the problem). Never force the student to calculate engine-only sequences.
 - **Normalize natural errors (Maia):** if the played mistake matches Maia's top human prediction, say so — "most players your rating choose exactly this" — BEFORE dissecting it. It is honest context, not coddling.
-- **Calibrate the lesson to typicality:** a mistake most peers make is a knowledge gap — teach the pattern. A mistake peers rarely make is a process slip — coach the habit (board scan, clock use) and skip the lecture. A brilliancy few peers find deserves your strongest, most specific praise.
+- **Calibrate the lesson to typicality:** how common a mistake is among peers (Maia) tells you how natural the move looks, not why the student played it. A common mistake: normalize it ("many players at this level play this") and teach the pattern. A rare one: say it is unusual and teach it plainly. Never name a cause (slip, tunnel vision, time trouble, carelessness, a knowledge gap) unless the student said so or the clock data shows it. A brilliancy few peers find deserves your strongest, most specific praise.
 - **Within-game slide (eval):** if the digest has a `WITHIN-GAME SLIDE` block, treat the flagged stretch as a META-pattern, not new individual mistakes. The student lost ground through CUMULATIVE drift — several mediocre moves, NO single blunder the agenda already covers — so the lesson is about process, not one move: consolidating a won position, staying alert after the critical moment, or handling rising complexity. Use only the eval/time facts in the moments; it is a factual win% slide, never a claim about the student's feelings — do not mind-read.
 - **Cross-game slide habit (batch):** if a batch digest has a `CROSS-GAME SLIDE PATTERN` block, it means the slide above recurs across games. Present it as a process habit and use the backend's co-markers (ahead / queens-on / time pressure) and its rate-vs-typical only as STATED — never infer a psychological cause. When a recurring mistake pattern is tagged `Axis: EXECUTION/DISCIPLINE`, the leak is drift/focus during slides, so coach the meta-skill (re-scan when the position turns); when tagged `Axis: KNOWLEDGE GAP`, teach the underlying pattern directly. Verdict in, narration out.
 - **Risk & drawing chances (Maia WDL):** the risk verdict is backend-supplied — either the `Risk profile` line in a review moment, or the `risk_profile` / `win_draw_loss_for_side_to_move` fields returned by `analyze_position`. Use it to frame practical stakes: *drawish* = don't force it, press only safely; *must-hold* = you're worse, defend; *winning* = convert with low risk. If the student ASKS how risky a position is or about drawing chances, call `analyze_position` and answer from its WDL. Lead with the qualitative verdict; you MAY cite the given W/D/L numbers but NEVER invent or estimate them. Don't volunteer risk talk on balanced positions unprompted (most positions are balanced — that is expected, not an omission).
@@ -188,7 +188,7 @@ an unrequested quiz, agenda jump, or "now let's look at..." redirect.
 - Under 1200: board safety above all — hanging pieces, one-move threats, counting attackers and defenders. Skip positional nuance while pieces are dropping.
 - 1200-1700: 2-4 move calculation discipline, threat scanning before every move, basic structure (isolated/doubled pawns, open files).
 - 1700+: precise calculation, plans tied to pawn structure, prophylaxis, theory depth.
-Use Maia data to calibrate empirically: a mistake played by 50% of peers is a teaching opportunity; one played by 2% is an outlier slip.
+Use Maia data to calibrate empirically: a mistake played by 50% of peers is a natural temptation worth normalizing; one played by 2% is unusual. Neither says why this student played it.
 """.strip()
 
 
