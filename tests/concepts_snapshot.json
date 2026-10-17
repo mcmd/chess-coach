@@ -104,7 +104,7 @@
                 "b2-b4",
                 "d2-d4"
             ],
-            "black_available_pawn_breaks": [
+            "black_structural_break_candidates": [
                 "d7-d5",
                 "f7-f5"
             ],
@@ -198,7 +198,7 @@
             "white_available_pawn_breaks": [
                 "d2-d4"
             ],
-            "black_available_pawn_breaks": [
+            "black_structural_break_candidates": [
                 "d7-d5"
             ],
             "pawn_majorities": []
@@ -270,7 +270,7 @@
         },
         "development": {
             "white_king_status": "can still castle",
-            "black_king_status": "can still castle",
+            "black_king_status": "can still castle; enemy pieces attack the king's zone",
             "white_can_castle": true,
             "black_can_castle": true,
             "white_undeveloped_minors": 1,
@@ -302,7 +302,7 @@
                 "a2-a3",
                 "d5-d6"
             ],
-            "black_available_pawn_breaks": [
+            "black_structural_break_candidates": [
                 "b4-b3",
                 "c7-c6"
             ],
@@ -385,8 +385,8 @@
             }
         },
         "development": {
-            "white_king_status": "can still castle",
-            "black_king_status": "can still castle",
+            "white_king_status": "can still castle; enemy pieces attack the king's zone",
+            "black_king_status": "can still castle; enemy pieces attack the king's zone",
             "white_can_castle": true,
             "black_can_castle": true,
             "white_undeveloped_minors": 0,
@@ -523,7 +523,7 @@
             "half_open_for_black": [
                 "c"
             ],
-            "white_available_pawn_breaks": [
+            "white_structural_break_candidates": [
                 "c4-c5"
             ],
             "black_available_pawn_breaks": [
@@ -599,8 +599,8 @@
             }
         },
         "development": {
-            "white_king_status": "castled (king safely tucked away)",
-            "black_king_status": "castled (king safely tucked away)",
+            "white_king_status": "on g1 (castled position; castling rights gone)",
+            "black_king_status": "on g8 (castled position; castling rights gone)",
             "white_can_castle": false,
             "black_can_castle": false,
             "white_undeveloped_minors": 0,
@@ -632,7 +632,7 @@
             "white_available_pawn_breaks": [
                 "d2-d4"
             ],
-            "black_available_pawn_breaks": [
+            "black_structural_break_candidates": [
                 "d7-d5"
             ],
             "pawn_majorities": []

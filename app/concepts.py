@@ -330,9 +330,14 @@ def _get_backward_pawns(board: chess.Board, color: chess.Color) -> list:
 
 
 def _get_pawn_breaks(board: chess.Board, color: chess.Color) -> list:
-    """Available pawn breaks: advances (one step, or two from home) to an empty
+    """Pawn-break levers: advances (one step, or two from home) to an empty
     square from which the pawn would attack an enemy pawn — the levers that
-    open positions and create plans."""
+    open positions and create plans.
+
+    Geometry alone ignores pins and checks (plan §10.1), so when `color` is to
+    move the candidates are filtered through the legal moves. When the other
+    side is to move they are only structural candidates, not available moves;
+    the caller labels them that way."""
     breaks = []
     enemy_pawns = board.pieces(chess.PAWN, not color)
     direction = 1 if color == chess.WHITE else -1
@@ -348,8 +353,10 @@ def _get_pawn_breaks(board: chess.Board, color: chess.Color) -> list:
                 targets.append(chess.square(f, two_r))
         for t in targets:
             if chess.SquareSet(chess.BB_PAWN_ATTACKS[color][t]) & enemy_pawns:
-                breaks.append(f"{chess.square_name(sq)}-{chess.square_name(t)}")
-    return breaks
+                breaks.append(chess.Move(sq, t))
+    if board.turn == color:
+        breaks = [m for m in breaks if board.is_legal(m)]
+    return [f"{chess.square_name(m.from_square)}-{chess.square_name(m.to_square)}" for m in breaks]
 
 
 # --- KING & FILE CONCEPTS ---
@@ -431,16 +438,41 @@ def _get_mobility(board: chess.Board) -> dict:
     return result
 
 
+def _observed_castling(board: chess.Board, color: chess.Color) -> bool:
+    """True only when the board's own move history shows `color` castling."""
+    if not board.move_stack:
+        return False
+    replay = board.root()
+    for move in board.move_stack:
+        if replay.turn == color and replay.is_castling(move):
+            return True
+        replay.push(move)
+    return False
+
+
 def _king_status(board: chess.Board, color: chess.Color) -> str:
-    """Distinguishes 'castled' from 'lost castling rights' — a king on g1/c1
-    without rights almost certainly castled and must not be scolded for it."""
-    if board.has_castling_rights(color):
-        return "can still castle"
+    """Castling rights, king location, observed castling history, and an
+    attack-based safety note, kept as separate facts (plan §10.1). A FEN alone
+    cannot prove the king castled, and a castled-looking square is not proof
+    of safety, so a g1/c1 king is only called castled when the move history
+    shows it, and attacks on the king or its zone are reported, never hidden."""
     king_sq = board.king(color)
-    castled_squares = (chess.G1, chess.C1) if color == chess.WHITE else (chess.G8, chess.C8)
-    if king_sq in castled_squares:
-        return "castled (king safely tucked away)"
-    return "cannot castle (rights lost, king not on a castled square)"
+    if king_sq is None:
+        return "no king on the board"
+    if board.has_castling_rights(color):
+        status = "can still castle"
+    elif _observed_castling(board, color):
+        status = f"castled (king on {chess.square_name(king_sq)})"
+    elif king_sq in ((chess.G1, chess.C1) if color == chess.WHITE else (chess.G8, chess.C8)):
+        status = f"on {chess.square_name(king_sq)} (castled position; castling rights gone)"
+    else:
+        status = "cannot castle (rights lost, king not on a castled square)"
+    opp = not color
+    if board.is_attacked_by(opp, king_sq):
+        status += "; king is in check"
+    elif any(board.is_attacked_by(opp, sq) for sq in chess.SquareSet(chess.BB_KING_ATTACKS[king_sq])):
+        status += "; enemy pieces attack the king's zone"
+    return status
 
 
 # --- GAME PHASE & FORCING MOVES ---
@@ -587,7 +619,8 @@ def extract_board_features(board: chess.Board) -> dict:
             features["pawn_structure"][f"{label}_backward_pawns"] = backward
         breaks = _get_pawn_breaks(board, color)
         if breaks:
-            features["pawn_structure"][f"{label}_available_pawn_breaks"] = breaks
+            key = "available_pawn_breaks" if board.turn == color else "structural_break_candidates"
+            features["pawn_structure"][f"{label}_{key}"] = breaks
     tension = _get_pawn_tension(board)
     if tension:
         features["pawn_structure"]["pawn_tension_points"] = tension

@@ -130,6 +130,21 @@ def test_no_breaks_when_no_levers_exist():
     assert _get_pawn_breaks(chess.Board(), chess.WHITE) == []
 
 
+def test_pinned_break_is_not_offered_as_a_legal_move():
+    # Plan §10.3: Bh4 pins f2 to Ke1, so the geometric lever f2-f4 is illegal.
+    board = chess.Board("4k3/8/8/4p3/7b/8/5P2/4K3 w - - 0 1")
+    assert board.is_pinned(chess.WHITE, chess.F2)
+    assert _get_pawn_breaks(board, chess.WHITE) == []
+    assert "white_available_pawn_breaks" not in extract_board_features(board)["pawn_structure"]
+
+
+def test_breaks_for_side_not_to_move_are_labelled_candidates():
+    board = chess.Board("4k3/8/8/4p3/8/8/5P2/4K3 b - - 0 1")
+    pawns = extract_board_features(board)["pawn_structure"]
+    assert pawns["white_structural_break_candidates"] == ["f2-f4"]
+    assert "white_available_pawn_breaks" not in pawns
+
+
 # --- 9. ROOKS ON OPEN/HALF-OPEN FILES ---
 
 def test_rook_on_open_file_join():
@@ -220,14 +235,30 @@ def test_starting_position_not_back_rank_vulnerable():
     assert not _is_back_rank_vulnerable(board, chess.BLACK)
 
 
-# --- KING STATUS (castled vs lost rights — restored from old prompt as backend fact) ---
+# --- KING STATUS (rights, location, observed castling, attack-based safety — plan §10.1) ---
 
 def test_king_status_distinguishes_castled_from_lost_rights():
     from app.concepts import _king_status
     assert _king_status(chess.Board(), chess.WHITE) == "can still castle"
-    castled = chess.Board("rnbq1rk1/pppp1ppp/5n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQ1RK1 w - - 0 5")
-    assert _king_status(castled, chess.WHITE).startswith("castled")
-    assert _king_status(castled, chess.BLACK).startswith("castled")
+    # A FEN alone cannot prove castling: g1/g8 is only a castled-looking square.
+    fen_only = chess.Board("rnbq1rk1/pppp1ppp/5n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQ1RK1 w - - 0 5")
+    assert _king_status(fen_only, chess.WHITE).startswith("on g1 (castled position")
+    assert _king_status(fen_only, chess.BLACK).startswith("on g8 (castled position")
+    # Observed history does prove it.
+    played = chess.Board()
+    for san in "e4 e5 Nf3 Nc6 Bc4 Bc5 O-O".split():
+        played.push_san(san)
+    assert _king_status(played, chess.WHITE).startswith("castled (king on g1)")
     # King wandered to e2: rights gone but NOT castled.
     wandered = chess.Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPKPPP/RNBQ1BNR b kq - 1 2")
     assert "cannot castle" in _king_status(wandered, chess.WHITE)
+
+
+def test_king_on_castled_square_in_check_is_not_called_safe():
+    from app.concepts import _king_status
+    # Plan §10.3: Qd1+ checks the g1 king behind an intact f2/g2/h2 shield.
+    board = chess.Board("6k1/5ppp/8/8/8/8/5PPP/3q2K1 w - - 0 1")
+    assert board.is_check()
+    status = _king_status(board, chess.WHITE)
+    assert "safe" not in status
+    assert "in check" in status
