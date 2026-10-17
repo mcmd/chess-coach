@@ -881,6 +881,30 @@ def test_reasoning_leaked_twice_shows_a_retry_notice_and_keeps_history_valid(stu
     assert [c.role for c in chat.get_history()] == ["user", "model", "user", "model"]
 
 
+def test_a_malformed_function_call_is_resent_once(stub_config, capsys):
+    # Run bgu3ayf8 S16: finish_reason MALFORMED_FUNCTION_CALL with no content ended the turn with "Received
+    # no text response from the model" and the live run stopped.
+    from google.genai import types
+    state = SessionState()
+    tools = CoachTools(state, TimelineManager(state), FakeEngines(), stub_config)
+    malformed = types.GenerateContentResponse(candidates=[types.Candidate(finish_reason="MALFORMED_FUNCTION_CALL")])
+    chat, models = _real_chat([malformed, _gemini_response(_text("The rook keeps the g4 pawn defended."))])
+
+    run_agent_turn(chat, tools, "because it defends g4")
+
+    assert "The rook keeps the g4 pawn defended." in capsys.readouterr().out and len(models.requests) == 2
+    assert [c.role for c in chat.get_history()] == ["user", "model"]
+
+def test_a_reply_naming_the_real_threat_is_not_given_the_verdict_again():
+    # Run bgu3ayf8 S14: "Qxg4+ is the real threat." was prefixed to "Qxg4+ is the real threat! It comes with check".
+    state = SessionState()
+    state._turn_grading_results = [{"tool": "evaluate_threat_answer", "args": {"threat_move_san": "Qxg4+"},
+                                    "result": {"verdict": "correct_threat", "student_threat": "Qxg4+"}}]
+    reply = "Qxg4+ is the real threat! It comes with check."
+    assert _state_unreported_feedback(reply, state) == reply
+
+
+
 def test_reasoning_beside_a_tool_call_is_dropped_from_history_without_a_resend(stub_config, capsys):
     state = SessionState()
     tools = CoachTools(state, TimelineManager(state), FakeEngines(), stub_config)

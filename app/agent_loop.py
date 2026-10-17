@@ -120,11 +120,33 @@ def _drop_last_exchange(chat) -> None:
         del curated[-2:]
 
 
+def _malformed_call(response) -> bool:
+    candidate = response.candidates[0] if getattr(response, "candidates", None) else None
+    return candidate is not None and "MALFORMED_FUNCTION_CALL" in str(getattr(candidate, "finish_reason", ""))
+
+
+def _drop_last_input(chat) -> None:
+    """Remove the last input and anything recorded after it (an invalid reply may record no model
+    turn, so the last two entries are not necessarily one exchange)."""
+    history = chat.get_history()
+    last_input = max((i for i, c in enumerate(history) if c.role == "user"), default=None)
+    if last_input is not None:
+        del history[last_input:]
+
+
 def _send_without_leaks(chat, payload, state):
     """Send, keeping leaked reasoning out of what the student sees and the history.
     Beside a tool call the leaked text is dropped; a leaked reply is regenerated once,
     then replaced by a retry notice that keeps the history's turn order valid."""
     response = _send_with_spinner(chat, payload)
+    if _malformed_call(response):
+        # Run bgu3ayf8 S16: Gemini returned MALFORMED_FUNCTION_CALL with no content and the turn ended
+        # with "Received no text response from the model". One resend, as for a leaked reply.
+        _event_append(state, "deliberation_events", {"type": "malformed_function_call",
+                                                      "game_id": getattr(state, "current_game_id", None)})
+        trace("model returned a malformed function call; resending once")
+        _drop_last_input(chat)
+        response = _send_with_spinner(chat, payload)
     for attempt in range(2):
         leaked = _leaked_parts(response)
         if not leaked:
@@ -730,7 +752,8 @@ def _event_append(state, attr: str, event: dict) -> None:
 
 
 _VERDICT_ACK_TOKENS = {
-    "correct_threat": ("correct", "yes", "spot on", "right", "threatening"),
+    # "Qxg4+ is the real threat! ..." (run bgu3ayf8) acknowledged it; the backend repeated it anyway.
+    "correct_threat": ("correct", "yes", "spot on", "right", "threatening", "the real threat"),
     "real_but_secondary_threat": ("secondary", "not the main", "not black's main", "legal", "real threat"),
     "not_a_real_threat": ("not a real threat", "not the threat", "doesn't threaten", "does not threaten"),
     "no_significant_threat_exists": ("no significant threat", "no immediate threat", "no forcing threat"),
