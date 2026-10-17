@@ -578,7 +578,9 @@ def _mask_non_claim_move_mentions(text: str) -> str:
         r"\b(?:on|onto|to|from|at|square|squares|pawn|piece|king|queen|rook|bishop|"
         r"knight|file|rank)\s+"
     )
-    masked = re.sub(square_context + r"`?[a-h][1-8]`?", lambda m: " " * len(m.group(0)),
+    # A list continues the context: "retreating it to `d7` or `d8`" (run yhgxhl22 redacted d8).
+    more_squares = r"(?:\s*(?:,\s*(?:and|or)\b|,|\band\b|\bor\b)\s*`?[a-h][1-8]`?)*"
+    masked = re.sub(square_context + r"`?[a-h][1-8]`?" + more_squares, lambda m: " " * len(m.group(0)),
                     text, flags=re.IGNORECASE)
     piece_context = (
         r"\b`?[a-h][1-8]`?(?:-|\s+)"
@@ -586,12 +588,17 @@ def _mask_non_claim_move_mentions(text: str) -> str:
     )
     masked = re.sub(piece_context, lambda m: " " * len(m.group(0)),
                     masked, flags=re.IGNORECASE)
-    square_list_context = (   # "g7 and h7 pawns", also as code spans: "`g7` and `h7` pawns" (run s7writoz)
-        r"(?<![A-Za-z0-9])(?:`?[a-h][1-8]`?\s*(?:,|and|or)?\s*){1,6}"
+    # "g7 and h7 pawns", also as code spans: "`g7` and `h7` pawns" (run s7writoz) and "the `f7`, `g7`,
+    # and `h7` pawns" (run nnbbjvjq).
+    square_list_context = (
+        r"(?<![A-Za-z0-9])(?:`?[a-h][1-8]`?\s*(?:,\s*(?:and|or)\b|,|and|or)?\s*){1,6}"
         r"(?=(?:pawns?|pieces?|squares?|files?|ranks?)\b)"
     )
     masked = re.sub(square_list_context, lambda m: " " * len(m.group(0)),
                     masked, flags=re.IGNORECASE)
+    # A square as the subject of a state: "(`g2` is passed: no enemy pawn ahead)" (run kfh79jvv).
+    masked = re.sub(r"(?<![A-Za-z0-9.])`?[a-h][1-8]`?(?=\s+(?:is|was|became|becomes|remains|stays|stayed)\b)",
+                    lambda m: " " * len(m.group(0)), masked, flags=re.IGNORECASE)
     negative_context = (
         r"\b(?:not|isn't|isnt|wasn't|wasnt|doesn't|doesnt|don't|dont|can't|cant|"
         r"cannot|couldn't|couldnt|illegal|invalid|no)\b"

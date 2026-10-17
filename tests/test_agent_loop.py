@@ -80,7 +80,13 @@ def test_claim_gate_keeps_backticked_squares_named_as_pawns():
     text = "Because Black still had pawns on those files (the `g7` and `h7` pawns), they were half-open."
     out, findings = apply_claim_gate(text, [board], level=1)
     assert out == text and not findings
+    # Runs nnbbjvjq, kfh79jvv, yhgxhl22: three more square references redacted as moves.
+    for text in ("their king still had shelter from the `f7`, `g7`, and `h7` pawns.",
+                 "the g2 pawn became a runner (`g2` is passed: no enemy pawn ahead).",
+                 "The engine prefers retreating it to `d7` or `d8`."):
+        assert apply_claim_gate(text, [board], level=1) == (text, [])
     assert find_illegal_moves("Now `e5` grabs space.", [chess.Board()]) == ["e5"]
+    assert find_illegal_moves("Go to e4, then `e5` or 1. e6.", [chess.Board()]) == ["e5", "e6"]
 
 
 def test_claim_gate_records_structured_l1_observability():
