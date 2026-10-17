@@ -904,6 +904,17 @@ def test_a_reply_naming_the_real_threat_is_not_given_the_verdict_again():
     assert _state_unreported_feedback(reply, state) == reply
 
 
+def test_an_invented_reason_for_an_illegal_move_is_replaced_by_the_boards():
+    # Owner decision D5; live runs said "the queen can't jump to h5" (the d5 pawn blocks it).
+    state = SessionState()
+    reason = "your own pawn on d5 is in the way of your queen on b5"
+    state._turn_grading_results = [{"tool": "evaluate_student_answer", "args": {"student_move_san": "Qh5"},
+                                    "result": {"verdict": "illegal", "student_move": "Qh5", "illegal_reason": reason}}]
+    invented = "Qh5 isn't possible: your queen can't jump to h5. Try again!"
+    assert _state_unreported_feedback(invented, state).startswith(f"Qh5 is not possible here: {reason}.")
+    told = "Qh5 isn't possible: your pawn on d5 blocks your queen on b5. Try again!"
+    assert _state_unreported_feedback(told, state) == told
+
 
 def test_reasoning_beside_a_tool_call_is_dropped_from_history_without_a_resend(stub_config, capsys):
     state = SessionState()

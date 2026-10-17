@@ -780,7 +780,11 @@ def _feedback_spoken(text: str, item: dict) -> bool:
     result = item.get("result") or {}
     lower = (text or "").lower()
     if item.get("tool") != "evaluate_explanation":
-        return _verdict_acknowledged(text, result.get("verdict"))
+        # D5: an illegal move's reason must be the board's; "the queen can't jump" acknowledges the
+        # verdict but not its reason, so the backend states it unless the reply names its squares.
+        reason_squares = re.findall(r"\b[a-h][1-8]\b", result.get("illegal_reason") or "")
+        return (_verdict_acknowledged(text, result.get("verdict"))
+                and all(square in lower for square in reason_squares))
     if result.get("key_reason_named") is True:
         return any(token in lower for token in _EXPLANATION_ACK_TOKENS)
     words_in = set(re.findall(r"[a-z]{5,}", lower))
