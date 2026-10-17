@@ -118,12 +118,11 @@ missing later turns must not erase observed earlier behavior.
 
 - S8: `Kxg2` gets an honest verdict without revealing the better move.
 - S9: one true hint, built from verified hint facts, without the answer.
-- S10: `Qh5` is called illegal. As the second failed attempt, revealing the better
-  move is allowed; the reveal must be accurate. If S10a was used, the reveal follows
-  the student's give-up rather than an invented guess. If the coach already revealed at
-  S10 and the player still sent S10a, the reveal at S10 is correct, not "out of order"
-  (S10a is only for a coach that has not revealed); grade the coach's reply to S10a as an
-  answer to its own "why" question.
+- S10: `Qh5` is the student's first illegal move in this moment, so it does not use a try (owner
+  decision D4, `design/DECISIONS.md`): the coach says it is not possible, gives the board's reason (the
+  queen on b5 is blocked by White's own pawn on d5; owner decision D5) and asks again without revealing
+  the better move. "The queen can't jump" or any other invented reason is a FAIL; revealing 24. Rfe1
+  right after S10 is a FAIL. The reveal follows S10a (the student's explicit give-up) and must be accurate.
 - S11: the explanation is graded without inventing a missing detail. A contentless
   probe such as "what changes around e1?" is a FAIL. The point of 24. Rfe1 is the move order
   (Stockfish depth 30): after 24. Rfe1, 24...Qf4 fails to 25. Rxe8+ Rxe8 26. Qxe8# (or 25. Qxe8+

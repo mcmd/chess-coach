@@ -155,9 +155,10 @@ Give me one small hint without telling me the move.
 Then I would play Qh5
 ```
 
-**Allowed branch S10a:** only if the coach says `Qh5` is not legal and asks you to try again
-without naming the better move. If the coach has already named `Rfe1` (or any better move),
-do not send S10a: go straight to S11. Send it once, then wait for S11's gate:
+**Allowed branch S10a:** expected: a first illegal move does not use a try, so the coach should say
+why `Qh5` is not possible and ask you to try again without naming the better move. If the coach has
+already named `Rfe1` (or any better move), do not send S10a: go straight to S11. Send it once, then
+wait for S11's gate:
 ```text
 I don't know. Please show me the better move.
 ```

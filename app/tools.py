@@ -78,7 +78,7 @@ def _rough_evaluation(score: chess.engine.PovScore) -> str:
     return f"{'White' if cp > 0 else 'Black'} {word} (rough)"
 
 
-from app.notation import legal_san_mentions as _legal_san_mentions, san_mentions as _san_mentions
+from app.notation import illegal_move_reason, legal_san_mentions as _legal_san_mentions, san_mentions as _san_mentions
 
 
 # Tactic categories an override may only choose when the student's own verified motif supports it.
@@ -298,14 +298,31 @@ def feedback_sentence(tool: str, result: dict) -> str | None:
     if tool == "evaluate_threat_answer":
         text, subject = _THREAT_VERDICTS.get(verdict, ""), result.get("student_threat")
     elif verdict == "illegal":
-        text, subject = "{m} is not legal here", result.get("student_move")
+        text, subject = "{m} is not possible here", result.get("student_move")
     else:
         text, subject = _MOVE_VERDICTS.get(verdict, ""), result.get("student_move")
     if not text:
         return None
     sentence = text.format(m=subject or "that move")
+    if result.get("illegal_reason"):  # D5: the reason the board gives, never an invented one
+        sentence += ": " + result["illegal_reason"]
     # A sentence opening with a move keeps it as written: "e4 is the best move", never "E4".
     return (sentence if subject else sentence[0].upper() + sentence[1:]) + "."
+
+
+def _illegal_next_step(result: dict, said: str, reveal_step: str) -> str:
+    """D4-D6: say why it is impossible; a free first entry asks again, three in a row offer the answer."""
+    said = f"{said}: {result['illegal_reason']}" if result.get("illegal_reason") else said
+    if result.get("step_in"):
+        step = ("show the board again (board_token in the result) and ask whether they would like the answer; "
+                "reveal it only if they say yes.")
+    elif result.get("reveal_allowed"):
+        step = reveal_step
+    elif not result.get("try_used"):
+        step = "say this did not use one of their tries and ask for their answer again; do not reveal it."
+    else:
+        step = "give the next hint only; do not reveal the answer."
+    return f"Say first: {said}. Then: " + step
 
 
 def grading_next_step(tool: str, result: dict, can_grade_explanation: bool = True) -> str | None:
@@ -329,6 +346,9 @@ def grading_next_step(tool: str, result: dict, can_grade_explanation: bool = Tru
         return guidance
     if tool == "evaluate_threat_answer":
         said = _THREAT_VERDICTS.get(verdict, "").format(m=result.get("student_threat") or "that")
+        if verdict == "not_a_legal_opponent_move":
+            return _illegal_next_step(result, said, "reveal the real threat from the result; the better move "
+                                                    "stays withheld.")
         if verdict == "correct_threat":
             step = "ask which move the student would play; the better move stays withheld."
         elif result.get("reveal_allowed"):
@@ -339,9 +359,9 @@ def grading_next_step(tool: str, result: dict, can_grade_explanation: bool = Tru
     if verdict == "needs_commitment":
         return "Ask which ONE of the candidate moves the student chooses; do not grade either."
     if verdict == "illegal":
-        said = "that move is not legal here"
-    else:
-        said = _MOVE_VERDICTS.get(verdict, "").format(m=result.get("student_move") or "that move")
+        return _illegal_next_step(result, f"{result.get('student_move') or 'that move'} is not possible here",
+                                  "reveal the better move and its verified line, and ask why it works.")
+    said = _MOVE_VERDICTS.get(verdict, "").format(m=result.get("student_move") or "that move")
     if verdict in ("best", "excellent_alternative"):
         # 19enjp8m S4: the student gave the reason with the move and was asked for it again.
         step = ("if their message already says why, grade those words with evaluate_explanation "
@@ -618,16 +638,13 @@ class CoachTools:
                     "graded as an opponent threat instead of an illegal candidate move."
                 )
                 return result
-            attempts[fen] = attempts.get(fen, 0) + 1
-            n = attempts[fen]
-            result = {"verdict": "illegal",
-                      "explanation": f"'{student_move_san}' is not a legal move here.",
-                      "attempts_so_far": n, "reveal_allowed": n >= 2,
-                      "legal_moves": ", ".join(board.san(m) for m in board.legal_moves)}
-            if n >= 2:
+            result = self._illegal_entry_result(board, fen, fen, student_move_san, "your")
+            result["legal_moves"] = ", ".join(board.san(m) for m in board.legal_moves)
+            if result["reveal_allowed"]:
                 self.state.grading_outcomes.setdefault(fen, {}).setdefault("move", "revealed")
             self._record_active_drill_outcome(fen, result)
             return result
+        attempts.pop(f"illegal-streak:{fen}", None)
 
         try:
             infos = self.engines.top_lines(board, multipv=5, depth=16, time_cap=3.0)
@@ -990,6 +1007,31 @@ class CoachTools:
                      "AT MOST ONE of them — never assert properties of a move that are not listed here.",
         }
 
+    def _illegal_entry_result(self, board: chess.Board, fen: str, key: str, san: str, who: str) -> dict:
+        """An illegal answer (owner decisions D4-D6, `DECISIONS.md`): the first illegal entry in a moment is
+        free and later ones use a try (D4); the reason is read from the board, never invented (D5); after
+        three illegal entries in a row the coach shows the board again and offers the answer (D6). `key`
+        is the attempt counter (the FEN for moves, "threat:<FEN>" for threats)."""
+        attempts = self.state.socratic_attempts
+        attempts[f"illegal:{key}"] = attempts.get(f"illegal:{key}", 0) + 1
+        attempts[f"illegal-streak:{key}"] = attempts.get(f"illegal-streak:{key}", 0) + 1
+        free = attempts[f"illegal:{key}"] == 1
+        if not free:
+            attempts[key] = attempts.get(key, 0) + 1
+        n = attempts.get(key, 0)
+        reason = illegal_move_reason(board, san, who)
+        result = {"verdict": "illegal", "student_move": (san or "").strip(),
+                  "explanation": f"'{(san or '').strip()}' is not possible here" + (f": {reason}." if reason else "."),
+                  "try_used": not free, "attempts_so_far": n, "reveal_allowed": n >= 2}
+        if reason:
+            result["illegal_reason"] = reason
+        if attempts[f"illegal-streak:{key}"] >= 3:
+            result["step_in"] = True
+            pov = (self.state.review.student_color if self.state.review and self.state.review.student_color
+                   else ("white" if board.turn == chess.WHITE else "black"))
+            result["board_token"] = render_board_token(self.state, chess.Board(fen), pov, self.config.dark_terminal)
+        return result
+
     def evaluate_threat_answer(self, fen: str, threat_move_san: str) -> dict:
         """
         Grade the student's answer to "what is the opponent threatening?".
@@ -1025,11 +1067,12 @@ class CoachTools:
         try:
             move = probe.parse_san(threat_move_san)
         except ValueError:
-            attempts[key] = attempts.get(key, 0) + 1
-            n = attempts[key]
-            return {"verdict": "not_a_legal_opponent_move",
-                    "explanation": f"'{threat_move_san}' is not a legal reply for the opponent here.",
-                    "attempts_so_far": n, "reveal_allowed": n >= 2}
+            mover = "Black's" if probe.turn == chess.BLACK else "White's"
+            result = self._illegal_entry_result(probe, fen, key, threat_move_san, mover)
+            result["verdict"] = "not_a_legal_opponent_move"
+            result["student_threat"] = result.pop("student_move")
+            return result
+        attempts.pop(f"illegal-streak:{key}", None)
 
         student_threat = probe.san(move)
         try:

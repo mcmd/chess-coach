@@ -757,13 +757,13 @@ _VERDICT_ACK_TOKENS = {
     "real_but_secondary_threat": ("secondary", "not the main", "not black's main", "legal", "real threat"),
     "not_a_real_threat": ("not a real threat", "not the threat", "doesn't threaten", "does not threaten"),
     "no_significant_threat_exists": ("no significant threat", "no immediate threat", "no forcing threat"),
-    "not_a_legal_opponent_move": ("not legal", "illegal", "not a legal reply"),
+    "not_a_legal_opponent_move": ("not legal", "illegal", "not a legal reply", "not possible", "can't play"),
     "best": ("best", "correct", "yes", "right"),
     "excellent_alternative": ("excellent alternative", "good alternative"),
     "reasonable_but_imprecise": ("reasonable", "imprecise"),
     "inaccurate": ("inaccurate", "not quite"),
     "wrong": ("wrong", "doesn't work", "does not work"),
-    "illegal": ("illegal", "not legal"),
+    "illegal": ("illegal", "not legal", "not possible", "isn't possible", "can't play"),
     "needs_commitment": ("which one", "commit", "choose one"),
 }
 

@@ -148,3 +148,107 @@ def ambiguous_piece_references(text: str, board: chess.Board) -> list[AmbiguousP
                     candidate_squares=sorted(candidates),
                 ))
     return findings
+
+
+_SAN_PARTS_RE = re.compile(
+    r"^(?P<piece>[KQRBN])?(?P<file>[a-h])?(?P<rank>[1-8])?(?P<capture>x)?(?P<to>[a-h][1-8])"
+    r"(?:=?(?P<promo>[QRBN]))?[+#]?[!?]*$")
+
+
+def illegal_move_reason(board: chess.Board, san: str, who: str = "your") -> str | None:
+    """Why `san` is not a legal move for the side to move, read from the board itself (owner decision D5:
+    live runs invented "the queen can't jump to h5" when the queen's own d5 pawn blocked it). `who` names
+    the mover ("your", or "Black's" for an opponent reply). None when no specific reason is found."""
+    side = board.turn
+    own = "your own" if who == "your" else f"{who} own"
+    other = "black" if side == chess.WHITE else "white"
+    text = (san or "").strip().replace("0", "O").rstrip("+#!?")
+    try:
+        board.parse_san(text)
+        return None
+    except ValueError:
+        pass
+    if text in ("O-O", "O-O-O"):
+        long = text == "O-O-O"
+        rook_file = 0 if long else 7
+        if not (board.has_queenside_castling_rights(side) if long else board.has_kingside_castling_rights(side)):
+            return "castling that way is no longer possible: the king or that rook has already moved"
+        if board.is_check():
+            return "you cannot castle while in check"
+        king = board.king(side)
+        rook = chess.square(rook_file, chess.square_rank(king))
+        if chess.SquareSet(chess.between(king, rook)) & board.occupied:
+            return "there are pieces between the king and the rook"
+        return "the king would pass through or land on an attacked square"
+    parts = _SAN_PARTS_RE.match(text)
+    if not parts:
+        return "that is not a move written in chess notation"
+    piece_type = chess.PIECE_SYMBOLS.index(parts["piece"].lower()) if parts["piece"] else chess.PAWN
+    name = chess.piece_name(piece_type)
+    to = chess.parse_square(parts["to"])
+
+    def matches(sq):
+        return ((not parts["file"] or chess.square_file(sq) == chess.FILE_NAMES.index(parts["file"]))
+                and (not parts["rank"] or chess.square_rank(sq) == int(parts["rank"]) - 1))
+
+    pieces = [sq for sq in board.pieces(piece_type, side) if matches(sq)]
+    if not pieces:
+        owner = "you have" if who == "your" else f"{who.removesuffix(chr(39) + 's')} has"
+        return f"{who} {name} is not there" if parts["file"] or parts["rank"] else f"{owner} no {name}"
+    target = board.piece_at(to)
+    if target and target.color == side:
+        return f"{own} {chess.piece_name(target.piece_type)} is already on {parts['to']}"
+    if piece_type == chess.PAWN:
+        step = 8 if side == chess.WHITE else -8
+        diagonal = parts["capture"] or (parts["file"] and chess.square_file(to) != chess.FILE_NAMES.index(parts["file"]))
+        if diagonal:
+            if not any(to in chess.SquareSet(chess.BB_PAWN_ATTACKS[side][sq]) for sq in pieces):
+                return f"none of {who} pawns can capture on {parts['to']}"
+            if not target and board.ep_square != to:
+                return f"a pawn captures only onto an enemy piece, and {parts['to']} is empty"
+        else:
+            if target:
+                return f"a pawn cannot capture straight ahead: the {other} {chess.piece_name(target.piece_type)} on {parts['to']} blocks it"
+            starts = [sq for sq in pieces if sq + step == to or (sq + 2 * step == to and chess.square_rank(sq) in (1, 6))]
+            if not starts:
+                return "a pawn moves straight forward one square (two from its starting square)"
+            if all(sq + 2 * step == to and board.piece_at(sq + step) for sq in starts):
+                return f"the square in front of the pawn ({chess.square_name(starts[0] + step)}) is occupied"
+        if chess.square_rank(to) in (0, 7) and not parts["promo"]:
+            return f"a pawn reaching {parts['to']} must promote (for example {parts['to']}=Q)"
+    else:
+        empty = chess.Board.empty()
+        reachable = []
+        for sq in pieces:
+            empty.clear()
+            empty.set_piece_at(sq, chess.Piece(piece_type, side))
+            if to in empty.attacks(sq):
+                reachable.append(sq)
+        if not reachable:
+            if len(pieces) == 1:
+                return f"{who} {name} on {chess.square_name(pieces[0])} does not move like that"
+            return f"none of {who} {name}s can move like that to {parts['to']}"
+        for sq in reachable:
+            blockers = chess.SquareSet(chess.between(sq, to)) & board.occupied
+            if blockers and len(reachable) == 1:
+                nearest = min(blockers, key=lambda b: chess.square_distance(b, sq))
+                blocker = board.piece_at(nearest)
+                owner = own if blocker.color == side else f"the {other}"
+                return (f"{owner} {chess.piece_name(blocker.piece_type)} on {chess.square_name(nearest)} is in the way "
+                        f"of {who} {name} on {chess.square_name(sq)}")
+    pseudo = [m for m in board.pseudo_legal_moves
+              if m.to_square == to and board.piece_type_at(m.from_square) == piece_type and matches(m.from_square)]
+    if pseudo:
+        if board.is_check():
+            return f"{who} king is in check, and {san.strip()} does not get out of it"
+        if piece_type == chess.KING:
+            return f"{who} king would be in check on {parts['to']}"
+        frm = pseudo[0].from_square
+        if board.is_pinned(side, frm):
+            ray = board.pin(side, frm)
+            pinner = next((s for s in ray if board.piece_at(s) and board.piece_at(s).color != side), None)
+            if pinner is not None:
+                return (f"{who} {name} on {chess.square_name(frm)} is pinned to {who} king by the {other} "
+                        f"{chess.piece_name(board.piece_type_at(pinner))} on {chess.square_name(pinner)}")
+        return f"it would leave {who} king in check"
+    return None

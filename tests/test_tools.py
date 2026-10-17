@@ -111,11 +111,24 @@ def test_near_miss_gets_graded_feedback(stub_config):
     assert result["rank_among_engine_top5"] == 2
 
 
-def test_illegal_answer_counts_as_attempt(stub_config):
-    tools, state = make_tools(stub_config, _answer_engines())
-    result = tools.evaluate_student_answer(START, "Ke5")
-    assert result["verdict"] == "illegal"
-    assert result["attempts_so_far"] == 1
+def test_illegal_moves_first_is_free_reason_is_checked_and_three_in_a_row_offer_the_answer(stub_config):
+    # Owner decisions D4-D6 (DECISIONS.md). Live runs: 24. Qh5 (illegal) was the second try and unlocked the
+    # answer, and the coach invented "the queen can't jump to h5"; the queen's own d5 pawn blocks it.
+    fen = "r3r1k1/p4ppp/3q4/1Q1P4/1P4P1/P7/5Pp1/3R1RK1 w - - 0 24"
+    tools, state = make_tools(stub_config, FakeEngines(multipv={fen: [("f1e1", 185), ("g1g2", 0)]}))
+    first = tools.evaluate_student_answer(fen, "Qh5")
+    assert first["verdict"] == "illegal" and first["try_used"] is False and first["attempts_so_far"] == 0
+    assert first["illegal_reason"] == "your own pawn on d5 is in the way of your queen on b5"
+    assert first["reveal_allowed"] is False and "step_in" not in first
+    second = tools.evaluate_student_answer(fen, "Nf3")
+    assert second["try_used"] is True and second["attempts_so_far"] == 1 and "step_in" not in second
+    third = tools.evaluate_student_answer(fen, "Qh5")
+    assert third["attempts_so_far"] == 2 and third["reveal_allowed"] is True
+    assert third["step_in"] is True and third["board_token"].startswith("[[BOARD_")
+    # A legal answer breaks the run of illegal entries.
+    tools2, _ = make_tools(stub_config, FakeEngines(multipv={fen: [("f1e1", 185), ("g1g2", 0)]}))
+    results = [tools2.evaluate_student_answer(fen, san) for san in ("Qh5", "Kxg2", "Qh5", "Qh5")]
+    assert results[1]["verdict"] != "illegal" and "step_in" not in results[3]
 
 
 def test_candidate_list_requires_commitment_before_grading(stub_config):
@@ -1246,7 +1259,7 @@ def test_explicit_own_illegal_move_does_not_route_to_threat_grading(stub_config)
 
     assert result["verdict"] == "illegal"
     assert "routed_from" not in result
-    assert state.socratic_attempts.get(fen) == 1
+    assert state.socratic_attempts.get(fen) is None and result["try_used"] is False
     assert state.socratic_attempts.get(f"threat:{fen}") is None
 
 
@@ -1262,11 +1275,12 @@ def test_wrong_threat_withheld_then_revealed(stub_config):
     assert second["actual_threats"][0]["threat_line"] == "Qh4#"
 
 
-def test_illegal_threat_counts_attempt(stub_config):
+def test_illegal_threat_follows_the_same_rules_with_the_opponents_reason(stub_config):
     tools, _ = make_tools(stub_config, _threat_engines())
     result = tools.evaluate_threat_answer(THREAT_FEN, "Qh5")  # illegal for Black here
-    assert result["verdict"] == "not_a_legal_opponent_move"
-    assert result["attempts_so_far"] == 1
+    assert result["verdict"] == "not_a_legal_opponent_move" and result["try_used"] is False
+    assert result["attempts_so_far"] == 0 and result["student_threat"] == "Qh5"
+    assert result.get("illegal_reason", "").startswith("Black's")
 
 
 def test_no_threat_position_says_so(stub_config):
