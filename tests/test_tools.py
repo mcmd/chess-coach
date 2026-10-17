@@ -410,11 +410,11 @@ def test_human_tendency_summary_says_whether_most_players_agree(stub_config):
     # "most humans at this level try Qh6 or Qg6". The backend now writes the sentence to quote.
     split = FakeEngines(maia={START: {"e2e4": 0.32, "d2d4": 0.13, "g1f3": 0.12}})
     summary = make_tools(stub_config, split)[0].analyze_position(START)["human_tendency_at_student_elo"]
-    assert summary["in_words"] == ("No single move is chosen by most players rated about 1150: "
+    assert summary["in_words"] == ("No single move is chosen by most players rated about 1150 playing White: "
                                    "e4 32%, d4 13%, Nf3 12%.")
     clear = FakeEngines(maia={START: {"e2e4": 0.73, "d2d4": 0.07}})
     summary = make_tools(stub_config, clear)[0].analyze_position(START)["human_tendency_at_student_elo"]
-    assert summary["in_words"] == "Most players rated about 1150 choose e4 (73%)."
+    assert summary["in_words"] == "Most players rated about 1150 playing White choose e4 (73%)."
 
 
 def test_analyze_position_reports_the_digest_risk_for_an_agenda_position(stub_config):
@@ -434,14 +434,16 @@ def test_analyze_position_reports_the_digest_risk_for_an_agenda_position(stub_co
     assert human["risk_profile"] == "must-hold" and "1142" in human["wdl_source"]
 
 
-def test_human_move_sentence_names_the_position_after_applied_moves(stub_config):
+def test_human_move_sentence_names_the_position_and_side_after_applied_moves(stub_config):
     # Run sce7o0q6 S2: a Maia share for the position after 20. Kh1 was told as if it were for
-    # the position before it.
+    # the position before it. Run 9wthn48e: Black's 89% recapture after 20. Nxb5 was told as the
+    # share of players choosing 20. Nxb5.
     after_e4 = chess.Board()
     after_e4.push_san("e4")
     engines = FakeEngines(maia={after_e4.fen(): {"e7e5": 0.6, "c7c5": 0.3}})
     human = make_tools(stub_config, engines)[0].analyze_position(START, moves_to_apply=["e4"])
-    assert human["human_tendency_at_student_elo"]["in_words"].startswith("After e4: ")
+    assert human["human_tendency_at_student_elo"]["in_words"] == (
+        "After e4, Black to move: Most players rated about 1150 playing Black choose e5 (60%).")
 
 
 def test_analyze_position_says_whether_moving_a_piece_is_forced(stub_config):
